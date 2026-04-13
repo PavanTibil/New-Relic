@@ -35,7 +35,7 @@ jobs:
 
       # ✅ Download previous state (if exists)
       - name: Download Terraform State
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: tfstate-${{ github.event.inputs.project }}
           path: ${{ github.event.inputs.project }}
