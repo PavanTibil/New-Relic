@@ -23,17 +23,23 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 🔍 Debug step (added)
       - name: Debug - List files
         run: ls -R
 
-      # ✅ Validate directory exists (added)
       - name: Validate Project Path
         run: |
           if [ ! -d "${{ github.event.inputs.project }}" ]; then
             echo "❌ Directory not found: ${{ github.event.inputs.project }}"
             exit 1
           fi
+
+      # ✅ Download previous state (if exists)
+      - name: Download Terraform State
+        uses: actions/download-artifact@v3
+        with:
+          name: tfstate-${{ github.event.inputs.project }}
+          path: ${{ github.event.inputs.project }}
+        continue-on-error: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -47,9 +53,8 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ github.event.inputs.project }}
-        run: terraform init
+        run: terraform init -input=false
 
-      # ✅ Added plan (best practice)
       - name: Terraform Plan
         working-directory: ${{ github.event.inputs.project }}
         run: terraform plan
@@ -63,3 +68,13 @@ jobs:
         if: ${{ github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}
         run: terraform destroy -auto-approve
+
+      # ✅ Upload updated state
+      - name: Upload Terraform State
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfstate-${{ github.event.inputs.project }}
+          path: |
+            ${{ github.event.inputs.project }}/terraform.tfstate
+            ${{ github.event.inputs.project }}/terraform.tfstate.backup
