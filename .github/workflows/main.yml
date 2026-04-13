@@ -33,13 +33,54 @@ jobs:
             exit 1
           fi
 
-      # ✅ Download previous state (if exists)
-      - name: Download Terraform State
-        uses: actions/download-artifact@v4
+      # ✅ Download latest state from previous runs
+      - name: Download Terraform State from Previous Runs
+        uses: actions/github-script@v7
         with:
-          name: tfstate-${{ github.event.inputs.project }}
-          path: ${{ github.event.inputs.project }}
-        continue-on-error: true
+          script: |
+            const { owner, repo } = context.repo;
+
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner,
+              repo,
+            });
+
+            const project = process.env.PROJECT;
+
+            const filtered = artifacts.data.artifacts
+              .filter(a => a.name === `tfstate-${project}`);
+
+            if (filtered.length === 0) {
+              console.log("No previous state found.");
+              return;
+            }
+
+            const latest = filtered.sort((a, b) =>
+              new Date(b.created_at) - new Date(a.created_at)
+            )[0];
+
+            console.log(`Downloading artifact: ${latest.name}`);
+
+            const download = await github.rest.actions.downloadArtifact({
+              owner,
+              repo,
+              artifact_id: latest.id,
+              archive_format: 'zip',
+            });
+
+            const fs = require('fs');
+            fs.writeFileSync('artifact.zip', Buffer.from(download.data));
+
+        env:
+          PROJECT: ${{ github.event.inputs.project }}
+
+      - name: Extract Terraform State
+        run: |
+          if [ -f artifact.zip ]; then
+            unzip artifact.zip -d ${{ github.event.inputs.project }}
+          else
+            echo "No artifact to extract"
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -78,3 +119,4 @@ jobs:
           path: |
             ${{ github.event.inputs.project }}/terraform.tfstate
             ${{ github.event.inputs.project }}/terraform.tfstate.backup
+          retention-days: 90
