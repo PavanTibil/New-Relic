@@ -5,6 +5,8 @@ on:
     inputs:
       action:
         required: true
+      project:
+        required: true
 
 jobs:
   terraform:
