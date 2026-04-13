@@ -16,12 +16,24 @@ jobs:
       - name: Validate Input
         run: |
           if [[ "${{ github.event.inputs.action }}" != "apply" && "${{ github.event.inputs.action }}" != "destroy" ]]; then
-            echo "Invalid action. Use apply or destroy only."
+            echo "❌ Invalid action. Use apply or destroy only."
             exit 1
           fi
 
       - name: Checkout Code
         uses: actions/checkout@v3
+
+      # 🔍 Debug step (added)
+      - name: Debug - List files
+        run: ls -R
+
+      # ✅ Validate directory exists (added)
+      - name: Validate Project Path
+        run: |
+          if [ ! -d "${{ github.event.inputs.project }}" ]; then
+            echo "❌ Directory not found: ${{ github.event.inputs.project }}"
+            exit 1
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -36,6 +48,11 @@ jobs:
       - name: Terraform Init
         working-directory: ${{ github.event.inputs.project }}
         run: terraform init
+
+      # ✅ Added plan (best practice)
+      - name: Terraform Plan
+        working-directory: ${{ github.event.inputs.project }}
+        run: terraform plan
 
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
