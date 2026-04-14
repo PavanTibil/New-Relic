@@ -5,10 +5,18 @@ on:
     inputs:
       action:
         required: true
+        description: "Action to perform"
+        type: choice
+        options:
+          - apply
+          - destroy
+          - start
+          - stop
       project:
         required: true
+        description: "Project directory path (e.g. infra/my-app)"
 
-# ✅ IMPORTANT FIX
+# ✅ Required for artifact reads + AWS calls
 permissions:
   actions: read
   contents: read
@@ -16,20 +24,23 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-
     steps:
+
+      # ──────────────────────────────────────────────────────────
+      # 1. Guard rail — reject anything outside the four commands
+      # ──────────────────────────────────────────────────────────
       - name: Validate Input
         run: |
-          if [[ "${{ github.event.inputs.action }}" != "apply" && "${{ github.event.inputs.action }}" != "destroy" ]]; then
-            echo "❌ Invalid action. Use apply or destroy only."
+          VALID_ACTIONS="apply destroy start stop"
+          ACTION="${{ github.event.inputs.action }}"
+          if ! echo "$VALID_ACTIONS" | grep -qw "$ACTION"; then
+            echo "❌ Invalid action: '$ACTION'. Valid options: apply | destroy | start | stop"
             exit 1
           fi
+          echo "✅ Action: $ACTION  |  Project: ${{ github.event.inputs.project }}"
 
       - name: Checkout Code
         uses: actions/checkout@v3
-
-      - name: Debug - List files
-        run: ls -R
 
       - name: Validate Project Path
         run: |
@@ -37,84 +48,264 @@ jobs:
             echo "❌ Directory not found: ${{ github.event.inputs.project }}"
             exit 1
           fi
+          echo "✅ Project path confirmed"
 
-      # ✅ FIXED: now has permission to read artifacts
+      # ──────────────────────────────────────────────────────────
+      # 2. Restore previous state + resource map from last run
+      # ──────────────────────────────────────────────────────────
       - name: Download Terraform State from Previous Runs
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo } = context.repo;
-
             const artifacts = await github.rest.actions.listArtifactsForRepo({
               owner,
               repo,
             });
-
             const project = process.env.PROJECT;
-
             const filtered = artifacts.data.artifacts
               .filter(a => a.name === `tfstate-${project}`);
-
             if (filtered.length === 0) {
-              console.log("No previous state found.");
+              console.log("ℹ️  No previous state found — fresh run.");
               return;
             }
-
             const latest = filtered.sort((a, b) =>
               new Date(b.created_at) - new Date(a.created_at)
             )[0];
-
-            console.log(`Downloading artifact: ${latest.name}`);
-
+            console.log(`⬇️  Downloading artifact: ${latest.name} (id ${latest.id})`);
             const download = await github.rest.actions.downloadArtifact({
               owner,
               repo,
               artifact_id: latest.id,
               archive_format: 'zip',
             });
-
             const fs = require('fs');
             fs.writeFileSync('artifact.zip', Buffer.from(download.data));
-
         env:
           PROJECT: ${{ github.event.inputs.project }}
 
       - name: Extract Terraform State
         run: |
           if [ -f artifact.zip ]; then
-            unzip artifact.zip -d ${{ github.event.inputs.project }}
+            unzip -o artifact.zip -d "${{ github.event.inputs.project }}"
+            echo "✅ State and resource map extracted"
           else
-            echo "No artifact to extract"
+            echo "ℹ️  No artifact to extract"
           fi
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-
+      # ──────────────────────────────────────────────────────────
+      # 3. AWS credentials (needed by all four actions)
+      # ──────────────────────────────────────────────────────────
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ──────────────────────────────────────────────────────────
+      # 4a. START — bring EC2 instances back online
+      # ──────────────────────────────────────────────────────────
+      - name: Start EC2 Instances
+        if: ${{ github.event.inputs.action == 'start' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          RESOURCE_FILE="tf_resources.json"
+          if [ ! -f "$RESOURCE_FILE" ]; then
+            echo "❌ $RESOURCE_FILE not found. Run 'apply' first to build the resource map."
+            exit 1
+          fi
+
+          # Read instance IDs as space-separated list
+          INSTANCE_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
+
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "⚠️  No EC2 instances found in resource map."
+            exit 0
+          fi
+
+          echo "🚀 Starting instances: $INSTANCE_IDS"
+          aws ec2 start-instances --instance-ids $INSTANCE_IDS
+
+          echo "⏳ Waiting for running state..."
+          aws ec2 wait instance-running --instance-ids $INSTANCE_IDS
+
+          echo "✅ All instances running"
+          echo ""
+          aws ec2 describe-instances \
+            --instance-ids $INSTANCE_IDS \
+            --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name,Type:InstanceType,PublicIP:PublicIpAddress,PrivateIP:PrivateIpAddress}' \
+            --output table
+
+      # ──────────────────────────────────────────────────────────
+      # 4b. STOP — gracefully stop EC2 instances (preserves EBS)
+      # ──────────────────────────────────────────────────────────
+      - name: Stop EC2 Instances
+        if: ${{ github.event.inputs.action == 'stop' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          RESOURCE_FILE="tf_resources.json"
+          if [ ! -f "$RESOURCE_FILE" ]; then
+            echo "❌ $RESOURCE_FILE not found. Run 'apply' first to build the resource map."
+            exit 1
+          fi
+
+          INSTANCE_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
+
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "⚠️  No EC2 instances found in resource map."
+            exit 0
+          fi
+
+          echo "🛑 Stopping instances: $INSTANCE_IDS"
+          aws ec2 stop-instances --instance-ids $INSTANCE_IDS
+
+          echo "⏳ Waiting for stopped state..."
+          aws ec2 wait instance-stopped --instance-ids $INSTANCE_IDS
+
+          echo "✅ All instances stopped"
+          echo ""
+          aws ec2 describe-instances \
+            --instance-ids $INSTANCE_IDS \
+            --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name}' \
+            --output table
+
+      # ──────────────────────────────────────────────────────────
+      # 5. Terraform steps (apply / destroy only)
+      # ──────────────────────────────────────────────────────────
+      - name: Setup Terraform
+        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false   # ← required for clean JSON output from `terraform show`
 
       - name: Terraform Init
+        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}
         run: terraform init -input=false
 
       - name: Terraform Plan
+        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}
-        run: terraform plan
+        run: terraform plan -input=false
 
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: ${{ github.event.inputs.project }}
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false
+
+      # ──────────────────────────────────────────────────────────
+      # 6. AUTO-DETECT RESOURCES after apply
+      #    Scans the full state (root + child modules) and writes
+      #    tf_resources.json which start/stop read on future runs.
+      # ──────────────────────────────────────────────────────────
+      - name: Detect and Save Resource IDs
+        if: ${{ github.event.inputs.action == 'apply' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          echo "🔍 Scanning Terraform state for resource IDs and ARNs..."
+          terraform show -json > tf_show.json
+
+          # Helper: walk all modules recursively to find resources
+          # (handles nested child modules, not just root)
+          JQ_WALK='[.. | objects | select(.type? != null and .values? != null)]'
+
+          # EC2 instance IDs  (e.g. i-0abc123def456)
+          EC2_IDS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_instance\"))
+            | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
+
+          # ECS service ARNs
+          ECS_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_ecs_service\"))
+            | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
+
+          # RDS instance identifiers
+          RDS_IDS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_db_instance\"))
+            | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
+
+          # Lambda function ARNs
+          LAMBDA_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_lambda_function\"))
+            | .[].values.arn" tf_show.json 2>/dev/null | sort -u || true)
+
+          # ALB / NLB ARNs
+          ALB_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_lb\" or .type == \"aws_alb\"))
+            | .[].values.arn" tf_show.json 2>/dev/null | sort -u || true)
+
+          # S3 bucket names
+          S3_BUCKETS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_s3_bucket\"))
+            | .[].values.bucket" tf_show.json 2>/dev/null | sort -u || true)
+
+          # EKS cluster names
+          EKS_CLUSTERS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_eks_cluster\"))
+            | .[].values.name" tf_show.json 2>/dev/null | sort -u || true)
+
+          # Auto-Scaling Group names (useful for start/stop via ASG desired count)
+          ASG_NAMES=$(jq -r "$JQ_WALK | map(select(.type == \"aws_autoscaling_group\"))
+            | .[].values.name" tf_show.json 2>/dev/null | sort -u || true)
+
+          # ── Build JSON resource map ────────────────────────────
+          to_array() { echo "$1" | jq -R . | jq -s 'map(select(length > 0))'; }
+
+          jq -n \
+            --argjson ec2  "$(to_array "$EC2_IDS")"     \
+            --argjson ecs  "$(to_array "$ECS_ARNS")"    \
+            --argjson rds  "$(to_array "$RDS_IDS")"     \
+            --argjson lmb  "$(to_array "$LAMBDA_ARNS")" \
+            --argjson alb  "$(to_array "$ALB_ARNS")"    \
+            --argjson s3   "$(to_array "$S3_BUCKETS")"  \
+            --argjson eks  "$(to_array "$EKS_CLUSTERS")"\
+            --argjson asg  "$(to_array "$ASG_NAMES")"   \
+            '{
+              ec2_instance_ids: $ec2,
+              ecs_service_arns: $ecs,
+              rds_identifiers:  $rds,
+              lambda_arns:      $lmb,
+              alb_arns:         $alb,
+              s3_buckets:       $s3,
+              eks_clusters:     $eks,
+              asg_names:        $asg
+            }' > tf_resources.json
+
+          # ── Terraform outputs (user-defined) ──────────────────
+          terraform output -json >> tf_resources.json 2>/dev/null || true
+
+          # ── Human-readable summary ────────────────────────────
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📦  Detected Resources"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          print_row() {
+            ICON="$1"; LABEL="$2"; shift 2
+            VALUES="$@"
+            if [ -n "$VALUES" ]; then
+              echo "$ICON  $LABEL:"
+              echo "$VALUES" | sed 's/^/     /'
+            else
+              echo "$ICON  $LABEL: (none)"
+            fi
+          }
+          print_row "🖥️ " "EC2 Instances  " "$EC2_IDS"
+          print_row "🐳" "ECS Services   " "$ECS_ARNS"
+          print_row "🗄️ " "RDS Instances  " "$RDS_IDS"
+          print_row "⚡" "Lambda Funcs   " "$LAMBDA_ARNS"
+          print_row "⚖️ " "Load Balancers " "$ALB_ARNS"
+          print_row "🪣" "S3 Buckets     " "$S3_BUCKETS"
+          print_row "☸️ " "EKS Clusters   " "$EKS_CLUSTERS"
+          print_row "📈" "ASG Names      " "$ASG_NAMES"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Cleanup temp file
+          rm -f tf_show.json
 
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}
-        run: terraform destroy -auto-approve
+        run: terraform destroy -auto-approve -input=false
 
+      # ──────────────────────────────────────────────────────────
+      # 7. Persist state + resource map for next run
+      #    tf_resources.json is included so start/stop always
+      #    have an up-to-date list of IDs without re-running TF.
+      # ──────────────────────────────────────────────────────────
       - name: Upload Terraform State
         if: always()
         uses: actions/upload-artifact@v4
@@ -123,4 +314,5 @@ jobs:
           path: |
             ${{ github.event.inputs.project }}/terraform.tfstate
             ${{ github.event.inputs.project }}/terraform.tfstate.backup
+            ${{ github.event.inputs.project }}/tf_resources.json
           retention-days: 90
