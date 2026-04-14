@@ -184,11 +184,6 @@ jobs:
         working-directory: ${{ github.event.inputs.project }}
         run: terraform init -input=false
 
-      - name: Terraform Plan
-        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
-        working-directory: ${{ github.event.inputs.project }}
-        run: terraform plan -input=false
-
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: ${{ github.event.inputs.project }}
