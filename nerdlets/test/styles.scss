@@ -1,0 +1,776 @@
+// ─── GOOGLE FONTS ────────────────────────────────────────────────────────────
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+// ─── TOKENS ──────────────────────────────────────────────────────────────────
+$bg:          #080b14;
+$surface:     rgba(255, 255, 255, 0.04);
+$border:      rgba(255, 255, 255, 0.09);
+$text-primary:   #f0f4ff;
+$text-secondary: #7a8aaa;
+$text-muted:     #3d4a66;
+
+$green:  #00d4aa;
+$yellow: #f5a623;
+$red:    #ff4d6d;
+
+$radius-card: 20px;
+$radius-row:  12px;
+$font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+// ─── KEYFRAMES ───────────────────────────────────────────────────────────────
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 #{$green}55; }
+  50%       { box-shadow: 0 0 0 6px #{$green}00; }
+}
+@keyframes pulse-yellow {
+  0%, 100% { box-shadow: 0 0 0 0 #{$yellow}66; }
+  50%       { box-shadow: 0 0 0 6px #{$yellow}00; }
+}
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 #{$red}77; }
+  50%       { box-shadow: 0 0 0 8px #{$red}00; }
+}
+@keyframes float-orb {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50%       { transform: translateY(-30px) scale(1.05); }
+}
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-6px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0);    max-height: 600px; }
+}
+
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
+.eagle-eye {
+  font-family: $font;
+  background: $bg;
+  min-height: 100vh;
+  padding: 36px 40px 60px;
+  color: $text-primary;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+// ─── BACKGROUND ORBS ─────────────────────────────────────────────────────────
+.bg-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.18;
+  pointer-events: none;
+  z-index: 0;
+
+  &--blue {
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, #4285f4, transparent 70%);
+    top: -200px; left: -150px;
+    animation: float-orb 8s ease-in-out infinite;
+  }
+  &--orange {
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, #ff9900, transparent 70%);
+    top: -100px; right: -100px;
+    animation: float-orb 10s ease-in-out infinite reverse;
+  }
+  &--green {
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, #00d4aa, transparent 70%);
+    bottom: -150px; left: 40%;
+    animation: float-orb 12s ease-in-out infinite 2s;
+  }
+}
+
+// ─── HEADER ──────────────────────────────────────────────────────────────────
+.ee-header {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  margin-bottom: 48px;
+  animation: fade-up 0.6s ease both;
+
+  &__eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: $text-secondary;
+    margin-bottom: 12px;
+  }
+
+  &__title {
+    font-size: clamp(36px, 5vw, 64px);
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1;
+    margin: 0 0 12px;
+
+    &-eagle {
+      background: linear-gradient(135deg, #4285f4, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    &-eye {
+      background: linear-gradient(135deg, #ff9900, #ff4d6d);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+  }
+
+  &__subtitle {
+    font-size: 15px;
+    color: $text-secondary;
+    margin: 0 0 20px;
+    font-weight: 400;
+  }
+
+  &__pulse-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 100px;
+    padding: 6px 18px;
+    font-size: 12px;
+    color: $text-secondary;
+  }
+
+  &__pulse-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: $green;
+    animation: blink 1.4s ease-in-out infinite;
+  }
+
+  &__pulse-label { font-weight: 500; }
+}
+
+// ─── GRID ─────────────────────────────────────────────────────────────────────
+.ee-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 28px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+// ─── CLOUD CARD ───────────────────────────────────────────────────────────────
+.cloud-card {
+  border: 1px solid transparent;
+  border-radius: $radius-card;
+  padding: 28px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  animation: fade-up 0.7s ease both;
+
+  &:hover { transform: translateY(-4px); }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  &__title-group {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+  }
+
+  &__icon {
+    font-size: 28px;
+    line-height: 1;
+    filter: drop-shadow(0 0 8px currentColor);
+  }
+
+  &__name {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: $text-primary;
+    margin: 0;
+    line-height: 1;
+  }
+
+  &__label {
+    font-size: 11px;
+    font-weight: 500;
+    color: $text-secondary;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-top: 3px;
+  }
+
+  &__divider {
+    height: 1px;
+    margin-bottom: 16px;
+    border-radius: 1px;
+    background: rgba(255,255,255,0.08);
+  }
+
+  &__badge-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    margin-top: -8px;
+  }
+
+  &__header-pills {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 12px;
+    flex-wrap: wrap;
+  }
+
+  &__projects {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+
+}
+
+
+// ─── STATUS BADGE ─────────────────────────────────────────────────────────────
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-radius: 100px;
+  padding: 5px 14px 5px 10px;
+  border: 1px solid transparent;
+
+  &__dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  &--billing {
+    gap: 5px;
+    padding: 5px 10px 5px 10px;
+  }
+
+  &__billing-current {
+    font-weight: 800;
+    font-size: 11px;
+  }
+
+  &__billing-sep {
+    opacity: 0.4;
+    font-size: 10px;
+  }
+
+  &__billing-budget {
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.7;
+  }
+
+  &--green {
+    color: $green; background: #{$green}18; border-color: #{$green}44;
+    .status-badge__dot { background: $green; animation: pulse-green 2s ease-in-out infinite; }
+  }
+  &--yellow {
+    color: $yellow; background: #{$yellow}18; border-color: #{$yellow}44;
+    .status-badge__dot { background: $yellow; animation: pulse-yellow 2s ease-in-out infinite; }
+  }
+  &--red {
+    color: $red; background: #{$red}18; border-color: #{$red}44;
+    .status-badge__dot { background: $red; animation: pulse-red 1.2s ease-in-out infinite; }
+  }
+  &--grey {
+    color: $text-secondary; background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1);
+    .status-badge__dot { background: #4a5568; }
+  }
+}
+
+// ─── STATUS DOT ──────────────────────────────────────────────────────────────
+.status-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+
+  &--green  { background: $green;  animation: pulse-green  2s ease-in-out infinite; }
+  &--yellow { background: $yellow; animation: pulse-yellow 2s ease-in-out infinite; }
+  &--red    { background: $red;    animation: pulse-red    1.2s ease-in-out infinite; }
+  &--grey   { background: #4a5568; opacity: 0.5; }
+}
+
+// ─── PROJECT ROW ─────────────────────────────────────────────────────────────
+.project-row {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid $border;
+  border-radius: $radius-row;
+  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  animation: fade-up 0.5s ease both;
+  overflow: hidden;
+
+  &--green  { &:hover { border-color: #{$green}55; } }
+  &--yellow { border-color: #{$yellow}33; &:hover { border-color: #{$yellow}66; } }
+  &--red    { border-color: #{$red}33;    &:hover { border-color: #{$red}66; } }
+
+  // FIX 6: Deleted rows — darker background, more visible with higher opacity
+  &--deleted {
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(255,255,255,0.03) 0px,
+      rgba(255,255,255,0.03) 2px,
+      rgba(255,255,255,0.07) 2px,
+      rgba(255,255,255,0.07) 10px
+    );
+    border-color: rgba(255,255,255,0.18);
+    border-style: dashed;
+    .project-row__name {
+      text-decoration: line-through;
+      text-decoration-color: rgba(255,255,255,0.35);
+      color: $text-secondary;
+    }
+  }
+
+  &--empty {
+    background: linear-gradient(135deg, rgba(61,74,102,0.25) 0%, rgba(26,32,58,0.35) 100%);
+    border-color: rgba(100,120,180,0.40);
+    border-style: dashed;
+    .project-row__name { color: $text-primary; }
+  }
+
+  &--expanded {
+    background: rgba(255,255,255,0.06);
+    &.project-row--red    { border-color: #{$red}55; }
+    &.project-row--yellow { border-color: #{$yellow}55; }
+  }
+
+  &__main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 16px;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover { background: rgba(255,255,255,0.04); }
+  }
+
+  &__left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__name {
+    font-size: 14px;
+    font-weight: 500;
+    color: $text-primary;
+  }
+
+  &__issue-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: $red;
+    background: #{$red}18;
+    border: 1px solid #{$red}33;
+    border-radius: 100px;
+    padding: 2px 8px;
+  }
+
+  &__uptime-pill {
+    font-size: 11px;
+    font-weight: 600;
+    color: $text-secondary;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 100px;
+    padding: 2px 8px;
+  }
+
+  &__right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__status-text {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+
+    &--green  { color: $green; }
+    &--yellow { color: $yellow; }
+    &--red    { color: $red; }
+    &--grey   { color: $text-secondary; }
+  }
+
+  &__deleted-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: #4a5568;
+    background: rgba(30,30,40,0.6);
+    border: 1px solid rgba(74,85,104,0.25);
+    border-radius: 100px;
+    padding: 3px 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  &__chevron {
+    font-size: 18px;
+    color: $text-muted;
+    transition: transform 0.25s ease, color 0.2s ease;
+    display: inline-block;
+    line-height: 1;
+
+    &--open { transform: rotate(90deg); color: $text-secondary; }
+  }
+
+  &__detail {
+    padding: 0 16px 14px;
+    animation: slide-down 0.3s ease both;
+    overflow: hidden;
+  }
+
+  &__detail-loading {
+    font-size: 12px;
+    color: $text-muted;
+    font-style: italic;
+  }
+
+  &__all-ok {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: $green;
+    font-weight: 500;
+    padding: 8px 12px;
+    background: #{$green}0d;
+    border-radius: 8px;
+    border: 1px solid #{$green}22;
+  }
+
+  &__all-ok-icon { font-size: 14px; }
+}
+
+// ─── DOWN SERVICES PANEL ──────────────────────────────────────────────────────
+.down-services {
+  background: rgba(0,0,0,0.25);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.07);
+  overflow: hidden;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: rgba(255,77,109,0.08);
+    border-bottom: 1px solid rgba(255,77,109,0.15);
+  }
+
+  &__icon {
+    font-size: 14px;
+    color: $yellow;
+  }
+
+  &__title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: $text-secondary;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid transparent;
+    transition: background 0.2s ease;
+
+    &--red    { border-color: #{$red}22; }
+    &--yellow { border-color: #{$yellow}22; }
+
+    &-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: $red;
+    }
+
+    &--yellow &-dot { background: $yellow; }
+
+    &-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: $text-primary;
+      flex: 1;
+    }
+
+    &-type {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: $text-muted;
+    }
+
+    &-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 100px;
+      flex-shrink: 0;
+
+      &--red    { color: $red;    background: #{$red}18;    border: 1px solid #{$red}33; }
+      &--yellow { color: $yellow; background: #{$yellow}18; border: 1px solid #{$yellow}33; }
+    }
+  }
+}
+
+// ─── MINI DOTS (footer stats) ─────────────────────────────────────────────────
+.dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+
+  &--green  { background: $green; }
+  &--yellow { background: $yellow; }
+  &--red    { background: $red; }
+}
+
+// ─── SKELETON ─────────────────────────────────────────────────────────────────
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid $border;
+  border-radius: $radius-row;
+  padding: 13px 16px;
+
+  &__dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: linear-gradient(90deg, #1e2a42 25%, #2a3a5e 50%, #1e2a42 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.5s infinite;
+    flex-shrink: 0;
+  }
+
+  &__bar {
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #1e2a42 25%, #2a3a5e 50%, #1e2a42 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.5s infinite;
+    flex: 1;
+  }
+
+  &__pill {
+    width: 56px; height: 20px;
+    border-radius: 100px;
+    background: linear-gradient(90deg, #1e2a42 25%, #2a3a5e 50%, #1e2a42 75%);
+    background-size: 400px 100%;
+    animation: shimmer 1.5s infinite;
+    flex-shrink: 0;
+  }
+}
+
+
+// ─── CLOUD RUN INSTANCE LIST ──────────────────────────────────────────────────
+.cr-instances {
+  margin-top: 8px;
+  background: rgba(66, 133, 244, 0.06);
+  border: 1px solid rgba(66, 133, 244, 0.15);
+  border-radius: 8px;
+  overflow: hidden;
+
+  &--loading { padding: 8px 12px; }
+
+  &__header {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #4285f4;
+    padding: 7px 12px 5px;
+    border-bottom: 1px solid rgba(66, 133, 244, 0.12);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 12px;
+
+    &:last-child { border-bottom: none; }
+  }
+
+  &__name {
+    flex: 1;
+    color: $text-primary;
+    font-weight: 500;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__status {
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  &__billable {
+    font-size: 10px;
+    color: $text-secondary;
+    background: rgba(0,212,170,0.08);
+    border: 1px solid rgba(0,212,170,0.15);
+    border-radius: 100px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+}
+
+// ─── BILLING BREAKDOWN ────────────────────────────────────────────────────────
+.billing-breakdown {
+  padding: 4px 0 4px;
+
+  &__total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: rgba(255,153,0,0.08);
+    border: 1px solid rgba(255,153,0,0.2);
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+
+  &__total-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: $text-secondary;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  &__total-value {
+    font-size: 18px;
+    font-weight: 800;
+    color: #FF9900;
+  }
+
+  &__services {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: 140px 1fr 70px 42px;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.02);
+    font-size: 11px;
+
+    &:hover { background: rgba(255,255,255,0.04); }
+  }
+
+  &__svc-name {
+    color: $text-primary;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+  }
+
+  &__bar-wrap {
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  &__bar {
+    height: 100%;
+    background: linear-gradient(90deg, #FF9900, #ff6600);
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+
+  &__svc-cost {
+    text-align: right;
+    font-weight: 700;
+    color: $text-primary;
+    font-size: 11px;
+  }
+
+  &__svc-pct {
+    text-align: right;
+    color: $text-secondary;
+    font-size: 10px;
+  }
+}
+// ─── FOOTER ──────────────────────────────────────────────────────────────────
+.ee-footer {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  margin-top: 48px;
+  font-size: 12px;
+  color: $text-muted;
+  font-weight: 400;
+  letter-spacing: 0.3px;
+}
