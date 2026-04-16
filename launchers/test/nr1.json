@@ -1,0 +1,7 @@
+{
+  "schemaType": "LAUNCHER",
+  "id": "test-launcher",
+  "displayName": "Eagle Eye",
+  "description": "Cloud Monitoring",
+  "rootNerdletId": "5dda87ba-5201-4c02-b94c-e61274bb74fd.test"
+}
