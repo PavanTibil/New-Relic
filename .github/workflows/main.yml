@@ -1,4 +1,4 @@
-name: Terraform Runner
+name: Project Actions
 
 on:
   workflow_dispatch:
