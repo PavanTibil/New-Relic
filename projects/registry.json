@@ -1,0 +1,18 @@
+{
+  "providers": [
+    {
+      "id": "gcp",
+      "name": "GCP",
+      "label": "Google Cloud Platform",
+      "icon": "☁",
+      "projects": []
+    },
+    {
+      "id": "aws",
+      "name": "AWS",
+      "label": "Amazon Web Services",
+      "icon": "⚡",
+      "projects": []
+    }
+  ]
+}
