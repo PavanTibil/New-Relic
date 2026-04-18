@@ -1,4 +1,4 @@
-name: Eagle Eye — Auto-discover & Redeploy
+name: Auto-discover & Redeploy
 
 on:
   push:
@@ -26,9 +26,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Use a bot token so the commit the job makes can itself trigger CI
-          # (the default GITHUB_TOKEN cannot). If you don't need that, remove
-          # the token line — the commit will still land but [skip ci] prevents loops.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
@@ -85,6 +82,9 @@ jobs:
 
       - name: Install Nerdpack dependencies
         run: npm install
+
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
 
       - name: Configure NR1 profile
         env:
