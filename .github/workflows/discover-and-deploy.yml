@@ -49,7 +49,6 @@ jobs:
           git config user.name  "Eagle Eye Bot"
           git config user.email "eagle-eye-bot@github-actions"
           git add nerdlets/test/auto-discovered-projects.json
-          # Only commit if the file actually changed (idempotent)
           git diff --staged --quiet || \
             git commit -m "chore(eagle-eye): auto-discover new projects [skip ci]"
           git push
@@ -75,6 +74,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
+
       - name: Install NR1 CLI
         run: |
           curl -s https://cli.nr-ext.net/installer.sh | sudo bash
@@ -82,9 +84,6 @@ jobs:
 
       - name: Install Nerdpack dependencies
         run: npm install
-
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
 
       - name: Configure NR1 profile
         env:
@@ -109,7 +108,6 @@ jobs:
           nr1 nerdpack:subscribe \
             --channel STABLE \
             --profile eagle-eye-ci
-        # Subscription may already exist — that's fine
         continue-on-error: true
 
       - name: Done
