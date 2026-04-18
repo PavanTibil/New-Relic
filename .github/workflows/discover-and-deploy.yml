@@ -6,6 +6,9 @@ on:
     paths:
       - 'projects/**'   # only trigger when something under projects/ changes
 
+permissions:
+  contents: write
+
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # JOB 1 — Scan projects/*/modules/ for new Terraform directories.
