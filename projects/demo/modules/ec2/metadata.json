@@ -1,7 +1,5 @@
 {
   "name": "Demo AWS App",
-  "provider": "aws",
-  "dashboardGuid": "Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjAzNDUw",
-  "dashboardLink": "https://onenr.io/0ERz8g1D8Qr",
-  "knownServices": "EC2"
+  "dashboardGuid": "Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA0ODcx",
+  "dashboardLink": "https://onenr.io/0ERz8g1D8Qr"
 }
