@@ -76,10 +76,18 @@ const LABEL_TO_RESOURCE = Object.fromEntries(
 function readModulesTf(modulesDir) {
   if (!fs.existsSync(modulesDir)) return '';
   try {
-    return fs.readdirSync(modulesDir)
-      .filter(f => f.endsWith('.tf'))
-      .map(f => fs.readFileSync(path.join(modulesDir, f), 'utf8'))
-      .join('\n');
+    const results = [];
+    const walk = (dir) => {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.tf')) {
+          results.push(fs.readFileSync(full, 'utf8'));
+        }
+      });
+    };
+    walk(modulesDir);
+    return results.join('\n');
   } catch {
     return '';
   }
@@ -216,7 +224,9 @@ function main() {
     }
 
     // ── Parse Terraform ───────────────────────────────────────────────────────
-    const tf               = readModulesTf(modulesPath);
+    const tf = tfFiles.map(f => {
+      try { return fs.readFileSync(f, 'utf8'); } catch { return ''; }
+    }).join('\n');
     const detectedProvider = detectProvider(tf);
     const detectedResources= detectResources(tf);
     const detectedGcpId    = detectedProvider === 'gcp' ? detectGcpProjectId(tf) : null;
