@@ -19,5 +19,26 @@
     "tfFilesFound": [
       "projects/demo/modules/ec2/main.tf"
     ]
+  },
+  "new": {
+    "projectDirName": "new",
+    "name": "New",
+    "provider": "aws",
+    "gcpProjectId": null,
+    "dashboardGuid": null,
+    "dashboardLink": null,
+    "resources": [
+      {
+        "label": "S3",
+        "type": "aws_s3",
+        "alwaysOn": true
+      }
+    ],
+    "knownServices": [],
+    "detectedAt": "2026-04-18T08:32:27.511Z",
+    "detectedFrom": "projects/new/modules/ (1 .tf file across all subdirectories)",
+    "tfFilesFound": [
+      "projects/new/modules/s3/main.tf"
+    ]
   }
 }
