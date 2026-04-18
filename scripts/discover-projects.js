@@ -8,19 +8,18 @@
  *   └── <project-name>/
  *       ├── eagle-eye.json        ← optional overrides (name, dashboardGuid, etc.)
  *       └── modules/
- *           ├── main.tf
- *           ├── variables.tf
- *           └── ...               ← any *.tf files
+ *           └── <module-name>/    ← subdirectories supported!
+ *               ├── main.tf
+ *               ├── variables.tf
+ *               └── ...
  *
  * The script:
- *   1. Finds all projects/<name>/modules/ directories that contain ≥1 .tf file.
+ *   1. Finds all projects/<name>/modules/ directories that contain ≥1 .tf file
+ *      (recursively — works with projects/demo/modules/ec2/main.tf etc.)
  *   2. Parses those .tf files to detect provider (gcp/aws) and resource types.
  *   3. Reads projects/<name>/eagle-eye.json (if present) for overrides.
  *   4. Merges with the existing auto-discovered-projects.json (never removes entries).
  *   5. Writes the updated file and signals the workflow if anything changed.
- *
- * Required env (set in GitHub Actions secrets):
- *   — none for this script; NR credentials are only needed by the publish step.
  */
 
 'use strict';
@@ -34,7 +33,6 @@ const PROJECTS_DIR = path.join(REPO_ROOT, 'projects');
 const OUTPUT_PATH  = path.join(REPO_ROOT, 'nerdlets', 'test', 'auto-discovered-projects.json');
 
 // ─── Terraform resource type → Eagle Eye resource definition ─────────────────
-// Match is exact (resource type string in TF must equal the key).
 const TF_RESOURCE_MAP = {
   // ── GCP ──────────────────────────────────────────────────────────────────
   google_cloud_run_service:        { label: 'Cloud Run',  type: 'gcp_cloudrun', alwaysOn: false, scalesToZero: true },
@@ -64,33 +62,42 @@ const TF_RESOURCE_MAP = {
   aws_alb:                         { label: 'ALB/NLB',    type: 'aws_alb',        alwaysOn: true },
 };
 
-// ─── Human-readable label → Eagle Eye resource (used when eagle-eye.json
-//     specifies resources as an array of strings rather than objects) ──────────
 const LABEL_TO_RESOURCE = Object.fromEntries(
   Object.values(TF_RESOURCE_MAP).map(r => [r.label, r])
 );
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Read all *.tf files inside a directory (non-recursive) and return combined content. */
-function readModulesTf(modulesDir) {
-  if (!fs.existsSync(modulesDir)) return '';
+/**
+ * Recursively find all *.tf file paths under a directory.
+ * e.g. modules/ec2/main.tf, modules/rds/main.tf etc.
+ */
+function findTfFiles(dir) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
   try {
-    const results = [];
-    const walk = (dir) => {
-      fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.tf')) {
-          results.push(fs.readFileSync(full, 'utf8'));
+    const walk = (current) => {
+      fs.readdirSync(current, { withFileTypes: true }).forEach(entry => {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile() && entry.name.endsWith('.tf')) {
+          results.push(full);
         }
       });
     };
-    walk(modulesDir);
-    return results.join('\n');
-  } catch {
-    return '';
-  }
+    walk(dir);
+  } catch { /* unreadable dir */ }
+  return results;
+}
+
+/**
+ * Read and concatenate all .tf files from a list of absolute paths.
+ */
+function readTfFiles(tfFilePaths) {
+  return tfFilePaths.map(f => {
+    try { return fs.readFileSync(f, 'utf8'); } catch { return ''; }
+  }).join('\n');
 }
 
 /** Determine cloud provider from concatenated TF content. */
@@ -144,10 +151,9 @@ function dirToName(name) {
 /** Resolve an array of string labels (from eagle-eye.json) into resource objects. */
 function resolveResourceLabels(labels) {
   return labels.map(item => {
-    if (typeof item === 'object' && item.type) return item; // already a full object
+    if (typeof item === 'object' && item.type) return item;
     const known = LABEL_TO_RESOURCE[item];
     if (known) return { ...known };
-    // Unknown label — store as custom so it still appears in the UI
     return {
       label:    item,
       type:     'custom_' + String(item).toLowerCase().replace(/[^a-z0-9]/g, '_'),
@@ -193,29 +199,16 @@ function main() {
     const projectPath = path.join(PROJECTS_DIR, projectName);
     const modulesPath = path.join(projectPath, 'modules');
 
-    // ── Check for *.tf files inside modules/ ──────────────────────────────────
-    let tfFiles = [];
-    if (fs.existsSync(modulesPath)) {
-      try {
-        // Walk all subdirectories under modules/ recursively
-        const walkDir = (dir) => {
-          fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              walkDir(fullPath);
-            } else if (entry.isFile() && entry.name.endsWith('.tf')) {
-              tfFiles.push(fullPath);
-            }
-          });
-        };
-        walkDir(modulesPath);
-      } catch { /* unreadable dir */ }
-    }
+    // ── Recursively find all *.tf files under modules/ ────────────────────────
+    const tfFiles = findTfFiles(modulesPath);
 
     if (tfFiles.length === 0) {
-      console.log(`  ⏭  ${projectName}/ — no .tf files in modules/, skipping`);
+      console.log(`  ⏭  ${projectName}/ — no .tf files found under modules/ (recursive), skipping`);
       continue;
     }
+
+    console.log(`     📂 ${projectName}/ — found ${tfFiles.length} .tf file(s):`);
+    tfFiles.forEach(f => console.log(`        ${path.relative(REPO_ROOT, f)}`));
 
     // ── Already tracked? ──────────────────────────────────────────────────────
     if (registry[projectName]) {
@@ -224,12 +217,10 @@ function main() {
     }
 
     // ── Parse Terraform ───────────────────────────────────────────────────────
-    const tf = tfFiles.map(f => {
-      try { return fs.readFileSync(f, 'utf8'); } catch { return ''; }
-    }).join('\n');
-    const detectedProvider = detectProvider(tf);
-    const detectedResources= detectResources(tf);
-    const detectedGcpId    = detectedProvider === 'gcp' ? detectGcpProjectId(tf) : null;
+    const tf                = readTfFiles(tfFiles);
+    const detectedProvider  = detectProvider(tf);
+    const detectedResources = detectResources(tf);
+    const detectedGcpId     = detectedProvider === 'gcp' ? detectGcpProjectId(tf) : null;
 
     if (!detectedProvider) {
       console.warn(`  ⚠️  ${projectName}/ — could not determine provider (no google_* or aws_* resources found). Skipping.`);
@@ -255,21 +246,14 @@ function main() {
       : detectedResources;
 
     const entry = {
-      // Identification
       projectDirName: projectName,
-      name:           override.name          || dirToName(projectName),
-      provider,                               // 'gcp' | 'aws'
-      gcpProjectId:   override.gcpProjectId  || detectedGcpId || null,
-
-      // Dashboard (empty until user fills in via ··· manage modal)
+      name:           override.name         || dirToName(projectName),
+      provider,
+      gcpProjectId:   override.gcpProjectId || detectedGcpId || null,
       dashboardGuid:  override.dashboardGuid || null,
       dashboardLink:  override.dashboardLink || null,
-
-      // Resources detected from .tf
       resources,
       knownServices:  override.knownServices || [],
-
-      // Provenance (useful for debugging)
       detectedAt:     new Date().toISOString(),
       detectedFrom:   `projects/${projectName}/modules/ (${tfFiles.length} .tf file${tfFiles.length !== 1 ? 's' : ''} across all subdirectories)`,
       tfFilesFound:   tfFiles.map(f => path.relative(REPO_ROOT, f)),
