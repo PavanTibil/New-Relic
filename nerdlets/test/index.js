@@ -3,6 +3,44 @@ import ReactDOM from 'react-dom';
 import { NrqlQuery, navigation, AccountStorageMutation, AccountStorageQuery } from 'nr1';
 import './styles.scss';
 
+// ─── Auto-discovered projects ─────────────────────────────────────────────────
+// Written by CI (scripts/discover-projects.js) and bundled at build time.
+let AUTO_DISCOVERED = {};
+try {
+  // eslint-disable-next-line global-require
+  AUTO_DISCOVERED = require('./auto-discovered-projects.json');
+} catch (_) {
+  // File not yet present on first deploy — safe to ignore.
+}
+
+// ─── Merge auto-discovered entries into the live providers list ───────────────
+const mergeAutoDiscovered = (providers) => {
+  if (!AUTO_DISCOVERED || Object.keys(AUTO_DISCOVERED).length === 0) {
+    return providers;
+  }
+  const merged = providers.map(p => ({ ...p, projects: [...p.projects] }));
+  for (const [dirName, discovered] of Object.entries(AUTO_DISCOVERED)) {
+    const { provider, name } = discovered;
+    if (!provider || !name) continue;
+    const providerEntry = merged.find(p => p.id === provider);
+    if (!providerEntry) continue;
+    const alreadyExists = providerEntry.projects.some(
+      p => p.name === name || p.projectDirName === dirName
+    );
+    if (alreadyExists) continue;
+    providerEntry.projects.push({
+      name,
+      projectDirName: dirName,
+      gcpProjectId:  discovered.gcpProjectId  || null,
+      dashboardGuid: discovered.dashboardGuid || null,
+      dashboardLink: discovered.dashboardLink || null,
+      resources:     Array.isArray(discovered.resources)     ? discovered.resources     : [],
+      knownServices: Array.isArray(discovered.knownServices) ? discovered.knownServices : [],
+    });
+  }
+  return merged;
+};
+
 const ACCOUNT_ID         = 7782479;
 const STORAGE_COLLECTION = 'eagle-eye';
 const STORAGE_DOC_ID     = 'providers';
@@ -11,10 +49,30 @@ const STORAGE_CONFIG_ID  = 'config';
 // ─── GITHUB ACTIONS CONFIG ────────────────────────────────────────────────────
 const GH_OWNER          = 'PavanTibil';
 const GH_REPO           = 'New-Relic';
-const GH_WORKFLOW_INFRA = 'main.yml';
+const GH_WORKFLOW_INFRA = 'project-actions.yml';
 
-// Tag used to identify EC2 instances created by Eagle Eye terraform workflow
-const EAGLE_EYE_EC2_TAG = 'eagle-eye-managed'; // aws.ec2 tag: ManagedBy=eagle-eye
+// ─── ACTION STATE MACHINE ─────────────────────────────────────────────────────
+const INFRA_STATES = {
+  IDLE:        'idle',
+  DISPATCHING: 'dispatching',
+  RUNNING:     'running',
+  SUCCEEDED:   'succeeded',
+  FAILED:      'failed',
+  TIMEOUT:     'timeout',
+};
+
+const ALLOWED_ACTIONS = {
+  provisioned: ['stop', 'terminate'],
+  stopped:     ['start', 'terminate'],
+  terminated:  ['apply'],
+};
+
+const NEXT_LIFECYCLE = {
+  apply:     'provisioned',
+  start:     'provisioned',
+  stop:      'stopped',
+  terminate: 'terminated',
+};
 
 // ─── POWER OFF ICON ───────────────────────────────────────────────────────────
 const PowerOffIcon = ({ size = 13, color = 'currentColor', style = {} }) => (
@@ -28,10 +86,27 @@ const PowerOffIcon = ({ size = 13, color = 'currentColor', style = {} }) => (
   </svg>
 );
 
+// ─── SPINNER ICON ─────────────────────────────────────────────────────────────
+const SpinnerIcon = ({ size = 12, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round">
+    <path d="M12 2a10 10 0 0 1 10 10" style={{ animation:'ee-spin 0.8s linear infinite', transformOrigin:'center' }} />
+    <style>{`@keyframes ee-spin{to{transform:rotate(360deg)}}`}</style>
+  </svg>
+);
+
 // ─── GITHUB ACTIONS POLLING ───────────────────────────────────────────────────
-const pollWorkflowRun = (token, dispatchTime, onComplete, cancelRef) => {
-  let attempts = 0;
-  const MAX_ATTEMPTS = 180;
+const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancelRef) => {
+  let attempts      = 0;
+  let lockedRunId   = null;
+  const MAX_ATTEMPTS       = 180;
+  const FALLBACK_ATTEMPTS  = 8;
+  const TIME_SLACK_MS      = 60 * 1000;
+
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token}`,
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
 
   const doFetch = async () => {
     if (cancelRef && cancelRef.cancelled) return;
@@ -39,35 +114,73 @@ const pollWorkflowRun = (token, dispatchTime, onComplete, cancelRef) => {
     if (attempts > MAX_ATTEMPTS) { onComplete('timeout'); return; }
 
     try {
+      if (lockedRunId) {
+        const r = await fetch(
+          `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/runs/${lockedRunId}`,
+          { headers }
+        );
+        if (!r.ok) { scheduleNext(); return; }
+        const run = await r.json();
+        handleRun(run);
+        return;
+      }
+
       const res = await fetch(
         `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW_INFRA}/runs?per_page=10&branch=main`,
-        {
-          headers: {
-            Accept: 'application/vnd.github+json',
-            Authorization: `Bearer ${token}`,
-            'X-GitHub-Api-Version': '2022-11-28',
-          },
-        }
+        { headers }
       );
       if (!res.ok) { scheduleNext(); return; }
       const json = await res.json();
-      const run = (json.workflow_runs || []).find(
-        r => new Date(r.created_at).getTime() >= dispatchTime - 30000
-      );
+      const runs = json.workflow_runs || [];
+
+      const cutoff = dispatchTime - TIME_SLACK_MS;
+      const candidates = runs.filter(r => new Date(r.created_at).getTime() >= cutoff);
+
+      let run = null;
+      if (candidates.length > 0) {
+        run = candidates[0];
+      } else if (attempts >= FALLBACK_ATTEMPTS) {
+        run = runs[0] || null;
+        if (run) {
+          console.warn('[Eagle Eye] Falling back to newest run:', run.id, run.created_at);
+        }
+      }
+
       if (!run) { scheduleNext(); return; }
-      if (run.status === 'completed') { onComplete(run.conclusion || 'success'); return; }
-      scheduleNext();
-    } catch (_) {
+
+      lockedRunId = run.id;
+      console.log('[Eagle Eye] Locked onto run:', lockedRunId, 'status:', run.status);
+      handleRun(run);
+    } catch (err) {
+      console.warn('[Eagle Eye] Poll error:', err);
       scheduleNext();
     }
   };
 
-  const scheduleNext = () => {
+  const handleRun = (run) => {
     if (cancelRef && cancelRef.cancelled) return;
-    setTimeout(doFetch, 10000);
+
+    if (run.status === 'queued' || run.status === 'in_progress') {
+      onStatusChange(INFRA_STATES.RUNNING, run);
+      scheduleNext();
+      return;
+    }
+
+    if (run.status === 'completed') {
+      const succeeded = run.conclusion === 'success';
+      onComplete(succeeded ? 'success' : run.conclusion || 'failure', run);
+      return;
+    }
+
+    scheduleNext();
   };
 
-  setTimeout(doFetch, 4000);
+  const scheduleNext = () => {
+    if (cancelRef && cancelRef.cancelled) return;
+    setTimeout(doFetch, 8000);
+  };
+
+  setTimeout(doFetch, 6000);
 };
 
 const callInfraAPI = async (projectName, action, token) => {
@@ -182,7 +295,7 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
               placeholder="github_pat_XXXX…"
               style={{ width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'9px 40px 9px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', fontFamily:'monospace', colorScheme:'dark' }}
             />
-            <button onClick={() => setShow(s => !s)} style={{ position:'absolute', right:10, background:'none', border:'none', cursor:'pointer', color:'#7a8aaa', fontSize:13, padding:0, outline:'none' }} title={show ? 'Hide token' : 'Show token'}>{show ? '🙈' : '👁'}</button>
+            <button onClick={() => setShow(s => !s)} style={{ position:'absolute', right:10, background:'none', border:'none', cursor:'pointer', color:'#7a8aaa', fontSize:13, padding:0, outline:'none' }}>{show ? '🙈' : '👁'}</button>
           </div>
           {tokenInput && (
             <div style={{ marginTop:5, fontSize:10, color:'#4a6080' }}>
@@ -195,10 +308,43 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
         {error && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {error}</div>}
         {saved  && <div style={{ fontSize:12, color:'#00d4aa', marginBottom:14, padding:'8px 12px', background:'rgba(0,212,170,0.08)', borderRadius:6, border:'1px solid rgba(0,212,170,0.2)' }}>✓ Token saved successfully!</div>}
         <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
-          <button onClick={onClose} disabled={saving} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none' }}>Cancel</button>
+          <button onClick={onClose} disabled={saving} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
           <button onClick={handleSave} disabled={saving} style={{ padding:'8px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer', outline:'none', opacity:saving ? 0.65 : 1 }}>{saving ? 'Saving…' : 'Save Token'}</button>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ─── INFRA ACTION STATUS BANNER ───────────────────────────────────────────────
+const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
+  if (actionState === INFRA_STATES.IDLE) return null;
+
+  const actionLabel = {
+    apply: 'Apply', stop: 'Stop', start: 'Start', terminate: 'Terminate',
+  }[lastAction] || lastAction;
+
+  const configs = {
+    [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
+    [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
+    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)', border:'rgba(0,212,170,0.3)', icon:'✓', text:`${actionLabel} completed`, sub:'Workflow finished successfully', dismissable:true },
+    [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Workflow did not complete — check GitHub Actions for details', dismissable:true },
+    [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Polling stopped after 30 min — check GitHub Actions manually', dismissable:true },
+  };
+
+  const cfg = configs[actionState];
+  if (!cfg) return null;
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', background:cfg.bg, border:`1px solid ${cfg.border}`, borderRadius:8, margin:'4px 0 6px' }}>
+      <span style={{ color:cfg.color, fontSize:13, flexShrink:0, display:'flex', alignItems:'center' }}>{cfg.icon}</span>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:cfg.color }}>{cfg.text}</div>
+        <div style={{ fontSize:10, color:'#7a8aaa', marginTop:1 }}>{cfg.sub}</div>
+      </div>
+      {cfg.dismissable && (
+        <button onClick={onDismiss} style={{ background:'none', border:'none', outline:'none', boxShadow:'none', color:'#4a6080', cursor:'pointer', fontSize:14, padding:'0 2px', lineHeight:1 }}>✕</button>
+      )}
     </div>
   );
 };
@@ -216,11 +362,11 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     setBusy(true); setErr('');
     try {
       const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
+      const preDispatch = Date.now();
       await callInfraAPI(project.name, ghAction, ghToken);
-      onConfirm();
+      onConfirm(preDispatch);
     } catch (e) {
       setErr(e?.message || 'GitHub Actions dispatch failed.');
-    } finally {
       setBusy(false);
     }
   };
@@ -235,7 +381,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
 
   const title   = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Terminate Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
   const btnText = busy
-    ? (isApply ? 'Dispatching apply…' : isTerminate ? 'Dispatching destroy…' : isStart ? 'Dispatching start…' : 'Dispatching stop…')
+    ? 'Dispatching…'
     : (isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it');
 
   return (
@@ -264,8 +410,8 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
         )}
         {err && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {err}</div>}
         <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
-          <button onClick={onCancel} disabled={busy} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none' }}>Cancel</button>
-          <button onClick={handleConfirm} disabled={busy} style={{ padding:'8px 20px', borderRadius:8, border:'none', background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer', outline:'none', opacity:busy ? 0.5 : 1 }}>{btnText}</button>
+          <button onClick={onCancel} disabled={busy} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
+          <button onClick={handleConfirm} disabled={busy || !ghToken} style={{ padding:'8px 20px', borderRadius:8, border:'none', background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:busy || !ghToken ? 'not-allowed' : 'pointer', outline:'none', opacity:busy || !ghToken ? 0.5 : 1 }}>{btnText}</button>
         </div>
       </div>
     </div>
@@ -273,7 +419,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
 };
 
 // ─── PROJECT DOTS DROPDOWN ────────────────────────────────────────────────────
-const ProjectDotsDropdown = ({ project, onAction, projectRunningState }) => {
+const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAction = null }) => {
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState({ top:0, left:0 });
   const btnRef          = useRef(null);
@@ -282,7 +428,7 @@ const ProjectDotsDropdown = ({ project, onAction, projectRunningState }) => {
   const updatePos = () => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    const dropdownWidth = 230;
+    const dropdownWidth = 250;
     let left = r.right - dropdownWidth;
     if (left < 8) left = r.left;
     if (left + dropdownWidth > window.innerWidth - 8) left = window.innerWidth - dropdownWidth - 8;
@@ -314,51 +460,61 @@ const ProjectDotsDropdown = ({ project, onAction, projectRunningState }) => {
 
   useEffect(() => () => stopTracking(), []);
 
-  const applyLabel     = 'Apply';
-  const stopLabel      = 'Stop';
-  const startLabel     = 'Start';
-  const terminateLabel = 'Terminate';
+  const isBusy = activeAction !== null;
 
-  const menuBtn = (onClick, color, label, desc, disabled, icon) => (
-    <button onClick={onClick} disabled={disabled}
-      style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'10px 14px', background:'transparent', border:'none', cursor:disabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:disabled ? 0.55 : 1 }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background=`${color}18`; }}
-      onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}
-    >
-      {icon
-        ? <span style={{ width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{icon}</span>
-        : <span style={{ width:8, height:8, borderRadius:'50%', background:disabled?'#8899aa':color, flexShrink:0 }} />
-      }
-      <div style={{ flex:1 }}>
-        <div style={{ fontSize:12, fontWeight:700, color:disabled?'#8899aa':color }}>{label}</div>
-        <div style={{ fontSize:10, color:'#5a6888', marginTop:1 }}>{desc}</div>
-      </div>
-    </button>
-  );
+  const menuBtn = (onClick, color, label, desc, disabled, icon) => {
+    const isRunning = isBusy && activeAction === label.toLowerCase();
+    const actualDisabled = disabled || isBusy;
+    return (
+      <button onClick={onClick} disabled={actualDisabled}
+        style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'10px 14px', background:'transparent', border:'none', cursor:actualDisabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:actualDisabled ? 0.4 : 1 }}
+        onMouseEnter={e => { if (!actualDisabled) e.currentTarget.style.background=`${color}18`; }}
+        onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}
+      >
+        {isRunning
+          ? <span style={{ width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}><SpinnerIcon size={12} color={color} /></span>
+          : icon
+          ? <span style={{ width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{icon}</span>
+          : <span style={{ width:8, height:8, borderRadius:'50%', background:actualDisabled?'#8899aa':color, flexShrink:0 }} />
+        }
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:actualDisabled?'#6a7a8a':color }}>{label}</div>
+          <div style={{ fontSize:10, color:'#5a6888', marginTop:1 }}>{isRunning ? 'Running on GitHub Actions…' : actualDisabled && isBusy ? `Locked — ${activeAction} in progress` : desc}</div>
+        </div>
+        {isRunning && <span style={{ fontSize:10, color:color, fontWeight:700 }}>●</span>}
+      </button>
+    );
+  };
 
   const dropdown = open ? ReactDOM.createPortal(
-    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:230, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
+    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:250, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
       <style>{`@keyframes eeDropIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
         <div style={{ fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</div>
         <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
+        {isBusy && (
+          <div style={{ marginTop:4, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#f5a623' }}>
+            <SpinnerIcon size={10} color="#f5a623" />
+            <span>Action in progress — buttons locked</span>
+          </div>
+        )}
       </div>
 
       {menuBtn(
         (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'apply'); },
-        '#4285f4', applyLabel, 'Deploy / update infrastructure', false
+        '#4285f4', 'Apply', 'Deploy / update infrastructure', disabledActions.includes('apply')
       )}
       {menuBtn(
         (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'stop'); },
-        '#f5a623', stopLabel, 'Pause all services via CLI', false
+        '#f5a623', 'Stop', 'Pause all services via CLI', disabledActions.includes('stop')
       )}
       {menuBtn(
         (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'start'); },
-        '#00d4aa', startLabel, 'Resume all services via CLI', false
+        '#00d4aa', 'Start', 'Resume all services via CLI', disabledActions.includes('start')
       )}
       {menuBtn(
         (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'terminate'); },
-        '#ff4d6d', terminateLabel, 'Destroy all resources (terraform destroy)', false,
+        '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)', disabledActions.includes('terminate'),
         <PowerOffIcon size={13} color="#ff4d6d" />
       )}
     </div>,
@@ -368,10 +524,14 @@ const ProjectDotsDropdown = ({ project, onAction, projectRunningState }) => {
   return (
     <>
       <button ref={btnRef} onClick={handleOpen} title="Infrastructure actions"
-        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:3, width:26, height:26, borderRadius:7, flexShrink:0, border:'none', outline:'none', boxShadow:'none', background:open?'rgba(255,255,255,0.08)':'transparent', cursor:'pointer', padding:0, transition:'background 0.15s' }}
+        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:3, width:26, height:26, borderRadius:7, flexShrink:0, border:'none', outline:'none', boxShadow:'none', background:open?'rgba(255,255,255,0.08)':'transparent', cursor:'pointer', padding:0, transition:'background 0.15s', position:'relative' }}
         onMouseEnter={e => { if (!open) e.currentTarget.style.background='rgba(255,255,255,0.08)'; }}
         onMouseLeave={e => { if (!open) e.currentTarget.style.background='transparent'; }}
       >
+        {isBusy && (
+          <span style={{ position:'absolute', top:-2, right:-2, width:7, height:7, borderRadius:'50%', background:'#f5a623', border:'1.5px solid #0f1629', animation:'eePulse 1s ease-in-out infinite' }} />
+        )}
+        <style>{`@keyframes eePulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
         <span style={{ width:3, height:3, borderRadius:'50%', background:'#7a8aaa', flexShrink:0 }} />
         <span style={{ width:3, height:3, borderRadius:'50%', background:'#7a8aaa', flexShrink:0 }} />
         <span style={{ width:3, height:3, borderRadius:'50%', background:'#7a8aaa', flexShrink:0 }} />
@@ -517,12 +677,12 @@ const canBePaused = (t, row) => t === 'aws_apprunner' && row && (row.activeInsta
 const ec2StateDisplay = (state) => {
   const s = (state ?? '').toString().toLowerCase().trim();
   switch (s) {
-    case 'running':       return { dot:'green',  label:'✓ Running',       color:'#00d4aa' };
-    case 'impaired':      return { dot:'red',    label:'✗ Impaired',      color:'#ff4d6d' };
-    case 'stopped':       return { dot:'yellow', label:'✗ Stopped',       color:'#f5a623' };
-    case 'pending':       return { dot:'yellow', label:'◌ Pending',       color:'#f5a623' };
-    case 'stopping':      return { dot:'yellow', label:'◌ Stopping',      color:'#f5a623' };
-    default:              return { dot:'grey',   label: s || '— Unknown', color:'#7a8aaa' };
+    case 'running':  return { dot:'green',  label:'✓ Running',  color:'#00d4aa' };
+    case 'impaired': return { dot:'red',    label:'✗ Impaired', color:'#ff4d6d' };
+    case 'stopped':  return { dot:'yellow', label:'✗ Stopped',  color:'#f5a623' };
+    case 'pending':  return { dot:'yellow', label:'◌ Pending',  color:'#f5a623' };
+    case 'stopping': return { dot:'yellow', label:'◌ Stopping', color:'#f5a623' };
+    default:         return { dot:'grey',   label: s || '— Unknown', color:'#7a8aaa' };
   }
 };
 
@@ -699,16 +859,16 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                 const health   = projectHealthMap?.[project.name] ?? 'unknown';
                 const dotColor = project.deleted?'#4a5568':health==='green'?'#00d4aa':health==='yellow'?'#f5a623':health==='red'?'#ff4d6d':'#7a8aaa';
                 return (
-                  <div key={pj} style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.03)'}>
+                  <div key={project.projectDirName || project.name} style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.03)'}>
                     <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background:dotColor, boxShadow:health==='green'?'0 0 4px #00d4aa44':health==='red'?'0 0 4px #ff4d6d44':health==='yellow'?'0 0 4px #f5a62344':'none' }} />
                     <span style={{ flex:1, fontSize:13, fontWeight:600, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</span>
                     {typeTag && <span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
                     {!typeTag && project.resources?.length > 0 && <span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
-                    <button onClick={() => startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }} onMouseEnter={e=>e.currentTarget.style.background='rgba(200,212,240,0.22)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(200,212,240,0.1)'}>Edit</button>
+                    <button onClick={() => startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
                     {project.deleted ? (
-                      <button onClick={() => handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }} onMouseEnter={e=>e.currentTarget.style.background='rgba(66,133,244,0.26)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(66,133,244,0.12)'}>Unarchive</button>
+                      <button onClick={() => handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
                     ) : (
-                      <button onClick={() => handleArchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(245,166,35,0.55)', background:'rgba(245,166,35,0.12)', color:'#f5a623', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }} onMouseEnter={e=>e.currentTarget.style.background='rgba(245,166,35,0.26)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(245,166,35,0.12)'}>Archive</button>
+                      <button onClick={() => handleArchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(245,166,35,0.55)', background:'rgba(245,166,35,0.12)', color:'#f5a623', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Archive</button>
                     )}
                     {deleteConfirm === key ? (
                       <div style={{ display:'flex', alignItems:'center', gap:6 }}>
@@ -717,7 +877,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                         <button onClick={() => setDeleteConfirm(null)} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#7a8aaa', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none' }}>No</button>
                       </div>
                     ) : (
-                      <button onClick={() => setDeleteConfirm(key)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.12)', color:'#ff4d6d', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,77,109,0.26)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,77,109,0.12)'}>Delete</button>
+                      <button onClick={() => setDeleteConfirm(key)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.12)', color:'#ff4d6d', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Delete</button>
                     )}
                   </div>
                 );
@@ -756,7 +916,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               {[{ value:'normal', title:'Normal', sub:'Monitored resources' },{ value:'empty', title:'No Monitoring', sub:'Dashboard link only' },{ value:'deleted', title:'Archived', sub:'Hidden from main view' },{ value:'billing', title:'Billing Only', sub:'Cost tracking' }].map(opt => {
                 const sel = form.projectType === opt.value;
                 return (
-                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding:'9px 14px', borderRadius:9, cursor:'pointer', border:sel?`1px solid ${accentColor}66`:'1px solid rgba(255,255,255,0.07)', background:sel?`${accentColor}12`:'rgba(255,255,255,0.03)' }} onMouseEnter={e=>{ if (!sel) e.currentTarget.style.background='rgba(255,255,255,0.055)'; }} onMouseLeave={e=>{ if (!sel) e.currentTarget.style.background='rgba(255,255,255,0.03)'; }}>
+                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding:'9px 14px', borderRadius:9, cursor:'pointer', border:sel?`1px solid ${accentColor}66`:'1px solid rgba(255,255,255,0.07)', background:sel?`${accentColor}12`:'rgba(255,255,255,0.03)' }}>
                     <div style={{ fontSize:13, fontWeight:700, color:sel?accentColor:'#c8d4f0' }}>{opt.title}</div>
                     <div style={{ fontSize:11, color:'#4a6080', marginTop:2 }}>{opt.sub}</div>
                   </div>
@@ -772,7 +932,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <div style={s.field}>
               <label style={s.label}>GCP Project ID</label>
               <input value={form.gcpProjectId} onChange={e => setField('gcpProjectId', e.target.value)} placeholder="e.g. my-project-123456" style={s.input} />
-              <div style={{ fontSize:11, color:'#4a5568', marginTop:5 }}>Found in Google Cloud Console → Project Info</div>
             </div>
           )}
           <div style={s.field}>
@@ -865,55 +1024,46 @@ const extractEc2FacetPair = (series) => {
 // ─── EC2 COUNT LOADER ─────────────────────────────────────────────────────────
 const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
   const tagFilter = managedOnly ? "AND `aws.ec2.tag.ManagedBy` = 'eagle-eye'" : '';
-  const outerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`;
   const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
   const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
 
   return (
-    <NrqlQuery accountIds={[ACCOUNT_ID]} query={outerQ} pollInterval={60000}>
-      {({ data: outerData }) => (
-        <NrqlQuery accountIds={[ACCOUNT_ID]} query={midQ} pollInterval={60000}>
-          {({ data: midData }) => (
-            <NrqlQuery accountIds={[ACCOUNT_ID]} query={innerQ} pollInterval={60000}>
-              {({ data: innerData }) => {
-                if (!outerData || !midData || !innerData) return null;
-                const recentIds   = new Set();
-                const impairedIds = new Set();
-                const midIds      = new Set();
-                (innerData||[]).forEach(s => {
-                  const p = extractEc2FacetPair(s);
-                  if (!p?.name) return;
-                  recentIds.add(p.name);
-                  if (p.state === 'impaired') impairedIds.add(p.name);
-                });
-                (midData||[]).forEach(s => {
-                  const p = extractEc2FacetPair(s);
-                  if (!p?.name) return;
-                  midIds.add(p.name);
-                });
-                const seen = new Set();
-                let run = 0, stop = 0, imp = 0;
-                (outerData||[]).forEach(s => {
-                  const p = extractEc2FacetPair(s);
-                  if (!p?.name || seen.has(p.name)) return;
-                  seen.add(p.name);
-                  if (!midIds.has(p.name) && !recentIds.has(p.name)) return;
-                  if      (impairedIds.has(p.name)) imp++;
-                  else if (recentIds.has(p.name))   run++;
-                  else                               stop++;
-                });
-                if (!loaded) setTimeout(() => onCounts({ run, stop, imp }), 0);
-                return null;
-              }}
-            </NrqlQuery>
-          )}
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={midQ} pollInterval={60000}>
+      {({ data: midData }) => (
+        <NrqlQuery accountIds={[ACCOUNT_ID]} query={innerQ} pollInterval={60000}>
+          {({ data: innerData }) => {
+            if (!midData || !innerData) return null;
+            const recentIds   = new Set();
+            const impairedIds = new Set();
+
+            (innerData||[]).forEach(s => {
+              const p = extractEc2FacetPair(s);
+              if (!p?.name) return;
+              recentIds.add(p.name);
+              if (p.state === 'impaired') impairedIds.add(p.name);
+            });
+
+            const seen = new Set();
+            let run = 0, stop = 0, imp = 0;
+            (midData||[]).forEach(s => {
+              const p = extractEc2FacetPair(s);
+              if (!p?.name || seen.has(p.name)) return;
+              seen.add(p.name);
+              if      (impairedIds.has(p.name)) imp++;
+              else if (recentIds.has(p.name))   run++;
+              else                               stop++;
+            });
+
+            if (!loaded) setTimeout(() => onCounts({ run, stop, imp }), 0);
+            return null;
+          }}
         </NrqlQuery>
       )}
     </NrqlQuery>
   );
 };
 
-const ExpandableResourceRow = ({ resource: r, project, showTerminatingBriefly = false }) => {
+const ExpandableResourceRow = ({ resource: r, project }) => {
   const [open,      setOpen]      = React.useState(false);
   const [ec2Counts, setEc2Counts] = React.useState(null);
   const isManagedEc2 = r.type === 'aws_ec2_managed';
@@ -1063,45 +1213,38 @@ const ExpandableResourceRow = ({ resource: r, project, showTerminatingBriefly = 
                         if (al || ml) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
                         const activeI   = new Set();
                         const impairedI = new Set();
-                        const midI      = new Set();
+
                         (ad||[]).forEach(s => {
                           const p = extractEc2FacetPair(s);
                           if (!p?.name) return;
                           activeI.add(p.name);
                           if (p.state === 'impaired') impairedI.add(p.name);
                         });
+
+                        const seen = new Set();
+                        const visibleInstances = [];
                         (md||[]).forEach(s => {
                           const p = extractEc2FacetPair(s);
-                          if (!p?.name) return;
-                          midI.add(p.name);
+                          if (!p?.name || seen.has(p.name)) return;
+                          seen.add(p.name);
+                          visibleInstances.push({
+                            name: p.name,
+                            state: impairedI.has(p.name) ? 'impaired' :
+                                   activeI.has(p.name)   ? 'running'  : 'stopped',
+                          });
                         });
-                        const seen = new Set();
-                        const allKnown = data
-                          .map(s => { const p = extractEc2FacetPair(s); if (!p?.name || seen.has(p.name)) return null; seen.add(p.name); return p.name; })
-                          .filter(Boolean);
-                        const EXCLUDED_STATES = new Set(['terminated', 'shutting-down']);
-                        const visibleInstances = allKnown
-                          .filter(name => midI.has(name) || activeI.has(name))
-                          .map(name => ({
-                            name,
-                            state: impairedI.has(name) ? 'impaired' :
-                                   activeI.has(name)   ? 'running'  :
-                                                         'stopped',
-                          }))
-                          .filter(inst => !EXCLUDED_STATES.has(inst.state));
+
                         if (visibleInstances.length === 0) {
-                          return (
-                            <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
-                              No active instances found
-                            </div>
-                          );
+                          return <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>No active instances found</div>;
                         }
+
                         const ord = { running:0, pending:1, stopping:2, stopped:3, impaired:4 };
                         visibleInstances.sort((a, b) => {
                           const ao = ord[a.state] ?? 99;
                           const bo = ord[b.state] ?? 99;
                           return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
                         });
+
                         return (
                           <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
                             {visibleInstances.map((inst, i) => {
@@ -1184,80 +1327,113 @@ const GcpBillingNotConfigured = () => (
 );
 
 // ─── TEST PROJECT BANNER ───────────────────────────────────────────────────────
-const TestProjectBanner = ({ onInfraAction, project, projectRunningState }) => {
+const TestProjectBanner = ({ onInfraAction, project, disabledActions, activeAction }) => {
   const actions = [
-    { label:'▶ Apply',    action:'apply',     color:'#4285f4', desc:'terraform apply',   isPower:false },
-    { label:'⏸ Stop',    action:'stop',      color:'#f5a623', desc:'CLI scale down',    isPower:false },
-    { label:'▶ Start',   action:'start',     color:'#00d4aa', desc:'CLI scale up',      isPower:false },
-    { label:'Terminate', action:'terminate', color:'#ff4d6d', desc:'terraform destroy', isPower:true  },
+    { label:'▶ Apply',    action:'apply',     color:'#4285f4', isPower:false },
+    { label:'⏸ Stop',    action:'stop',      color:'#f5a623', isPower:false },
+    { label:'▶ Start',   action:'start',     color:'#00d4aa', isPower:false },
+    { label:'Terminate', action:'terminate', color:'#ff4d6d', isPower:true  },
   ];
+  const isBusy = activeAction !== null;
 
   return (
     <div style={{ margin:'6px 0 4px', padding:'10px 12px', background:'rgba(167,139,250,0.07)', border:'1px dashed rgba(167,139,250,0.35)', borderRadius:8 }}>
       <div style={{ fontSize:11, fontWeight:700, color:'#a78bfa', marginBottom:8 }}>🧪 Test Panel — trigger each GitHub Action:</div>
       <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-        {actions.map(a => (
-          <button key={a.action}
-            onClick={() => onInfraAction(project, a.action)}
-            style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6, border:`1px solid ${a.color}99`, background:`${a.color}20`, color:a.color, fontWeight:700, fontSize:11, cursor:'pointer', outline:'none', transition:'all 0.15s' }}
-            onMouseEnter={e => { e.currentTarget.style.background=`${a.color}30`; }}
-            onMouseLeave={e => { e.currentTarget.style.background=`${a.color}20`; }}
-          >
-            {a.isPower ? <PowerOffIcon size={11} color={a.color} /> : null}
-            {a.label}
-          </button>
-        ))}
-      </div>
-      <div style={{ fontSize:10, color:'#4a6080', marginTop:6 }}>
-        Each button dispatches a <code style={{ color:'#a78bfa' }}>workflow_dispatch</code> to <strong style={{ color:'#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong> → {GH_WORKFLOW_INFRA}
+        {actions.map(a => {
+          const disabled = isBusy || (disabledActions || []).includes(a.action);
+          const isRunning = activeAction === a.action;
+          return (
+            <button key={a.action}
+              onClick={() => !disabled && onInfraAction(project, a.action)}
+              disabled={disabled}
+              style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:6, border:`1px solid ${a.color}99`, background:`${a.color}20`, color:disabled?'#6a7a8a':a.color, fontWeight:700, fontSize:11, cursor:disabled?'not-allowed':'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none', opacity:disabled?0.45:1, transition:'all 0.15s' }}
+            >
+              {isRunning ? <SpinnerIcon size={11} color={a.color} /> : a.isPower ? <PowerOffIcon size={11} color={a.color} /> : null}
+              {a.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 };
 
-const StatusDot2 = ({ status }) => {
-  const cls = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status;
-  return <span className={`status-dot status-dot--${cls}`} />;
-};
-
 // ─── PROJECT ROW ──────────────────────────────────────────────────────────────
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction }) => {
   const [expanded, setExpanded] = useState(false);
+
+  const [lifecycle,    setLifecycle]    = useState(null);
+  const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
+  const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
   useEffect(() => {
     return () => { pollCancelRef.current.cancelled = true; };
   }, []);
 
-  const [projectState, setProjectState] = useState({
-    terminated:   false,
-    neverApplied: !!project.isTestProject,
-  });
-
-  const handleConfirmed = useCallback((action, token) => {
-    // Just dispatch — monitor progress directly in GitHub Actions
-    console.log(`[Eagle Eye] Dispatched: ${action} for ${project.name}`);
-    if (action === 'terminate') {
-      // Only track terminated state so Re-provision button appears
-      const dispatchTime = Date.now();
-      pollCancelRef.current = { cancelled: false };
-      const cancelRef = pollCancelRef.current;
-      const fallbackMs = 90000;
-      if (token && token.trim() !== '') {
-        pollWorkflowRun(token, dispatchTime, (conclusion) => {
-          if (!cancelRef.cancelled) setProjectState(s => ({ ...s, terminated: true }));
-        }, cancelRef);
-      } else {
-        setTimeout(() => {
-          if (!cancelRef.cancelled) setProjectState(s => ({ ...s, terminated: true }));
-        }, fallbackMs);
-      }
+  const getDisabledActions = () => {
+    if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
+        actionState !== INFRA_STATES.FAILED && actionState !== INFRA_STATES.TIMEOUT) {
+      return ['apply', 'stop', 'start', 'terminate'];
     }
-  }, [project.name]);
+    if (!lifecycle) return [];
+    const allowed = ALLOWED_ACTIONS[lifecycle] || [];
+    return ['apply', 'stop', 'start', 'terminate'].filter(a => !allowed.includes(a));
+  };
+
+  const handleActionDispatched = useCallback((action, token, dispatchTime) => {
+    setActiveAction(action);
+    setActionState(INFRA_STATES.DISPATCHING);
+
+    const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
+
+    pollCancelRef.current = { cancelled: false };
+    const cancelRef = pollCancelRef.current;
+
+    const onStatusChange = (newState) => {
+      if (!cancelRef.cancelled) setActionState(newState);
+    };
+
+    const onComplete = (conclusion) => {
+      if (cancelRef.cancelled) return;
+      if (conclusion === 'success') {
+        setActionState(INFRA_STATES.SUCCEEDED);
+        const nextLifecycle = NEXT_LIFECYCLE[action];
+        if (nextLifecycle) setLifecycle(nextLifecycle);
+      } else if (conclusion === 'timeout') {
+        setActionState(INFRA_STATES.TIMEOUT);
+      } else {
+        setActionState(INFRA_STATES.FAILED);
+      }
+      setTimeout(() => {
+        if (!cancelRef.cancelled) {
+          setActionState(INFRA_STATES.IDLE);
+          setActiveAction(null);
+        }
+      }, 8000);
+    };
+
+    if (token && token.trim() !== '') {
+      pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
+    } else {
+      setTimeout(() => {
+        if (!cancelRef.cancelled) {
+          setActionState(INFRA_STATES.TIMEOUT);
+          setTimeout(() => {
+            if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
+          }, 6000);
+        }
+      }, 3000);
+    }
+  }, []);
 
   const handleInfraAction = useCallback((proj, action) => {
-    onInfraAction(proj, action, handleConfirmed);
-  }, [onInfraAction, handleConfirmed]);
+    onInfraAction(proj, action, handleActionDispatched);
+  }, [onInfraAction, handleActionDispatched]);
+
+  const disabledActions = getDisabledActions();
+  const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
 
   if (project.deleted) return (
     <div className="project-row project-row--deleted" style={{ animationDelay:index*80+'ms' }}>
@@ -1298,7 +1474,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       <div className="project-row__main">
         <div className="project-row__left" style={{ gap:10 }}><span style={{ fontSize:14, color:'#7a8aaa' }}>◎</span><span className="project-row__name" style={{ color:'#c8d4f0' }}>{project.name}</span></div>
         <div className="project-row__right">
-          <ProjectDotsDropdown project={project} onAction={handleInfraAction} projectRunningState={{}} />
+          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
           <span style={{ fontSize:10, fontWeight:600, color:'#8899bb', background:'rgba(100,120,170,0.18)', border:'1px solid rgba(100,120,170,0.4)', borderRadius:100, padding:'2px 10px', letterSpacing:'0.5px', textTransform:'uppercase' }}>No Monitoring</span>
           <DashboardIcon onClick={e => { e.stopPropagation(); openDashboard(project); }} />
         </div>
@@ -1310,7 +1486,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const hasResources  = project.resources && project.resources.length > 0;
   const hasDashboard  = !!(project.dashboardGuid || project.dashboardLink);
   const isTestProject = !!project.isTestProject;
-  const handleRowClick = useCallback(() => { if (hasResources || isTestProject) setExpanded(p=>!p); else if (hasDashboard) openDashboard(project); }, [project, hasResources, hasDashboard, isTestProject]);
+  const handleRowClick = useCallback(() => {
+    if (hasResources || isTestProject) setExpanded(p=>!p);
+    else if (hasDashboard) openDashboard(project);
+  }, [project, hasResources, hasDashboard, isTestProject]);
 
   const uptimeSummary = (() => {
     if (loading) return null;
@@ -1328,8 +1507,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return `₹${b.row.totalCostINR.toFixed(0)}`;
   })();
 
-  // ── Terminated state ──
-  if (projectState.terminated) {
+  if (lifecycle === 'terminated') {
     return (
       <div className={`project-row project-row--deleted${expanded?' project-row--expanded':''}`} style={{ animationDelay:`${index*80}ms`, borderColor:'rgba(255,77,109,0.35)' }}>
         <div className="project-row__main" onClick={() => setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
@@ -1340,14 +1518,18 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
               <PowerOffIcon size={10} color="#ff4d6d" />
               Terminated
             </span>
+            {isBusy && <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />}
           </div>
           <div className="project-row__right">
-            <button onClick={e => { e.stopPropagation(); handleInfraAction(project, 'apply'); }}
-              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:'#4285f4', fontWeight:700, fontSize:11, cursor:'pointer', outline:'none', flexShrink:0 }}
-              onMouseEnter={e => e.currentTarget.style.background='rgba(66,133,244,0.28)'}
-              onMouseLeave={e => e.currentTarget.style.background='rgba(66,133,244,0.15)'}
-            >⚙ Re-provision</button>
-            <ProjectDotsDropdown project={project} onAction={handleInfraAction} projectRunningState={{}} />
+            <button
+              onClick={e => { e.stopPropagation(); if (!isBusy) handleInfraAction(project, 'apply'); }}
+              disabled={isBusy}
+              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:isBusy?'#6a7a8a':'#4285f4', fontWeight:700, fontSize:11, cursor:isBusy?'not-allowed':'pointer', outline:'none', flexShrink:0, display:'flex', alignItems:'center', gap:5, opacity:isBusy?0.5:1 }}
+            >
+              {isBusy ? <SpinnerIcon size={11} color="#4285f4" /> : null}
+              ⚙ Re-provision
+            </button>
+            <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
           </div>
         </div>
@@ -1356,18 +1538,19 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
               All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Click <strong style={{ color:'#4285f4' }}>Re-provision</strong> to restore.
             </div>
-            {isTestProject && <TestProjectBanner project={project} onInfraAction={handleInfraAction} projectRunningState={projectState} />}
+            {isTestProject && (
+              <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
+            )}
           </div>
         )}
       </div>
     );
   }
 
-  const isBusy    = false;
-  const dotStatus = status;
+  const dotStatus = isBusy ? 'yellow' : status;
 
   return (
-    <div className={`project-row project-row--${status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||isTestProject?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
+    <div className={`project-row project-row--${isBusy ? 'yellow' : status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||isTestProject?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
       <div className="project-row__main" onClick={handleRowClick}>
         <div className="project-row__left">
           <StatusDot status={dotStatus} />
@@ -1377,16 +1560,23 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <span style={{ fontSize:10, fontWeight:700, color:'#a78bfa', background:'rgba(167,139,250,0.12)', border:'1px solid rgba(167,139,250,0.3)', borderRadius:100, padding:'2px 8px', letterSpacing:'0.5px' }}>TEST</span>
           )}
 
-          {!loading && uptimeSummary !== null && (
+          {!loading && uptimeSummary !== null && !isBusy && (
             <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>
           )}
-          {!loading && billingSummary !== null && (
+          {!loading && billingSummary !== null && !isBusy && (
             <span className="project-row__uptime-pill">{billingSummary} today</span>
+          )}
+
+          {isBusy && (
+            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
+              <SpinnerIcon size={10} color="#f5a623" />
+              {actionState === INFRA_STATES.DISPATCHING ? 'Dispatching…' : `${activeAction} running…`}
+            </span>
           )}
         </div>
 
         <div className="project-row__right">
-          <ProjectDotsDropdown project={project} onAction={handleInfraAction} projectRunningState={{}} />
+          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
           {(hasResources || isTestProject) && !loading && (
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{ e.stopPropagation(); setExpanded(p=>!p); }}>›</span>
           )}
@@ -1396,13 +1586,18 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
       {expanded && (
         <div className="project-row__detail">
+          <InfraStatusBanner
+            actionState={actionState}
+            lastAction={activeAction}
+            onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }}
+          />
           {loading ? <span className="project-row__detail-loading">Checking resource health…</span> : (
             <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
               {resourceStatuses.map((r,i) => <ExpandableResourceRow key={i} resource={r} project={project} />)}
             </div>
           )}
           {isTestProject && (
-            <TestProjectBanner project={project} onInfraAction={handleInfraAction} projectRunningState={{}} />
+            <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
           )}
         </div>
       )}
@@ -1515,11 +1710,11 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
       {activeProjects.map((project) => {
         const i = indexOf(project);
         const r = allResults.find(res=>res.projectIndex===i) ?? allResults[i];
-        return <ProjectRow key={project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={project.billingOnly?billingCost:null} onInfraAction={onInfraAction} />;
+        return <ProjectRow key={project.projectDirName || project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={project.billingOnly?billingCost:null} onInfraAction={onInfraAction} />;
       })}
       {archivedProjects.length > 0 && (
         <div style={{ marginTop:activeProjects.length>0?10:0 }}>
-          <button onClick={() => setArchivedOpen(o=>!o)} style={{ display:'flex', alignItems:'center', gap:7, background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:8, padding:'6px 12px', cursor:'pointer', color:'#4a5568', fontSize:11, fontWeight:700, letterSpacing:'0.6px', textTransform:'uppercase', width:'100%', outline:'none' }} onMouseEnter={e=>{ e.currentTarget.style.background='rgba(255,255,255,0.04)'; e.currentTarget.style.color='#7a8aaa'; }} onMouseLeave={e=>{ e.currentTarget.style.background='none'; e.currentTarget.style.color='#4a5568'; }}>
+          <button onClick={() => setArchivedOpen(o=>!o)} style={{ display:'flex', alignItems:'center', gap:7, background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:8, padding:'6px 12px', cursor:'pointer', color:'#4a5568', fontSize:11, fontWeight:700, letterSpacing:'0.6px', textTransform:'uppercase', width:'100%', outline:'none' }}>
             <span style={{ display:'inline-block', transition:'transform 0.2s', transform:archivedOpen?'rotate(90deg)':'rotate(0deg)', fontSize:12 }}>›</span>
             <span>🗑 Archived</span>
             <span style={{ marginLeft:'auto', fontSize:10, background:'rgba(74,85,104,0.2)', border:'1px solid rgba(74,85,104,0.3)', borderRadius:100, padding:'1px 8px' }}>{archivedProjects.length}</span>
@@ -1528,7 +1723,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
             <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:4 }}>
               {archivedProjects.map((project) => {
                 const i=indexOf(project); const r=allResults.find(res=>res.projectIndex===i)??allResults[i];
-                return <ProjectRow key={project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={null} onInfraAction={onInfraAction} />;
+                return <ProjectRow key={project.projectDirName || project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={null} onInfraAction={onInfraAction} />;
               })}
             </div>
           )}
@@ -1549,7 +1744,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   });
   const projectHealthMap = {};
   provider.projects.forEach((p, i) => { projectHealthMap[p.name] = projectStatuses[i] ?? 'unknown'; });
-  const live       = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
+  const live        = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
   const cloudStatus = live.length>0?worstStatus(live):'green';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown')):cloudStatus;
@@ -1620,10 +1815,19 @@ const EagleEye = () => {
   useEffect(() => {
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error }) => {
-        if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(DEFAULT_CLOUD_PROVIDERS); }
-        else if (data?.document?.providers) setProviders(data.document.providers);
-        else setProviders(DEFAULT_CLOUD_PROVIDERS);
-      }).catch(() => { setLoadError(true); setProviders(DEFAULT_CLOUD_PROVIDERS); });
+        if (error) {
+          console.error('NerdStorage load error:', error);
+          setLoadError(true);
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        } else if (data?.document?.providers) {
+          setProviders(mergeAutoDiscovered(data.document.providers));
+        } else {
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        }
+      }).catch(() => {
+        setLoadError(true);
+        setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+      });
 
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data }) => {
@@ -1657,6 +1861,10 @@ const EagleEye = () => {
 
   if (!providers) return <EagleEyeLoader />;
 
+  const handleInfraAction = (project, action, onDispatched) => {
+    setInfraConfirm({ project, action, onDispatched });
+  };
+
   return (
     <div className="eagle-eye">
       <div className="bg-orb bg-orb--blue" />
@@ -1683,9 +1891,7 @@ const EagleEye = () => {
         {providers.map(provider => (
           <CloudCard key={provider.id} provider={provider}
             onManage={(healthMap) => setShowModal({ providerId:provider.id, projectHealthMap:healthMap })}
-            onInfraAction={(project, action, onConfirmed) =>
-              setInfraConfirm({ project, action, onConfirmed })
-            }
+            onInfraAction={handleInfraAction}
           />
         ))}
       </div>
@@ -1717,8 +1923,8 @@ const EagleEye = () => {
           project={infraConfirm.project}
           action={infraConfirm.action}
           ghToken={ghToken}
-          onConfirm={() => {
-            infraConfirm.onConfirmed?.(infraConfirm.action, ghToken);
+          onConfirm={(dispatchTime) => {
+            infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime);
             setInfraConfirm(null);
           }}
           onCancel={() => setInfraConfirm(null)}
