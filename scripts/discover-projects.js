@@ -189,7 +189,18 @@ function main() {
     let tfFiles = [];
     if (fs.existsSync(modulesPath)) {
       try {
-        tfFiles = fs.readdirSync(modulesPath).filter(f => f.endsWith('.tf'));
+        // Walk all subdirectories under modules/ recursively
+        const walkDir = (dir) => {
+          fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              walkDir(fullPath);
+            } else if (entry.isFile() && entry.name.endsWith('.tf')) {
+              tfFiles.push(fullPath);
+            }
+          });
+        };
+        walkDir(modulesPath);
       } catch { /* unreadable dir */ }
     }
 
@@ -250,8 +261,8 @@ function main() {
 
       // Provenance (useful for debugging)
       detectedAt:     new Date().toISOString(),
-      detectedFrom:   `projects/${projectName}/modules/ (${tfFiles.length} .tf file${tfFiles.length !== 1 ? 's' : ''})`,
-      tfFilesFound:   tfFiles,
+      detectedFrom:   `projects/${projectName}/modules/ (${tfFiles.length} .tf file${tfFiles.length !== 1 ? 's' : ''} across all subdirectories)`,
+      tfFilesFound:   tfFiles.map(f => path.relative(REPO_ROOT, f)),
     };
 
     registry[projectName] = entry;
