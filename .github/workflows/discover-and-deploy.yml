@@ -4,22 +4,22 @@ on:
   push:
     branches: [main]
     paths:
-      - 'projects/**'   # only trigger when something under projects/ changes
+      - 'projects/**'   # trigger on any add / delete / edit under projects/
 
 permissions:
   contents: write
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
-  # JOB 1 — Scan projects/*/modules/ for new Terraform directories.
-  #          Writes auto-discovered-projects.json and commits it back.
-  #          Signals job 2 only when the file actually changed.
+  # JOB 1 — Diff projects/*/modules/ against the current registry.
+  #          Adds newly found projects, REMOVES deleted ones, commits back.
+  #          Signals job 2 only when the registry file actually changed.
   # ───────────────────────────────────────────────────────────────────────────
   discover:
-    name: Scan & update project registry
+    name: Sync project registry (add + remove)
     runs-on: ubuntu-latest
     outputs:
-      has_new: ${{ steps.scan.outputs.has_new }}
+      has_changes: ${{ steps.scan.outputs.has_changes }}
 
     steps:
       - name: Checkout (full history for reliable git diff)
@@ -33,34 +33,34 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run discovery script
+      - name: Run discovery + cleanup script
         id: scan
         run: |
           node scripts/discover-projects.js
-          if [ -f /tmp/eagle-eye-has-new ]; then
-            echo "has_new=true"  >> $GITHUB_OUTPUT
+          if [ -f /tmp/eagle-eye-has-changes ]; then
+            echo "has_changes=true"  >> $GITHUB_OUTPUT
           else
-            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Commit updated registry
-        if: steps.scan.outputs.has_new == 'true'
+        if: steps.scan.outputs.has_changes == 'true'
         run: |
           git config user.name  "Eagle Eye Bot"
           git config user.email "eagle-eye-bot@github-actions"
           git add nerdlets/test/auto-discovered-projects.json
           git diff --staged --quiet || \
-            git commit -m "chore(eagle-eye): auto-discover new projects [skip ci]"
+            git commit -m "chore(eagle-eye): sync project registry (add/remove) [skip ci]"
           git push
 
   # ───────────────────────────────────────────────────────────────────────────
-  # JOB 2 — Re-publish the Nerdpack so the bundled JSON reaches users.
-  #          Only runs when job 1 found at least one new project.
+  # JOB 2 — Re-publish the Nerdpack so the updated registry reaches users.
+  #          Runs on any registry change (additions OR removals).
   # ───────────────────────────────────────────────────────────────────────────
   redeploy:
     name: Publish Nerdpack to New Relic
     needs: discover
-    if: needs.discover.outputs.has_new == 'true'
+    if: needs.discover.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -113,4 +113,4 @@ jobs:
       - name: Done
         run: |
           echo "✅ Nerdpack published."
-          echo "   New projects are live in Eagle Eye — edit them via the ··· manage panel."
+          echo "   Registry changes are live in Eagle Eye — edit via the ··· manage panel."
