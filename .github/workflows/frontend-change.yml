@@ -1,0 +1,84 @@
+name: Deploy Nerdpack on index.js change
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'nerdlets/test/index.js'   # only fires when this file changes
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Bump version & publish Nerdpack
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── Bump patch version and commit package.json back so the next run
+      #    never tries to publish the same version number (avoids 409 errors).
+      - name: Bump patch version & commit package.json
+        run: |
+          git config user.name  "Eagle Eye Bot"
+          git config user.email "eagle-eye-bot@github-actions"
+
+          # Pull latest to avoid pushing on a stale ref
+          git pull --rebase origin main
+
+          # Bump patch digit (e.g. 1.0.0 → 1.0.1) and write to disk
+          NEW_VERSION=$(npm version patch --no-git-tag-version)
+          echo "Bumped to ${NEW_VERSION}"
+
+          # Commit package.json (and package-lock.json if present)
+          git add package.json package-lock.json || true
+          git diff --staged --quiet || \
+            git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
+          git push
+
+      - name: Install NR1 CLI
+        run: |
+          curl -s https://cli.nr-ext.net/installer.sh | sudo bash
+          nr1 --version
+
+      - name: Install Nerdpack dependencies
+        run: npm install
+
+      - name: Configure NR1 profile
+        env:
+          NR_API_KEY:    ${{ secrets.NR_API_KEY }}
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+          NR_REGION:     ${{ secrets.NR_REGION }}
+        run: |
+          REGION="${NR_REGION:-US}"
+          nr1 profiles:add \
+            --name  eagle-eye-ci \
+            --api-key "$NR_API_KEY" \
+            --region  "$REGION"
+          nr1 profiles:default --name eagle-eye-ci
+
+      - name: Publish Nerdpack
+        run: nr1 nerdpack:publish --profile eagle-eye-ci
+
+      - name: Subscribe account to STABLE channel
+        env:
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+        run: |
+          nr1 nerdpack:subscribe \
+            --channel STABLE \
+            --profile eagle-eye-ci
+        continue-on-error: true
+
+      - name: Done
+        run: |
+          echo "✅ Nerdpack published — index.js changes are live."
