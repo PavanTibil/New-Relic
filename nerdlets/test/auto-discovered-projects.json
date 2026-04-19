@@ -1,25 +1,4 @@
 {
-  "demo": {
-    "projectDirName": "demo",
-    "name": "Demo",
-    "provider": "aws",
-    "gcpProjectId": null,
-    "dashboardGuid": null,
-    "dashboardLink": null,
-    "resources": [
-      {
-        "label": "EC2",
-        "type": "aws_ec2",
-        "alwaysOn": true
-      }
-    ],
-    "knownServices": [],
-    "detectedAt": "2026-04-18T08:12:44.596Z",
-    "detectedFrom": "projects/demo/modules/ (1 .tf file across all subdirectories)",
-    "tfFilesFound": [
-      "projects/demo/modules/ec2/main.tf"
-    ]
-  },
   "test": {
     "projectDirName": "test",
     "name": "Test",
