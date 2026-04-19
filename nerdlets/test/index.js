@@ -4,20 +4,15 @@ import { NrqlQuery, navigation, AccountStorageMutation, AccountStorageQuery } fr
 import './styles.scss';
 
 // ─── Auto-discovered projects ─────────────────────────────────────────────────
-// Written by CI (scripts/discover-projects.js) and bundled at build time.
 let AUTO_DISCOVERED = {};
 try {
   // eslint-disable-next-line global-require
   AUTO_DISCOVERED = require('./auto-discovered-projects.json');
-} catch (_) {
-  // File not yet present on first deploy — safe to ignore.
-}
+} catch (_) {}
 
 // ─── Merge auto-discovered entries into the live providers list ───────────────
 const mergeAutoDiscovered = (providers) => {
-  if (!AUTO_DISCOVERED || Object.keys(AUTO_DISCOVERED).length === 0) {
-    return providers;
-  }
+  if (!AUTO_DISCOVERED || Object.keys(AUTO_DISCOVERED).length === 0) return providers;
   const merged = providers.map(p => ({ ...p, projects: [...p.projects] }));
   for (const [dirName, discovered] of Object.entries(AUTO_DISCOVERED)) {
     const { provider, name } = discovered;
@@ -76,11 +71,8 @@ const NEXT_LIFECYCLE = {
 
 // ─── POWER OFF ICON ───────────────────────────────────────────────────────────
 const PowerOffIcon = ({ size = 13, color = 'currentColor', style = {} }) => (
-  <svg
-    width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-    style={style}
-  >
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={style}>
     <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
     <line x1="12" y1="2" x2="12" y2="12" />
   </svg>
@@ -96,11 +88,11 @@ const SpinnerIcon = ({ size = 12, color = 'currentColor' }) => (
 
 // ─── GITHUB ACTIONS POLLING ───────────────────────────────────────────────────
 const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancelRef) => {
-  let attempts      = 0;
-  let lockedRunId   = null;
-  const MAX_ATTEMPTS       = 180;
-  const FALLBACK_ATTEMPTS  = 8;
-  const TIME_SLACK_MS      = 60 * 1000;
+  let attempts    = 0;
+  let lockedRunId = null;
+  const MAX_ATTEMPTS      = 180;
+  const FALLBACK_ATTEMPTS = 8;
+  const TIME_SLACK_MS     = 60 * 1000;
 
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -132,7 +124,6 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
       if (!res.ok) { scheduleNext(); return; }
       const json = await res.json();
       const runs = json.workflow_runs || [];
-
       const cutoff = dispatchTime - TIME_SLACK_MS;
       const candidates = runs.filter(r => new Date(r.created_at).getTime() >= cutoff);
 
@@ -141,13 +132,10 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
         run = candidates[0];
       } else if (attempts >= FALLBACK_ATTEMPTS) {
         run = runs[0] || null;
-        if (run) {
-          console.warn('[Eagle Eye] Falling back to newest run:', run.id, run.created_at);
-        }
+        if (run) console.warn('[Eagle Eye] Falling back to newest run:', run.id, run.created_at);
       }
 
       if (!run) { scheduleNext(); return; }
-
       lockedRunId = run.id;
       console.log('[Eagle Eye] Locked onto run:', lockedRunId, 'status:', run.status);
       handleRun(run);
@@ -159,19 +147,16 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
 
   const handleRun = (run) => {
     if (cancelRef && cancelRef.cancelled) return;
-
     if (run.status === 'queued' || run.status === 'in_progress') {
       onStatusChange(INFRA_STATES.RUNNING, run);
       scheduleNext();
       return;
     }
-
     if (run.status === 'completed') {
       const succeeded = run.conclusion === 'success';
       onComplete(succeeded ? 'success' : run.conclusion || 'failure', run);
       return;
     }
-
     scheduleNext();
   };
 
@@ -183,11 +168,14 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 6000);
 };
 
-const callInfraAPI = async (projectName, action, token) => {
+// ─── GITHUB ACTIONS DISPATCH ──────────────────────────────────────────────────
+// ✅ FIX: accepts full project object, sends projects/<projectDirName> as path
+const callInfraAPI = async (project, action, token) => {
   if (!token || token === '') {
     throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
   }
-  console.log(`[Eagle Eye] GitHub Actions dispatch: ${action.toUpperCase()} for "${projectName}"`);
+  const projectPath = `projects/${project.projectDirName}`;
+  console.log(`[Eagle Eye] GitHub Actions dispatch: ${action.toUpperCase()} for "${project.name}" → ${projectPath}`);
   const res = await fetch(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW_INFRA}/dispatches`,
     {
@@ -200,7 +188,7 @@ const callInfraAPI = async (projectName, action, token) => {
       },
       body: JSON.stringify({
         ref: 'main',
-        inputs: { project: projectName, action },
+        inputs: { project: projectPath, action },
       }),
     }
   );
@@ -319,11 +307,7 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
 // ─── INFRA ACTION STATUS BANNER ───────────────────────────────────────────────
 const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   if (actionState === INFRA_STATES.IDLE) return null;
-
-  const actionLabel = {
-    apply: 'Apply', stop: 'Stop', start: 'Start', terminate: 'Terminate',
-  }[lastAction] || lastAction;
-
+  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction;
   const configs = {
     [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
     [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
@@ -331,10 +315,8 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
     [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Workflow did not complete — check GitHub Actions for details', dismissable:true },
     [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Polling stopped after 30 min — check GitHub Actions manually', dismissable:true },
   };
-
   const cfg = configs[actionState];
   if (!cfg) return null;
-
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', background:cfg.bg, border:`1px solid ${cfg.border}`, borderRadius:8, margin:'4px 0 6px' }}>
       <span style={{ color:cfg.color, fontSize:13, flexShrink:0, display:'flex', alignItems:'center' }}>{cfg.icon}</span>
@@ -363,7 +345,8 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     try {
       const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
       const preDispatch = Date.now();
-      await callInfraAPI(project.name, ghAction, ghToken);
+      // ✅ FIX: pass full project object (not just project.name)
+      await callInfraAPI(project, ghAction, ghToken);
       onConfirm(preDispatch);
     } catch (e) {
       setErr(e?.message || 'GitHub Actions dispatch failed.');
@@ -380,18 +363,13 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     : { bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.4)', text:'#f5a623' };
 
   const title   = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Terminate Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
-  const btnText = busy
-    ? 'Dispatching…'
-    : (isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it');
+  const btnText = busy ? 'Dispatching…' : (isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it');
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onCancel}>
       <div style={{ background:'#0f1629', border:`1px solid ${colors.border}`, borderRadius:16, width:'90%', maxWidth:440, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
         <div style={{ width:48, height:48, borderRadius:12, background:colors.bg, border:`1px solid ${colors.border}`, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:16 }}>
-          {isTerminate
-            ? <PowerOffIcon size={22} color={colors.text} />
-            : <span style={{ fontSize:22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>
-          }
+          {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize:22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
         </div>
         <div style={{ fontSize:17, fontWeight:800, color:'#f0f4ff', marginBottom:8 }}>{title}</div>
         <div style={{ fontSize:13, color:'#7a8aaa', lineHeight:1.6, marginBottom:20 }}>
@@ -402,6 +380,9 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
         </div>
         <div style={{ fontSize:12, color:'#4a6080', marginBottom:14, padding:'8px 12px', background:'rgba(255,255,255,0.03)', borderRadius:6, border:'1px solid rgba(255,255,255,0.07)' }}>
           🔗 Triggers GitHub Actions workflow in <strong style={{ color:'#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong>
+          <div style={{ marginTop:4, fontSize:11, color:'#3d5070' }}>
+            Project path: <code style={{ color:'#7a9aaa' }}>projects/{project.projectDirName}</code>
+          </div>
         </div>
         {!ghToken && (
           <div style={{ fontSize:12, color:'#f5a623', marginBottom:14, padding:'8px 12px', background:'rgba(245,166,35,0.08)', borderRadius:6, border:'1px solid rgba(245,166,35,0.25)' }}>
@@ -492,6 +473,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
       <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
         <div style={{ fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</div>
         <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
+        {project.projectDirName && <div style={{ fontSize:10, color:'#3d5070', marginTop:1, fontFamily:'monospace' }}>projects/{project.projectDirName}</div>}
         {isBusy && (
           <div style={{ marginTop:4, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#f5a623' }}>
             <SpinnerIcon size={10} color="#f5a623" />
@@ -499,24 +481,10 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
           </div>
         )}
       </div>
-
-      {menuBtn(
-        (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'apply'); },
-        '#4285f4', 'Apply', 'Deploy / update infrastructure', disabledActions.includes('apply')
-      )}
-      {menuBtn(
-        (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'stop'); },
-        '#f5a623', 'Stop', 'Pause all services via CLI', disabledActions.includes('stop')
-      )}
-      {menuBtn(
-        (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'start'); },
-        '#00d4aa', 'Start', 'Resume all services via CLI', disabledActions.includes('start')
-      )}
-      {menuBtn(
-        (e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'terminate'); },
-        '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)', disabledActions.includes('terminate'),
-        <PowerOffIcon size={13} color="#ff4d6d" />
-      )}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'apply'); },     '#4285f4', 'Apply',     'Deploy / update infrastructure',         disabledActions.includes('apply'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'stop'); },      '#f5a623', 'Stop',      'Pause all services via CLI',             disabledActions.includes('stop'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'start'); },     '#00d4aa', 'Start',     'Resume all services via CLI',            disabledActions.includes('start'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'terminate'); }, '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)', disabledActions.includes('terminate'), <PowerOffIcon size={13} color="#ff4d6d" />)}
     </div>,
     document.body
   ) : null;
@@ -1026,7 +994,6 @@ const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
   const tagFilter = managedOnly ? "AND `aws.ec2.tag.ManagedBy` = 'eagle-eye'" : '';
   const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
   const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
-
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={midQ} pollInterval={60000}>
       {({ data: midData }) => (
@@ -1035,14 +1002,12 @@ const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
             if (!midData || !innerData) return null;
             const recentIds   = new Set();
             const impairedIds = new Set();
-
             (innerData||[]).forEach(s => {
               const p = extractEc2FacetPair(s);
               if (!p?.name) return;
               recentIds.add(p.name);
               if (p.state === 'impaired') impairedIds.add(p.name);
             });
-
             const seen = new Set();
             let run = 0, stop = 0, imp = 0;
             (midData||[]).forEach(s => {
@@ -1053,7 +1018,6 @@ const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
               else if (recentIds.has(p.name))   run++;
               else                               stop++;
             });
-
             if (!loaded) setTimeout(() => onCounts({ run, stop, imp }), 0);
             return null;
           }}
@@ -1213,14 +1177,12 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
                         if (al || ml) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
                         const activeI   = new Set();
                         const impairedI = new Set();
-
                         (ad||[]).forEach(s => {
                           const p = extractEc2FacetPair(s);
                           if (!p?.name) return;
                           activeI.add(p.name);
                           if (p.state === 'impaired') impairedI.add(p.name);
                         });
-
                         const seen = new Set();
                         const visibleInstances = [];
                         (md||[]).forEach(s => {
@@ -1229,22 +1191,18 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
                           seen.add(p.name);
                           visibleInstances.push({
                             name: p.name,
-                            state: impairedI.has(p.name) ? 'impaired' :
-                                   activeI.has(p.name)   ? 'running'  : 'stopped',
+                            state: impairedI.has(p.name) ? 'impaired' : activeI.has(p.name) ? 'running' : 'stopped',
                           });
                         });
-
                         if (visibleInstances.length === 0) {
                           return <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>No active instances found</div>;
                         }
-
                         const ord = { running:0, pending:1, stopping:2, stopped:3, impaired:4 };
                         visibleInstances.sort((a, b) => {
                           const ao = ord[a.state] ?? 99;
                           const bo = ord[b.state] ?? 99;
                           return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
                         });
-
                         return (
                           <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
                             {visibleInstances.map((inst, i) => {
@@ -1335,7 +1293,6 @@ const TestProjectBanner = ({ onInfraAction, project, disabledActions, activeActi
     { label:'Terminate', action:'terminate', color:'#ff4d6d', isPower:true  },
   ];
   const isBusy = activeAction !== null;
-
   return (
     <div style={{ margin:'6px 0 4px', padding:'10px 12px', background:'rgba(167,139,250,0.07)', border:'1px dashed rgba(167,139,250,0.35)', borderRadius:8 }}>
       <div style={{ fontSize:11, fontWeight:700, color:'#a78bfa', marginBottom:8 }}>🧪 Test Panel — trigger each GitHub Action:</div>
@@ -1361,16 +1318,13 @@ const TestProjectBanner = ({ onInfraAction, project, disabledActions, activeActi
 
 // ─── PROJECT ROW ──────────────────────────────────────────────────────────────
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction }) => {
-  const [expanded, setExpanded] = useState(false);
-
+  const [expanded,     setExpanded]     = useState(false);
   const [lifecycle,    setLifecycle]    = useState(null);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
-  useEffect(() => {
-    return () => { pollCancelRef.current.cancelled = true; };
-  }, []);
+  useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
   const getDisabledActions = () => {
     if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
@@ -1385,16 +1339,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
     setActiveAction(action);
     setActionState(INFRA_STATES.DISPATCHING);
-
     const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
-
     pollCancelRef.current = { cancelled: false };
     const cancelRef = pollCancelRef.current;
-
-    const onStatusChange = (newState) => {
-      if (!cancelRef.cancelled) setActionState(newState);
-    };
-
+    const onStatusChange = (newState) => { if (!cancelRef.cancelled) setActionState(newState); };
     const onComplete = (conclusion) => {
       if (cancelRef.cancelled) return;
       if (conclusion === 'success') {
@@ -1407,13 +1355,9 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         setActionState(INFRA_STATES.FAILED);
       }
       setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.IDLE);
-          setActiveAction(null);
-        }
+        if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
       }, 8000);
     };
-
     if (token && token.trim() !== '') {
       pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
     } else {
@@ -1521,11 +1465,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             {isBusy && <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />}
           </div>
           <div className="project-row__right">
-            <button
-              onClick={e => { e.stopPropagation(); if (!isBusy) handleInfraAction(project, 'apply'); }}
-              disabled={isBusy}
-              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:isBusy?'#6a7a8a':'#4285f4', fontWeight:700, fontSize:11, cursor:isBusy?'not-allowed':'pointer', outline:'none', flexShrink:0, display:'flex', alignItems:'center', gap:5, opacity:isBusy?0.5:1 }}
-            >
+            <button onClick={e => { e.stopPropagation(); if (!isBusy) handleInfraAction(project, 'apply'); }} disabled={isBusy}
+              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:isBusy?'#6a7a8a':'#4285f4', fontWeight:700, fontSize:11, cursor:isBusy?'not-allowed':'pointer', outline:'none', flexShrink:0, display:'flex', alignItems:'center', gap:5, opacity:isBusy?0.5:1 }}>
               {isBusy ? <SpinnerIcon size={11} color="#4285f4" /> : null}
               ⚙ Re-provision
             </button>
@@ -1538,35 +1479,28 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
               All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Click <strong style={{ color:'#4285f4' }}>Re-provision</strong> to restore.
             </div>
-            {isTestProject && (
-              <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
-            )}
+            {isTestProject && <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />}
           </div>
         )}
       </div>
     );
   }
 
-  const dotStatus = isBusy ? 'yellow' : status;
-
   return (
     <div className={`project-row project-row--${isBusy ? 'yellow' : status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||isTestProject?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
       <div className="project-row__main" onClick={handleRowClick}>
         <div className="project-row__left">
-          <StatusDot status={dotStatus} />
+          <StatusDot status={isBusy ? 'yellow' : status} />
           <span className="project-row__name">{project.name}</span>
-
           {isTestProject && (
             <span style={{ fontSize:10, fontWeight:700, color:'#a78bfa', background:'rgba(167,139,250,0.12)', border:'1px solid rgba(167,139,250,0.3)', borderRadius:100, padding:'2px 8px', letterSpacing:'0.5px' }}>TEST</span>
           )}
-
           {!loading && uptimeSummary !== null && !isBusy && (
             <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>
           )}
           {!loading && billingSummary !== null && !isBusy && (
             <span className="project-row__uptime-pill">{billingSummary} today</span>
           )}
-
           {isBusy && (
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
@@ -1574,7 +1508,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             </span>
           )}
         </div>
-
         <div className="project-row__right">
           <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
           {(hasResources || isTestProject) && !loading && (
@@ -1583,22 +1516,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {hasDashboard && <DashboardIcon onClick={e=>{ e.stopPropagation(); openDashboard(project); }} />}
         </div>
       </div>
-
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner
-            actionState={actionState}
-            lastAction={activeAction}
-            onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }}
-          />
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
           {loading ? <span className="project-row__detail-loading">Checking resource health…</span> : (
             <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
               {resourceStatuses.map((r,i) => <ExpandableResourceRow key={i} resource={r} project={project} />)}
             </div>
           )}
-          {isTestProject && (
-            <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />
-          )}
+          {isTestProject && <TestProjectBanner project={project} onInfraAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} />}
         </div>
       )}
     </div>
@@ -1815,33 +1741,20 @@ const EagleEye = () => {
   useEffect(() => {
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error }) => {
-        if (error) {
-          console.error('NerdStorage load error:', error);
-          setLoadError(true);
-          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-        } else if (data?.document?.providers) {
-          setProviders(mergeAutoDiscovered(data.document.providers));
-        } else {
-          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-        }
-      }).catch(() => {
-        setLoadError(true);
-        setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-      });
+        if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
+        else if (data?.document?.providers) setProviders(mergeAutoDiscovered(data.document.providers));
+        else setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+      }).catch(() => { setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
 
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
-      .then(({ data }) => {
-        if (data?.document?.accessToken) setGhToken(data.document.accessToken);
-      }).catch(() => {});
+      .then(({ data }) => { if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
+      .catch(() => {});
   }, []);
 
   const handleSave = async (newProviders) => {
     const { error } = await AccountStorageMutation.mutate({
-      accountId:ACCOUNT_ID,
-      actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-      collection:STORAGE_COLLECTION,
-      documentId:STORAGE_DOC_ID,
-      document:{ providers:newProviders },
+      accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+      collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID, document:{ providers:newProviders },
     });
     if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
     setProviders(newProviders);
@@ -1849,11 +1762,8 @@ const EagleEye = () => {
 
   const handleSaveToken = async (token) => {
     const { error } = await AccountStorageMutation.mutate({
-      accountId:ACCOUNT_ID,
-      actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-      collection:STORAGE_COLLECTION,
-      documentId:STORAGE_CONFIG_ID,
-      document:{ accessToken: token },
+      accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+      collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID, document:{ accessToken: token },
     });
     if (error) throw new Error('Failed to save token: ' + (error.message || JSON.stringify(error)));
     setGhToken(token);
@@ -1901,21 +1811,11 @@ const EagleEye = () => {
       </footer>
 
       {showModal && (
-        <ProjectManagerModal
-          providers={providers}
-          providerId={showModal.providerId}
-          projectHealthMap={showModal.projectHealthMap}
-          onSave={handleSave}
-          onClose={() => setShowModal(null)}
-        />
+        <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={() => setShowModal(null)} />
       )}
 
       {showConfig && (
-        <ConfigModal
-          currentToken={ghToken}
-          onSave={handleSaveToken}
-          onClose={() => setShowConfig(false)}
-        />
+        <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={() => setShowConfig(false)} />
       )}
 
       {infraConfirm && (
