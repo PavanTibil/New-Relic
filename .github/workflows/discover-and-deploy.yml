@@ -68,14 +68,35 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          # Use a PAT so the version-bump commit can trigger downstream workflows
+          # if needed. Falls back to GITHUB_TOKEN if PAT is not set.
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
+      # ── Bump patch version AND commit it back so the next run never
+      #    tries to publish the same version number (fixes 409 errors).
+      - name: Bump patch version & commit package.json
+        run: |
+          git config user.name  "Eagle Eye Bot"
+          git config user.email "eagle-eye-bot@github-actions"
+
+          # Pull latest so we don't push on top of a stale ref
+          git pull --rebase origin main
+
+          # Bump the patch digit (e.g. 0.2.8 → 0.2.9) and write to disk.
+          # --no-git-tag-version keeps npm from creating a git tag.
+          NEW_VERSION=$(npm version patch --no-git-tag-version)
+          echo "Bumped to ${NEW_VERSION}"
+
+          # Commit package.json (and package-lock.json if present)
+          git add package.json package-lock.json || true
+          git diff --staged --quiet || \
+            git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
+          git push
 
       - name: Install NR1 CLI
         run: |
