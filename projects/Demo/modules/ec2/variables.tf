@@ -1,19 +1,14 @@
-variable "instance_type" {
-  default = "t2.micro"
-}
-
 variable "ami_id" {
-  default = "ami-020cba7c55df1f615"
+  description = "ami-05d2d839d4f73aafb"
+  type        = string
 }
 
-variable "key_name" {
-  default = "Demo"
+variable "instance_type" {
+  type        = string
+  default     = "t2.micro"
 }
 
-variable "security_group_id" {
-  default = "sg-09fb399e759c7ce8a"
-}
-
-variable "instance_count" {
-  default = 1
+variable "instance_name" {
+  type        = string
+  default     = "NR Auto Detected"
 }
