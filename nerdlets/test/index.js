@@ -64,17 +64,17 @@ const NEXT_LIFECYCLE = {
 };
 
 // ─── HOOK: check GitHub repo for .tf files under projects/<dirName>/modules/ ──
-// FIX: hasTf=null means "unknown / not yet checked" — this no longer blocks buttons.
-// Buttons are only blocked when hasTf===false (confirmed absent).
+// Always runs when projectDirName + token are available — no longer gated on expand.
 const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
 
   React.useEffect(() => {
+    // No directory configured → definitely no infra
     if (!projectDirName) {
       setState({ loading: false, hasTf: false });
       return;
     }
-    // No token → can't check, but don't block buttons. hasTf stays null (unknown).
+    // Token not yet set → can't check; leave hasTf as null (unknown)
     if (!token) {
       setState({ loading: false, hasTf: null });
       return;
@@ -107,7 +107,7 @@ const useGithubTfFiles = (projectDirName, token) => {
 
     checkDir(`projects/${projectDirName}/modules`)
       .then(hasTf  => { if (!cancelled) setState({ loading: false, hasTf }); })
-      .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: null }); }); // on error → null (unknown), don't block
+      .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: false }); });
 
     return () => { cancelled = true; };
   }, [projectDirName, token]);
@@ -184,13 +184,7 @@ const callInfraAPI = async (project, action, token) => {
       body: JSON.stringify({ ref: 'main', inputs: { project: projectPath, action } }),
     }
   );
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    // Try to parse GitHub error message for clarity
-    let ghMessage = '';
-    try { ghMessage = JSON.parse(body)?.message || ''; } catch (_) {}
-    throw new Error(`GitHub Actions dispatch failed (${res.status})${ghMessage ? ': ' + ghMessage : body ? ': ' + body : ''}`);
-  }
+  if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`GitHub Actions dispatch failed (${res.status}): ${body}`); }
   return { success: true };
 };
 
@@ -292,7 +286,7 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   const configs = {
     [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
     [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
-    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed successfully`, sub:'Workflow finished — resources are up to date', dismissable:true },
+    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed`, sub:'Workflow finished successfully', dismissable:true },
     [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Check GitHub Actions for details', dismissable:true },
     [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Check GitHub Actions manually', dismissable:true },
   };
@@ -310,7 +304,6 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
 };
 
 // ─── INFRA CONFIRMATION MODAL ─────────────────────────────────────────────────
-// FIX: Improved error display, clearer project path, better UX
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
@@ -319,16 +312,11 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
   const handleConfirm = async () => {
     setBusy(true); setErr('');
     try {
-      // Map UI action names to GitHub Actions workflow input values
       const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
       const preDispatch = Date.now();
       await callInfraAPI(project, ghAction, ghToken);
-      // Dispatch succeeded — close modal and start polling in the project row
       onConfirm(preDispatch);
-    } catch (e) {
-      setErr(e?.message || 'GitHub Actions dispatch failed.');
-      setBusy(false);
-    }
+    } catch (e) { setErr(e?.message || 'GitHub Actions dispatch failed.'); setBusy(false); }
   };
 
   const colors = isApply ? { bg:'rgba(66,133,244,0.12)', border:'rgba(66,133,244,0.4)', text:'#4285f4' }
@@ -337,80 +325,31 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     :               { bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.4)', text:'#f5a623' };
 
   const title   = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Terminate Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
-  const btnText = busy ? 'Dispatching to GitHub…' : isApply ? 'Yes, Apply' : isTerminate ? 'Yes, Terminate' : isStart ? 'Yes, Start' : 'Yes, Stop';
+  const btnText = busy ? 'Dispatching…' : isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it';
   const projectPath = `projects/${project.projectDirName}`;
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onCancel}>
-      <div style={{ background:'#0f1629', border:`1px solid ${colors.border}`, borderRadius:16, width:'90%', maxWidth:480, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
-
-        {/* Header */}
-        <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:20 }}>
-          <div style={{ width:48, height:48, borderRadius:12, background:colors.bg, border:`1px solid ${colors.border}`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-            {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize:22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
-          </div>
-          <div>
-            <div style={{ fontSize:17, fontWeight:800, color:'#f0f4ff' }}>{title}</div>
-            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:2 }}>This will trigger a GitHub Actions workflow run</div>
-          </div>
+      <div style={{ background:'#0f1629', border:`1px solid ${colors.border}`, borderRadius:16, width:'90%', maxWidth:440, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ width:48, height:48, borderRadius:12, background:colors.bg, border:`1px solid ${colors.border}`, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:16 }}>
+          {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize:22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
         </div>
-
-        {/* Project + action description */}
-        <div style={{ fontSize:13, color:'#7a8aaa', lineHeight:1.7, marginBottom:16, padding:'12px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-            <span style={{ fontSize:11, color:'#4a6080', textTransform:'uppercase', letterSpacing:'0.8px', fontWeight:600 }}>Project</span>
-            <span style={{ fontSize:13, fontWeight:700, color:'#f0f4ff' }}>{project.name}</span>
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-            <span style={{ fontSize:11, color:'#4a6080', textTransform:'uppercase', letterSpacing:'0.8px', fontWeight:600 }}>Path</span>
-            <code style={{ fontSize:12, color:'#7a9aaa', background:'rgba(255,255,255,0.05)', padding:'2px 8px', borderRadius:4 }}>{projectPath}</code>
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <span style={{ fontSize:11, color:'#4a6080', textTransform:'uppercase', letterSpacing:'0.8px', fontWeight:600 }}>Action</span>
-            <span style={{ fontSize:12, fontWeight:700, color:colors.text, background:colors.bg, border:`1px solid ${colors.border}`, padding:'2px 10px', borderRadius:100 }}>
-              {isApply ? 'terraform apply' : isTerminate ? 'terraform destroy' : isStart ? 'start instances' : 'stop instances'}
-            </span>
-          </div>
+        <div style={{ fontSize:17, fontWeight:800, color:'#f0f4ff', marginBottom:8 }}>{title}</div>
+        <div style={{ fontSize:13, color:'#7a8aaa', lineHeight:1.6, marginBottom:20 }}>
+          {isApply && <>Run <span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform apply</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color:colors.text }}>provisioned or updated</strong>.</>}
+          {isStop  && <>Scale down all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isStart && <>Scale up all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isTerminate && <><span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform destroy</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color:colors.text }}>permanently destroyed</strong>.<div style={{ marginTop:10, padding:'8px 12px', background:'rgba(255,77,109,0.07)', border:'1px solid rgba(255,77,109,0.2)', borderRadius:8, fontSize:12, color:'#ff4d6d' }}>⚠ Use Apply to re-provision after termination.</div></>}
         </div>
-
-        {/* Warning for destructive actions */}
-        {isTerminate && (
-          <div style={{ marginBottom:16, padding:'10px 14px', background:'rgba(255,77,109,0.07)', border:'1px solid rgba(255,77,109,0.2)', borderRadius:8 }}>
-            <div style={{ fontSize:12, color:'#ff4d6d', fontWeight:700, marginBottom:3 }}>⚠ Destructive action</div>
-            <div style={{ fontSize:11, color:'#c87080', lineHeight:1.5 }}>All resources in <strong>{project.name}</strong> will be permanently destroyed. Use Apply to re-provision afterwards.</div>
-          </div>
-        )}
-
-        {/* Token warning */}
-        {!ghToken && (
-          <div style={{ fontSize:12, color:'#f5a623', marginBottom:14, padding:'8px 12px', background:'rgba(245,166,35,0.08)', borderRadius:6, border:'1px solid rgba(245,166,35,0.25)' }}>
-            ⚠ ACCESS_TOKEN not set — use ⚙ Config to add it first. The action will fail without a valid token.
-          </div>
-        )}
-
-        {/* Dispatch error */}
-        {err && (
-          <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'10px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)', lineHeight:1.5 }}>
-            <div style={{ fontWeight:700, marginBottom:3 }}>⚠ Dispatch failed</div>
-            <div style={{ wordBreak:'break-word' }}>{err}</div>
-          </div>
-        )}
-
-        {/* Repo info */}
-        <div style={{ fontSize:11, color:'#3d5070', marginBottom:18, display:'flex', alignItems:'center', gap:6 }}>
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="#3d5070"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span><strong style={{ color:'#5a7090' }}>{GH_OWNER}/{GH_REPO}</strong> · workflow: <code style={{ color:'#3d5070' }}>{GH_WORKFLOW_INFRA}</code></span>
+        <div style={{ fontSize:12, color:'#4a6080', marginBottom:14, padding:'8px 12px', background:'rgba(255,255,255,0.03)', borderRadius:6, border:'1px solid rgba(255,255,255,0.07)' }}>
+          🔗 <strong style={{ color:'#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong>
+          <div style={{ marginTop:3, fontSize:11, color:'#3d5070' }}>Path: <code style={{ color:'#7a9aaa' }}>{projectPath}</code></div>
         </div>
-
-        {/* Buttons */}
+        {!ghToken && <div style={{ fontSize:12, color:'#f5a623', marginBottom:14, padding:'8px 12px', background:'rgba(245,166,35,0.08)', borderRadius:6, border:'1px solid rgba(245,166,35,0.25)' }}>⚠ ACCESS_TOKEN not set — use ⚙ Config to add it first.</div>}
+        {err      && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {err}</div>}
         <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
-          <button onClick={onCancel} disabled={busy} style={{ padding:'9px 20px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:busy?'not-allowed':'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none', opacity:busy?0.6:1 }}>
-            Cancel
-          </button>
-          <button onClick={handleConfirm} disabled={busy} style={{ padding:'9px 24px', borderRadius:8, border:`1px solid ${colors.border}`, background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:busy?'not-allowed':'pointer', outline:'none', opacity:busy?0.7:1, display:'flex', alignItems:'center', gap:7 }}>
-            {busy && <SpinnerIcon size={12} color="#fff" />}
-            {btnText}
-          </button>
+          <button onClick={onCancel} disabled={busy} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
+          <button onClick={handleConfirm} disabled={busy || !ghToken} style={{ padding:'8px 20px', borderRadius:8, border:'none', background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:busy||!ghToken?'not-allowed':'pointer', outline:'none', opacity:busy||!ghToken?0.5:1 }}>{btnText}</button>
         </div>
       </div>
     </div>
@@ -426,7 +365,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   const updatePos = () => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    const w = 270; let left = r.right - w;
+    const w = 260; let left = r.right - w;
     if (left < 8) left = r.left;
     if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
     setPos({ top: r.bottom + 6, left });
@@ -444,11 +383,13 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   useEffect(() => () => stopTracking(), []);
 
   const isBusy = activeAction !== null;
+  // All 4 actions disabled = no infra available
   const allDisabled = ['apply','stop','start','terminate'].every(a => disabledActions.includes(a));
 
   const menuBtn = (onClick, color, label, desc, disabled, icon) => {
     const isRunning = isBusy && activeAction === label.toLowerCase();
     const actualDisabled = disabled || isBusy;
+    // Determine tooltip text for disabled state
     const disabledReason = allDisabled && infraReason
       ? infraReason
       : isBusy ? `Locked — ${activeAction} in progress` : desc;
@@ -472,7 +413,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   };
 
   const dropdown = open ? ReactDOM.createPortal(
-    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:270, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
+    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:260, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
       <style>{`@keyframes eeDropIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
         <div style={{ fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</div>
@@ -480,7 +421,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
         <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
         {allDisabled && infraReason && (
           <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#7a8aaa', background:'rgba(122,138,170,0.08)', border:'1px solid rgba(122,138,170,0.2)', borderRadius:5, padding:'4px 8px' }}>
-            <span style={{ fontSize:12 }}>ℹ</span>
+            <span style={{ fontSize:12 }}>📂</span>
             <span>{infraReason}</span>
           </div>
         )}
@@ -702,13 +643,13 @@ const DashboardIcon = ({ onClick }) => (
 );
 
 // ─── NO INFRA YET BADGE ───────────────────────────────────────────────────────
-// FIX: Only shown when hasTf===false (confirmed no .tf files). Not shown while checking.
+// Shows next to project name when no .tf files exist in the repo.
 const NoInfraBadge = ({ checking = false }) => {
   if (checking) {
     return (
       <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:10, color:'#4a6080', fontWeight:500 }}>
         <SpinnerIcon size={9} color="#4a6080" />
-        <span>checking infra…</span>
+        <span>checking…</span>
       </span>
     );
   }
@@ -853,6 +794,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     </div>
   );
 
+  // ── Edit form ──────────────────────────────────────────────────────────────────
   const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
   const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
   const goBack          = () => setView('list');
@@ -1244,96 +1186,62 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
+  // Read GitHub token from context
   const ghToken = React.useContext(GhTokenContext);
 
-  // TF file check — only runs when token is available.
+  // ── TF file check — runs as soon as component mounts and token is available.
+  // NOT gated on expanded; we need the result to drive button state at all times.
   const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
 
-  // ── FIX: infraReady=true when hasTf===true OR hasTf===null (unknown/unchecked).
-  // Only false when hasTf===false (confirmed absent) or no projectDirName.
-  const infraReady = project.projectDirName
-    ? (hasTf === true || hasTf === null)  // true = confirmed present; null = unknown, allow optimistically
-    : false;
+  // Infra buttons are only enabled when TF files are confirmed present.
+  const infraReady = hasTf === true;
 
-  // The "No Infra Yet" badge only shows when hasTf===false (confirmed absent).
-  const showNoInfraBadge = project.projectDirName && hasTf === false;
-
+  // Human-readable reason used in the dropdown when all buttons are disabled.
   const infraDisabledReason = (() => {
-    if (!project.projectDirName) return 'No project directory configured — edit via ··· → manage';
-    if (!ghToken)                return 'Set a GitHub token via ⚙ Config to verify infra files';
-    if (tfLoading)               return 'Checking GitHub repo for Terraform files…';
-    if (hasTf === false)         return 'No .tf files found in projects/' + project.projectDirName + '/modules/';
+    if (!project.projectDirName)         return 'No project directory configured';
+    if (!ghToken)                        return 'Set GitHub token (⚙ Config) to enable';
+    if (tfLoading || hasTf === null)     return 'Checking repo for Terraform files…';
+    if (hasTf === false)                 return 'No .tf files found — add infra first';
     return '';
   })();
 
   useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
   const getDisabledActions = () => {
-    // Only block when confirmed hasTf===false (no .tf files found in repo)
-    if (hasTf === false) return ['apply', 'stop', 'start', 'terminate'];
-    // Block all while a workflow is actively running (not after success/fail/timeout)
-    if (actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING) {
+    // Block all 4 infra actions when TF files are absent / unconfirmed
+    if (!infraReady) return ['apply', 'stop', 'start', 'terminate'];
+    // Block all while a workflow is in flight
+    if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
+        actionState !== INFRA_STATES.FAILED && actionState !== INFRA_STATES.TIMEOUT) {
       return ['apply', 'stop', 'start', 'terminate'];
     }
-    // Lifecycle-based restrictions
     if (!lifecycle) return [];
     const allowed = ALLOWED_ACTIONS[lifecycle] || [];
     return ['apply', 'stop', 'start', 'terminate'].filter(a => !allowed.includes(a));
   };
 
-  // ── FIX: handleActionDispatched is called from InfraConfirmModal.onConfirm
-  // It receives (action, token, dispatchTime) and starts polling for THIS project row.
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
-    setActiveAction(action);
-    setActionState(INFRA_STATES.DISPATCHING);
-
-    // Back-date by 10s to account for GitHub's clock vs ours
+    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
     const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
-
     pollCancelRef.current = { cancelled: false };
     const cancelRef = pollCancelRef.current;
-
-    const onStatusChange = (newState) => {
-      if (!cancelRef.cancelled) setActionState(newState);
-    };
-
+    const onStatusChange = (newState) => { if (!cancelRef.cancelled) setActionState(newState); };
     const onComplete = (conclusion) => {
       if (cancelRef.cancelled) return;
-      if (conclusion === 'success') {
-        setActionState(INFRA_STATES.SUCCEEDED);
-        const next = NEXT_LIFECYCLE[action];
-        if (next) setLifecycle(next);
-      } else if (conclusion === 'timeout') {
-        setActionState(INFRA_STATES.TIMEOUT);
-      } else {
-        setActionState(INFRA_STATES.FAILED);
-      }
-      // Auto-dismiss after 10s
-      setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.IDLE);
-          setActiveAction(null);
-        }
-      }, 10000);
+      if (conclusion === 'success') { setActionState(INFRA_STATES.SUCCEEDED); const next=NEXT_LIFECYCLE[action]; if (next) setLifecycle(next); }
+      else if (conclusion === 'timeout') setActionState(INFRA_STATES.TIMEOUT);
+      else setActionState(INFRA_STATES.FAILED);
+      setTimeout(() => { if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); } }, 8000);
     };
-
     if (token && token.trim() !== '') {
       pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
     } else {
-      // No token → short timeout
       setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.TIMEOUT);
-          setTimeout(() => {
-            if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
-          }, 6000);
-        }
+        if (!cancelRef.cancelled) { setActionState(INFRA_STATES.TIMEOUT); setTimeout(() => { if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); } }, 6000); }
       }, 3000);
     }
   }, []);
 
-  // ── FIX: handleInfraAction triggers the root confirm modal for THIS project only.
-  // The project object is passed explicitly so the modal shows the right project path.
   const handleInfraAction = useCallback((proj, action) => {
     onInfraAction(proj, action, handleActionDispatched);
   }, [onInfraAction, handleActionDispatched]);
@@ -1382,8 +1290,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__left" style={{ gap:10 }}>
           <span style={{ fontSize:14, color:'#7a8aaa' }}>◎</span>
           <span className="project-row__name" style={{ color:'#c8d4f0' }}>{project.name}</span>
-          {/* FIX: Only show NoInfraBadge when confirmed hasTf===false */}
-          {showNoInfraBadge && <NoInfraBadge />}
+          {/* No Infra badge for empty projects */}
+          {!infraReady && !tfLoading && <NoInfraBadge />}
           {tfLoading && <NoInfraBadge checking />}
         </div>
         <div className="project-row__right">
@@ -1431,6 +1339,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
               <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
             </span>
+            {isBusy && <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />}
           </div>
           <div className="project-row__right">
             <button onClick={e => { e.stopPropagation(); if (!isBusy && infraReady) handleInfraAction(project, 'apply'); }} disabled={isBusy || !infraReady}
@@ -1443,7 +1352,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         </div>
         {expanded && (
           <div className="project-row__detail">
-            <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
             <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
               All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Click <strong style={{ color:'#4285f4' }}>Re-provision</strong> to restore.
             </div>
@@ -1473,29 +1381,21 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           <StatusDot status={isBusy ? 'yellow' : status} />
           <span className="project-row__name">{project.name}</span>
 
-          {/* FIX: Badge logic — only show "No Infra Yet" when confirmed absent, spinner when checking */}
-          {!isBusy && showNoInfraBadge && <NoInfraBadge />}
-          {!isBusy && tfLoading && project.projectDirName && ghToken && <NoInfraBadge checking />}
+          {/* ── Infra status badge (shown when buttons are disabled) ── */}
+          {!isBusy && (
+            tfLoading
+              ? <NoInfraBadge checking />
+              : !infraReady
+                ? <NoInfraBadge />
+                : null
+          )}
 
           {!loading && infraReady && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
           {!loading && infraReady && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
-
-          {/* Running action pill */}
           {isBusy && (
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
-              {actionState === INFRA_STATES.DISPATCHING ? 'Dispatching to GitHub…' : `${activeAction} in progress…`}
-            </span>
-          )}
-          {/* Success/fail pill when not busy but recently finished */}
-          {actionState === INFRA_STATES.SUCCEEDED && !isBusy && (
-            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#00d4aa', background:'rgba(0,212,170,0.1)', border:'1px solid rgba(0,212,170,0.3)', borderRadius:100, padding:'2px 8px' }}>
-              ✓ {activeAction} completed
-            </span>
-          )}
-          {(actionState === INFRA_STATES.FAILED || actionState === INFRA_STATES.TIMEOUT) && !isBusy && (
-            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.1)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px' }}>
-              ✗ {activeAction} {actionState === INFRA_STATES.TIMEOUT ? 'timed out' : 'failed'}
+              {actionState === INFRA_STATES.DISPATCHING ? 'Dispatching…' : `${activeAction} running…`}
             </span>
           )}
         </div>
@@ -1737,9 +1637,6 @@ const EagleEye = () => {
 
   if (!providers) return <EagleEyeLoader />;
 
-  // ── FIX: handleInfraAction in root captures (project, action, onDispatched callback).
-  // The confirm modal renders with the correct project, action, and token.
-  // onConfirm(dispatchTime) calls back into the specific ProjectRow's handleActionDispatched.
   const handleInfraAction = (project, action, onDispatched) => {
     setInfraConfirm({ project, action, onDispatched });
   };
@@ -1788,23 +1685,12 @@ const EagleEye = () => {
           <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={() => setShowConfig(false)} />
         )}
 
-        {/* FIX: InfraConfirmModal is rendered at root level.
-            - project: the specific project whose ··· was clicked
-            - action: apply/stop/start/terminate
-            - ghToken: from root state (always up-to-date)
-            - onConfirm(dispatchTime): closes modal, calls ProjectRow's handleActionDispatched
-              which starts polling for that specific project's workflow run
-            - onCancel: just closes modal, no state change in project row */}
         {infraConfirm && (
           <InfraConfirmModal
             project={infraConfirm.project}
             action={infraConfirm.action}
             ghToken={ghToken}
-            onConfirm={(dispatchTime) => {
-              const { action, onDispatched } = infraConfirm;
-              setInfraConfirm(null); // Close modal first
-              onDispatched?.(action, ghToken, dispatchTime); // Then start polling in the project row
-            }}
+            onConfirm={(dispatchTime) => { infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime); setInfraConfirm(null); }}
             onCancel={() => setInfraConfirm(null)}
           />
         )}
@@ -1814,3 +1700,4 @@ const EagleEye = () => {
 };
 
 export default EagleEye;
+
