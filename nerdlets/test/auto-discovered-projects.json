@@ -1,14 +1,1 @@
-{
-  "demo": {
-    "projectDirName": "demo",
-    "name": "Demo",
-    "provider": "aws",
-    "resources": [
-      {
-        "label": "EC2",
-        "type": "aws_ec2",
-        "alwaysOn": true
-      }
-    ]
-  }
-}
+{}
