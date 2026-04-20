@@ -51,6 +51,22 @@ $font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   to   { opacity: 1; transform: translateY(0);    max-height: 600px; }
 }
 
+// ─── GLOBAL BUTTON RESET ──────────────────────────────────────────────────────
+// Strips all browser-default borders, outlines and appearances from every
+// button in the app so no white/grey borders ever bleed through.
+button {
+  border: none !important;
+  outline: none !important;
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+}
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 .eagle-eye {
   font-family: $font;
@@ -61,6 +77,19 @@ $font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   position: relative;
   overflow: hidden;
   box-sizing: border-box;
+
+  // Belt-and-suspenders reset scoped to app too
+  button {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    -webkit-appearance: none;
+    appearance: none;
+    &:focus, &:focus-visible {
+      outline: none !important;
+      box-shadow: none !important;
+    }
+  }
 }
 
 // ─── BACKGROUND ORBS ─────────────────────────────────────────────────────────
