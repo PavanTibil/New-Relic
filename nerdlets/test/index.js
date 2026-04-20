@@ -43,9 +43,6 @@ const STORAGE_COLLECTION = 'eagle-eye';
 const STORAGE_DOC_ID     = 'providers';
 const STORAGE_CONFIG_ID  = 'config';
 
-// Session key to track if token was already verified this session
-const SESSION_TOKEN_KEY = 'ee_token_verified';
-
 const GH_OWNER          = 'PavanTibil';
 const GH_REPO           = 'New-Relic';
 const GH_WORKFLOW_INFRA = 'project-actions.yml';
@@ -66,13 +63,19 @@ const NEXT_LIFECYCLE = {
   apply: 'provisioned', start: 'provisioned', stop: 'stopped', terminate: 'terminated',
 };
 
-// ─── HOOK: check GitHub repo for .tf files under projects/<dirName>/ ──────────
-// This GATES the action buttons - if no TF files, only Apply is allowed.
+// ─── HOOK: check GitHub repo for .tf files under projects/<dirName>/modules/ ──
+// Always runs when projectDirName + token are available — no longer gated on expand.
 const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
 
   React.useEffect(() => {
-    if (!projectDirName || !token) {
+    // No directory configured → definitely no infra
+    if (!projectDirName) {
+      setState({ loading: false, hasTf: false });
+      return;
+    }
+    // Token not yet set → can't check; leave hasTf as null (unknown)
+    if (!token) {
       setState({ loading: false, hasTf: null });
       return;
     }
@@ -102,9 +105,9 @@ const useGithubTfFiles = (projectDirName, token) => {
       return false;
     };
 
-    checkDir(`projects/${projectDirName}`)
+    checkDir(`projects/${projectDirName}/modules`)
       .then(hasTf  => { if (!cancelled) setState({ loading: false, hasTf }); })
-      .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: null }); });
+      .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: false }); });
 
     return () => { cancelled = true; };
   }, [projectDirName, token]);
@@ -222,52 +225,38 @@ const RESOURCE_OPTIONS = {
 };
 
 // ─── CONFIG MODAL ─────────────────────────────────────────────────────────────
-// Requirement 3: Shows on every new session/device. Has "Change Token" option.
-const TokenGateModal = ({ onSave, existingToken }) => {
-  const [tokenInput, setTokenInput] = useState('');
+const ConfigModal = ({ currentToken, onSave, onClose }) => {
+  const [tokenInput, setTokenInput] = useState(currentToken || '');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [show, setShow] = useState(false);
-
-  const isChange = !!existingToken;
+  const [error,  setError]  = useState('');
+  const [saved,  setSaved]  = useState(false);
+  const [show,   setShow]   = useState(false);
 
   const handleSave = async () => {
-    const val = tokenInput.trim();
-    if (!val) { setError('Token cannot be empty.'); return; }
+    if (!tokenInput.trim()) { setError('Token cannot be empty.'); return; }
     setSaving(true); setError('');
-    try {
-      await onSave(val);
-      // Mark session as verified
-      try { sessionStorage.setItem(SESSION_TOKEN_KEY, '1'); } catch (_) {}
-    } catch (e) {
-      setError(e?.message || 'Save failed.');
-      setSaving(false);
-    }
+    try { await onSave(tokenInput.trim()); setSaved(true); setTimeout(() => onClose(), 800); }
+    catch (e) { setError(e?.message || 'Save failed.'); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.96)', backdropFilter:'blur(12px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.15)', borderRadius:18, width:'90%', maxWidth:440, padding:'32px 30px 26px', boxShadow:'0 32px 100px rgba(0,0,0,0.85)' }}>
-        <div style={{ textAlign:'center', marginBottom:24 }}>
-          <div style={{ width:52, height:52, borderRadius:14, background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.35)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, margin:'0 auto 14px' }}>🔑</div>
-          <div style={{ fontSize:18, fontWeight:800, color:'#f0f4ff', marginBottom:6 }}>
-            {isChange ? 'Change GitHub Token' : 'GitHub Token Required'}
-          </div>
-          <div style={{ fontSize:12, color:'#7a8aaa', lineHeight:1.6 }}>
-            {isChange
-              ? 'Enter your new GitHub Personal Access Token.'
-              : 'Enter your GitHub Personal Access Token to enable infrastructure actions.'}
+    <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onClose}>
+      <div style={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.15)', borderRadius:16, width:'90%', maxWidth:420, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:18 }}>
+          <div style={{ width:38, height:38, borderRadius:10, background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.35)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>⚙</div>
+          <div>
+            <div style={{ fontSize:16, fontWeight:800, color:'#f0f4ff' }}>Configure GitHub Token</div>
+            <div style={{ fontSize:11, color:'#7a8aaa', marginTop:1 }}>Stored securely in NerdStorage</div>
           </div>
         </div>
         <div style={{ marginBottom:16 }}>
-          <label style={{ fontSize:11, fontWeight:600, color:'#7a8aaa', textTransform:'uppercase', letterSpacing:1, display:'block', marginBottom:6 }}>ACCESS_TOKEN</label>
+          <label style={{ fontSize:11, fontWeight:600, color:'#7a8aaa', textTransform:'uppercase', letterSpacing:1, display:'block', marginBottom:6 }}>ACCESS_TOKEN value</label>
           <div style={{ position:'relative', display:'flex', alignItems:'center' }}>
             <input
               type={show ? 'text' : 'password'} value={tokenInput} onChange={e => setTokenInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSave()}
               placeholder="github_pat_XXXX…"
-              autoFocus
-              style={{ width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'10px 40px 10px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', fontFamily:'monospace', colorScheme:'dark' }}
+              style={{ width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'9px 40px 9px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', fontFamily:'monospace', colorScheme:'dark' }}
             />
             <button onClick={() => setShow(s => !s)} style={{ position:'absolute', right:10, background:'none', border:'none', cursor:'pointer', color:'#7a8aaa', fontSize:13, padding:0, outline:'none' }}>{show ? '🙈' : '👁'}</button>
           </div>
@@ -280,68 +269,10 @@ const TokenGateModal = ({ onSave, existingToken }) => {
           )}
         </div>
         {error && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {error}</div>}
-        <button onClick={handleSave} disabled={saving || !tokenInput.trim()} style={{ width:'100%', padding:'11px', borderRadius:9, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:14, cursor:saving||!tokenInput.trim()?'not-allowed':'pointer', outline:'none', opacity:saving||!tokenInput.trim()?0.55:1, marginBottom:10 }}>
-          {saving ? 'Saving…' : isChange ? 'Update Token' : 'Confirm & Continue'}
-        </button>
-        {isChange && (
-          <button onClick={() => { try { sessionStorage.setItem(SESSION_TOKEN_KEY, '1'); } catch (_) {} onSave(existingToken, true); }} style={{ width:'100%', padding:'9px', borderRadius:9, border:'1px solid rgba(255,255,255,0.12)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none' }}>
-            Keep existing token
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const ConfigModal = ({ currentToken, onSave, onClose }) => {
-  const [tokenInput, setTokenInput] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const [saved,  setSaved]  = useState(false);
-  const [show,   setShow]   = useState(false);
-
-  const handleSave = async () => {
-    if (!tokenInput.trim()) { setError('Token cannot be empty.'); return; }
-    setSaving(true); setError('');
-    try {
-      await onSave(tokenInput.trim());
-      setSaved(true);
-      setTimeout(() => onClose(), 800);
-    } catch (e) { setError(e?.message || 'Save failed.'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onClose}>
-      <div style={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.15)', borderRadius:16, width:'90%', maxWidth:420, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:18 }}>
-          <div style={{ width:38, height:38, borderRadius:10, background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.35)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>⚙</div>
-          <div>
-            <div style={{ fontSize:16, fontWeight:800, color:'#f0f4ff' }}>Change GitHub Token</div>
-            <div style={{ fontSize:11, color:'#7a8aaa', marginTop:1 }}>Stored securely in NerdStorage</div>
-          </div>
-        </div>
-        {currentToken && (
-          <div style={{ marginBottom:14, padding:'8px 12px', background:'rgba(0,212,170,0.06)', borderRadius:6, border:'1px solid rgba(0,212,170,0.18)', fontSize:11, color:'#00d4aa' }}>
-            ✓ A token is already set. Enter a new one below to replace it.
-          </div>
-        )}
-        <div style={{ marginBottom:16 }}>
-          <label style={{ fontSize:11, fontWeight:600, color:'#7a8aaa', textTransform:'uppercase', letterSpacing:1, display:'block', marginBottom:6 }}>New ACCESS_TOKEN value</label>
-          <div style={{ position:'relative', display:'flex', alignItems:'center' }}>
-            <input
-              type={show ? 'text' : 'password'} value={tokenInput} onChange={e => setTokenInput(e.target.value)}
-              placeholder="github_pat_XXXX…"
-              style={{ width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'9px 40px 9px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', fontFamily:'monospace', colorScheme:'dark' }}
-            />
-            <button onClick={() => setShow(s => !s)} style={{ position:'absolute', right:10, background:'none', border:'none', cursor:'pointer', color:'#7a8aaa', fontSize:13, padding:0, outline:'none' }}>{show ? '🙈' : '👁'}</button>
-          </div>
-        </div>
-        {error && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {error}</div>}
         {saved  && <div style={{ fontSize:12, color:'#00d4aa', marginBottom:14, padding:'8px 12px', background:'rgba(0,212,170,0.08)', borderRadius:6, border:'1px solid rgba(0,212,170,0.2)' }}>✓ Token saved!</div>}
         <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
           <button onClick={onClose} disabled={saving} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !tokenInput.trim()} style={{ padding:'8px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:saving||!tokenInput.trim()?'not-allowed':'pointer', outline:'none', opacity:saving||!tokenInput.trim()?0.65:1 }}>{saving ? 'Saving…' : 'Update Token'}</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding:'8px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer', outline:'none', opacity:saving ? 0.65 : 1 }}>{saving ? 'Saving…' : 'Save Token'}</button>
         </div>
       </div>
     </div>
@@ -355,7 +286,7 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   const configs = {
     [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
     [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
-    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed successfully`, sub:'Workflow finished — status updated', dismissable:true },
+    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed`, sub:'Workflow finished successfully', dismissable:true },
     [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Check GitHub Actions for details', dismissable:true },
     [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Check GitHub Actions manually', dismissable:true },
   };
@@ -372,144 +303,60 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   );
 };
 
-// ─── SIMPLE CONFIRM MODAL ─────────────────────────────────────────────────────
-// Requirement 2: Simple "Sure?" confirm, then dispatching state
-const SimpleConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
+// ─── INFRA CONFIRMATION MODAL ─────────────────────────────────────────────────
+const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
-
-  const isTerminate = action === 'terminate';
-  const isApply     = action === 'apply';
-  const isStart     = action === 'start';
-
-  const colors = isApply
-    ? { bg:'rgba(66,133,244,0.12)', border:'rgba(66,133,244,0.4)', text:'#4285f4' }
-    : isTerminate
-    ? { bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.4)', text:'#ff4d6d' }
-    : isStart
-    ? { bg:'rgba(0,212,170,0.12)', border:'rgba(0,212,170,0.4)', text:'#00d4aa' }
-    : { bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.4)', text:'#f5a623' };
-
-  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[action] || action;
-  const question    = `Sure you want to ${actionLabel.toLowerCase()}?`;
+  const isStop = action === 'stop', isStart = action === 'start', isApply = action === 'apply', isTerminate = action === 'terminate';
 
   const handleConfirm = async () => {
     setBusy(true); setErr('');
     try {
-      const ghAction = isTerminate ? 'destroy' : action;
+      const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
       const preDispatch = Date.now();
       await callInfraAPI(project, ghAction, ghToken);
       onConfirm(preDispatch);
-    } catch (e) {
-      setErr(e?.message || 'Dispatch failed.');
-      setBusy(false);
-    }
+    } catch (e) { setErr(e?.message || 'GitHub Actions dispatch failed.'); setBusy(false); }
   };
 
+  const colors = isApply ? { bg:'rgba(66,133,244,0.12)', border:'rgba(66,133,244,0.4)', text:'#4285f4' }
+    : isTerminate ? { bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.4)', text:'#ff4d6d' }
+    : isStart     ? { bg:'rgba(0,212,170,0.12)',  border:'rgba(0,212,170,0.4)',  text:'#00d4aa' }
+    :               { bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.4)', text:'#f5a623' };
+
+  const title   = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Terminate Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
+  const btnText = busy ? 'Dispatching…' : isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it';
+  const projectPath = `projects/${project.projectDirName}`;
+
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.88)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onCancel}>
-      <div style={{ background:'#0f1629', border:`1px solid ${colors.border}`, borderRadius:14, width:'90%', maxWidth:340, padding:'24px 24px 20px', boxShadow:'0 24px 80px rgba(0,0,0,0.75)' }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:15, fontWeight:800, color:'#f0f4ff', marginBottom:6, textAlign:'center' }}>{question}</div>
-        <div style={{ fontSize:12, color:'#7a8aaa', textAlign:'center', marginBottom:err ? 12 : 18 }}>
-          <strong style={{ color:colors.text }}>{project.name}</strong> · {actionLabel}
+    <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onCancel}>
+      <div style={{ background:'#0f1629', border:`1px solid ${colors.border}`, borderRadius:16, width:'90%', maxWidth:440, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ width:48, height:48, borderRadius:12, background:colors.bg, border:`1px solid ${colors.border}`, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:16 }}>
+          {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize:22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
         </div>
-        {err && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {err}</div>}
-        <div style={{ display:'flex', gap:8 }}>
-          <button onClick={onCancel} disabled={busy} style={{ flex:1, padding:'9px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none' }}>Cancel</button>
-          <button onClick={handleConfirm} disabled={busy} style={{ flex:1, padding:'9px', borderRadius:8, border:'none', background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:busy?'not-allowed':'pointer', outline:'none', opacity:busy?0.6:1, display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
-            {busy ? <><SpinnerIcon size={12} color="#fff" /> Dispatching…</> : `Yes, ${actionLabel.toLowerCase()}`}
-          </button>
+        <div style={{ fontSize:17, fontWeight:800, color:'#f0f4ff', marginBottom:8 }}>{title}</div>
+        <div style={{ fontSize:13, color:'#7a8aaa', lineHeight:1.6, marginBottom:20 }}>
+          {isApply && <>Run <span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform apply</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color:colors.text }}>provisioned or updated</strong>.</>}
+          {isStop  && <>Scale down all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isStart && <>Scale up all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isTerminate && <><span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform destroy</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color:colors.text }}>permanently destroyed</strong>.<div style={{ marginTop:10, padding:'8px 12px', background:'rgba(255,77,109,0.07)', border:'1px solid rgba(255,77,109,0.2)', borderRadius:8, fontSize:12, color:'#ff4d6d' }}>⚠ Use Apply to re-provision after termination.</div></>}
+        </div>
+        <div style={{ fontSize:12, color:'#4a6080', marginBottom:14, padding:'8px 12px', background:'rgba(255,255,255,0.03)', borderRadius:6, border:'1px solid rgba(255,255,255,0.07)' }}>
+          🔗 <strong style={{ color:'#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong>
+          <div style={{ marginTop:3, fontSize:11, color:'#3d5070' }}>Path: <code style={{ color:'#7a9aaa' }}>{projectPath}</code></div>
+        </div>
+        {!ghToken && <div style={{ fontSize:12, color:'#f5a623', marginBottom:14, padding:'8px 12px', background:'rgba(245,166,35,0.08)', borderRadius:6, border:'1px solid rgba(245,166,35,0.25)' }}>⚠ ACCESS_TOKEN not set — use ⚙ Config to add it first.</div>}
+        {err      && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {err}</div>}
+        <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
+          <button onClick={onCancel} disabled={busy} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
+          <button onClick={handleConfirm} disabled={busy || !ghToken} style={{ padding:'8px 20px', borderRadius:8, border:'none', background:colors.text, color:'#fff', fontWeight:700, fontSize:13, cursor:busy||!ghToken?'not-allowed':'pointer', outline:'none', opacity:busy||!ghToken?0.5:1 }}>{btnText}</button>
         </div>
       </div>
     </div>
   );
 };
 
-// ─── INLINE ACTION BUTTONS ────────────────────────────────────────────────────
-// Requirement 2: Show buttons directly on project row (like screenshots 1 & 2)
-const InlineActionButtons = ({ project, lifecycle, actionState, activeAction, hasTf, tfLoading, onAction, isBusy }) => {
-  const ghToken = React.useContext(GhTokenContext);
-
-  // Determine which buttons to show & their enabled state based on TF + lifecycle
-  const noDir = !project.projectDirName;
-  const noToken = !ghToken;
-
-  // If no TF files found and not loading → only Apply makes sense (to set up infra)
-  // If TF files exist → follow lifecycle state machine
-  const getButtonConfig = () => {
-    if (noDir) return [];
-
-    // While TF is being checked, show skeleton
-    if (tfLoading || hasTf === null) return null; // null = loading
-
-    // No TF files → only Apply enabled, rest disabled
-    if (hasTf === false) {
-      return [
-        { action:'apply', label:'Apply', color:'#4285f4', enabled: true },
-        { action:'stop',  label:'Stop',  color:'#f5a623', enabled: false, reason:'No infra yet' },
-        { action:'start', label:'Start', color:'#00d4aa', enabled: false, reason:'No infra yet' },
-        { action:'terminate', label:'Terminate', color:'#ff4d6d', enabled: false, reason:'No infra yet', icon: <PowerOffIcon size={11} color="#ff4d6d" /> },
-      ];
-    }
-
-    // TF files exist → use lifecycle gates
-    const allowedForState = lifecycle ? (ALLOWED_ACTIONS[lifecycle] || []) : ['apply','stop','start','terminate'];
-
-    return [
-      { action:'apply',     label:'Apply',     color:'#4285f4', enabled: allowedForState.includes('apply')     || !lifecycle },
-      { action:'stop',      label:'Stop',      color:'#f5a623', enabled: allowedForState.includes('stop')      || !lifecycle },
-      { action:'start',     label:'Start',     color:'#00d4aa', enabled: allowedForState.includes('start')     || !lifecycle },
-      { action:'terminate', label:'Terminate', color:'#ff4d6d', enabled: allowedForState.includes('terminate') || !lifecycle, icon: <PowerOffIcon size={11} color="#ff4d6d" /> },
-    ];
-  };
-
-  const buttons = getButtonConfig();
-
-  if (!project.projectDirName) return null;
-
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap', padding:'6px 0 2px' }}>
-      {buttons === null ? (
-        // Loading TF check
-        <span style={{ fontSize:10, color:'#4a6080', display:'flex', alignItems:'center', gap:4 }}>
-          <SpinnerIcon size={9} color="#4a6080" /> Checking infra files…
-        </span>
-      ) : (
-        buttons.map(btn => {
-          const isRunning = isBusy && activeAction === btn.action;
-          const disabled  = !btn.enabled || isBusy || noToken;
-          const title     = noToken ? 'Set GitHub token via ⚙ Config' : (!btn.enabled && btn.reason) ? btn.reason : btn.label;
-          return (
-            <button
-              key={btn.action}
-              onClick={(e) => { e.stopPropagation(); if (!disabled) onAction(project, btn.action); }}
-              disabled={disabled}
-              title={title}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                border: `1px solid ${disabled ? 'rgba(255,255,255,0.1)' : btn.color + '80'}`,
-                background: disabled ? 'rgba(255,255,255,0.04)' : `${btn.color}18`,
-                color: disabled ? '#4a5568' : btn.color,
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                outline: 'none',
-                opacity: disabled ? 0.5 : 1,
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { if (!disabled) { e.currentTarget.style.background = `${btn.color}30`; e.currentTarget.style.borderColor = btn.color; } }}
-              onMouseLeave={e => { if (!disabled) { e.currentTarget.style.background = `${btn.color}18`; e.currentTarget.style.borderColor = `${btn.color}80`; } }}
-            >
-              {isRunning ? <SpinnerIcon size={10} color={btn.color} /> : btn.icon || null}
-              {isRunning ? (activeAction === 'apply' ? 'Applying…' : `${btn.label}ing…`) : btn.label}
-            </button>
-          );
-        })
-      )}
-    </div>
-  );
-};
-
-// ─── PROJECT DOTS DROPDOWN (kept for ··· menu, but action buttons now inline) ─
+// ─── PROJECT DOTS DROPDOWN ────────────────────────────────────────────────────
 const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAction = null, infraReason = '' }) => {
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState({ top:0, left:0 });
@@ -518,7 +365,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   const updatePos = () => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    const w = 200; let left = r.right - w;
+    const w = 260; let left = r.right - w;
     if (left < 8) left = r.left;
     if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
     setPos({ top: r.bottom + 6, left });
@@ -536,32 +383,54 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   useEffect(() => () => stopTracking(), []);
 
   const isBusy = activeAction !== null;
+  // All 4 actions disabled = no infra available
+  const allDisabled = ['apply','stop','start','terminate'].every(a => disabledActions.includes(a));
+
+  const menuBtn = (onClick, color, label, desc, disabled, icon) => {
+    const isRunning = isBusy && activeAction === label.toLowerCase();
+    const actualDisabled = disabled || isBusy;
+    // Determine tooltip text for disabled state
+    const disabledReason = allDisabled && infraReason
+      ? infraReason
+      : isBusy ? `Locked — ${activeAction} in progress` : desc;
+    return (
+      <button onClick={onClick} disabled={actualDisabled}
+        style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'10px 14px', background:'transparent', border:'none', cursor:actualDisabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:actualDisabled?0.35:1 }}
+        onMouseEnter={e => { if (!actualDisabled) e.currentTarget.style.background=`${color}18`; }}
+        onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}>
+        {isRunning
+          ? <span style={{ width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}><SpinnerIcon size={12} color={color} /></span>
+          : icon
+          ? <span style={{ width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{icon}</span>
+          : <span style={{ width:8, height:8, borderRadius:'50%', background:actualDisabled?'#8899aa':color, flexShrink:0 }} />}
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:actualDisabled?'#6a7a8a':color }}>{label}</div>
+          <div style={{ fontSize:10, color:'#5a6888', marginTop:1 }}>{isRunning ? 'Running on GitHub Actions…' : actualDisabled ? disabledReason : desc}</div>
+        </div>
+        {isRunning && <span style={{ fontSize:10, color, fontWeight:700 }}>●</span>}
+      </button>
+    );
+  };
 
   const dropdown = open ? ReactDOM.createPortal(
-    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:200, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
+    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:260, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
       <style>{`@keyframes eeDropIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)', fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-        {project.name}
+      <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
+        <div style={{ fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</div>
+        {project.projectDirName && <div style={{ fontSize:10, color:'#3d5070', marginTop:1, fontFamily:'monospace' }}>projects/{project.projectDirName}</div>}
+        <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
+        {allDisabled && infraReason && (
+          <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#7a8aaa', background:'rgba(122,138,170,0.08)', border:'1px solid rgba(122,138,170,0.2)', borderRadius:5, padding:'4px 8px' }}>
+            <span style={{ fontSize:12 }}>📂</span>
+            <span>{infraReason}</span>
+          </div>
+        )}
+        {isBusy && !allDisabled && <div style={{ marginTop:4, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#f5a623' }}><SpinnerIcon size={10} color="#f5a623" /><span>Action in progress — buttons locked</span></div>}
       </div>
-      {[
-        { action:'apply', label:'Apply', color:'#4285f4' },
-        { action:'stop', label:'Stop', color:'#f5a623' },
-        { action:'start', label:'Start', color:'#00d4aa' },
-        { action:'terminate', label:'Terminate', color:'#ff4d6d' },
-      ].map(item => {
-        const disabled = disabledActions.includes(item.action) || isBusy;
-        return (
-          <button key={item.action}
-            onClick={e => { e.stopPropagation(); if (!disabled) { setOpen(false); stopTracking(); onAction(project, item.action); } }}
-            disabled={disabled}
-            style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'9px 14px', background:'transparent', border:'none', cursor:disabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:disabled?0.35:1, fontSize:12, fontWeight:700, color:disabled?'#6a7a8a':item.color }}
-            onMouseEnter={e => { if (!disabled) e.currentTarget.style.background=`${item.color}18`; }}
-            onMouseLeave={e => { e.currentTarget.style.background='transparent'; }}>
-            <span style={{ width:7, height:7, borderRadius:'50%', background:disabled?'#8899aa':item.color, flexShrink:0 }} />
-            {item.label}
-          </button>
-        );
-      })}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'apply');     }, '#4285f4', 'Apply',     'Deploy / update infrastructure',            disabledActions.includes('apply'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'stop');      }, '#f5a623', 'Stop',      'Pause all services via CLI',                disabledActions.includes('stop'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'start');     }, '#00d4aa', 'Start',     'Resume all services via CLI',               disabledActions.includes('start'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'terminate'); }, '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)',  disabledActions.includes('terminate'), <PowerOffIcon size={13} color="#ff4d6d" />)}
     </div>,
     document.body
   ) : null;
@@ -774,6 +643,7 @@ const DashboardIcon = ({ onClick }) => (
 );
 
 // ─── NO INFRA YET BADGE ───────────────────────────────────────────────────────
+// Shows next to project name when no .tf files exist in the repo.
 const NoInfraBadge = ({ checking = false }) => {
   if (checking) {
     return (
@@ -788,8 +658,11 @@ const NoInfraBadge = ({ checking = false }) => {
       fontSize: 10, fontWeight: 700, color: '#7a8aaa',
       background: 'rgba(122,138,170,0.10)',
       border: '1px solid rgba(122,138,170,0.28)',
-      borderRadius: 100, padding: '2px 9px',
-      textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0,
+      borderRadius: 100,
+      padding: '2px 9px',
+      textTransform: 'uppercase',
+      letterSpacing: '0.5px',
+      flexShrink: 0,
     }}>
       No Infra Yet
     </span>
@@ -797,28 +670,18 @@ const NoInfraBadge = ({ checking = false }) => {
 };
 
 // ─── PROJECT MANAGER MODAL ────────────────────────────────────────────────────
-// Requirement 4: Fixed save logic — proper deep clone, correct provider index lookup
 const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, onClose }) => {
   const [view,          setView]          = useState('list');
-  const [form,          setForm]          = useState(null);
-  const [editPj,        setEditPj]        = useState(null); // just the project index within provider
+  const [form,          setForm]          = useState({ providerId, name:'', gcpProjectId:'', dashboardGuid:'', dashboardLink:'', projectDirName:'', projectType:'normal', selectedResources:[], knownServices:'', customResources:'' });
+  const [editInfo,      setEditInfo]      = useState(null);
   const [saving,        setSaving]        = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [saveError,     setSaveError]     = useState('');
 
   const provider    = providers.find(p => p.id === providerId);
+  const pi          = providers.findIndex(p => p.id === providerId);
   const accentColor = providerId === 'gcp' ? '#4285f4' : '#FF9900';
   const setField    = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const startAdd = () => {
-    setForm({
-      name: '', gcpProjectId: '', dashboardGuid: '', dashboardLink: '',
-      projectDirName: '', projectType: 'normal', selectedResources: [], knownServices: '', customResources: '',
-    });
-    setEditPj(null);
-    setSaveError('');
-    setView('form');
-  };
 
   const startEdit = (pj) => {
     const project = provider.projects[pj];
@@ -828,136 +691,40 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     else if (project.billingNotConfigured || project.billingOnly) projectType = 'billing';
     const knownTypes = new Set((RESOURCE_OPTIONS[providerId] || []).map(o => o.type));
     const customRes  = (project.resources || []).filter(r => !knownTypes.has(r.type)).map(r => r.label).join(', ');
-    setForm({
-      name: project.name || '',
-      gcpProjectId: project.gcpProjectId || '',
-      dashboardGuid: project.dashboardGuid || '',
-      dashboardLink: project.dashboardLink || '',
-      projectDirName: project.projectDirName || '',
-      projectType,
-      selectedResources: (project.resources || []).map(r => r.type).filter(t => knownTypes.has(t)),
-      knownServices: (project.knownServices || []).join(', '),
-      customResources: customRes,
-    });
-    setEditPj(pj);
-    setSaveError('');
-    setView('form');
+    setForm({ providerId, name:project.name||'', gcpProjectId:project.gcpProjectId||'', dashboardGuid:project.dashboardGuid||'', dashboardLink:project.dashboardLink||'', projectDirName:project.projectDirName||'', projectType, selectedResources:(project.resources||[]).map(r=>r.type).filter(t=>knownTypes.has(t)), knownServices:(project.knownServices||[]).join(', '), customResources:customRes });
+    setEditInfo({ pi, pj }); setSaveError(''); setView('form');
   };
 
-  const buildProject = (f) => {
-    const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = f;
-    const safeSelectedResources = selectedResources || [];
-    const base = {
-      name: name.trim(),
-      gcpProjectId: gcpProjectId.trim() || null,
-      dashboardGuid: dashboardGuid.trim() || null,
-      dashboardLink: dashboardLink.trim() || null,
-      projectDirName: projectDirName.trim() || null,
-    };
-    if (projectType === 'deleted') return { ...base, deleted: true, resources: [] };
-    if (projectType === 'empty')   return { ...base, empty: true, resources: [] };
-    if (projectType === 'billing') return { ...base, billingOnly: true, resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }] };
+  const buildProject = () => {
+    const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
+    const base = { name:name.trim(), gcpProjectId:gcpProjectId.trim()||null, dashboardGuid:dashboardGuid.trim()||null, dashboardLink:dashboardLink.trim()||null, projectDirName:projectDirName.trim()||null };
+    if (projectType === 'deleted') return { ...base, deleted:true, resources:[] };
+    if (projectType === 'empty')   return { ...base, empty:true, resources:[] };
+    if (projectType === 'billing') return { ...base, billingOnly:true, resources:[{ label:'Total Cost (INR)', type:providerId==='aws'?'aws_billing':'gcp_billing', alwaysOn:false }] };
     const allOpts      = RESOURCE_OPTIONS[providerId] || [];
-    const stdResources = allOpts.filter(o => safeSelectedResources.includes(o.type)).map(o => ({ ...o }));
-    const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean).map(label => ({
-      label, type: 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g, '_'), alwaysOn: false,
-    }));
-    const resources = [...stdResources, ...customParsed];
-    const project = { ...base, resources };
-    if (safeSelectedResources.includes('gcp_cloudrun') && knownServices.trim()) {
-      project.knownServices = knownServices.split(',').map(s => s.trim()).filter(Boolean);
-    }
+    const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
+    const customParsed = (customResources||'').split(',').map(s=>s.trim()).filter(Boolean).map(label => ({ label, type:'custom_'+label.toLowerCase().replace(/[^a-z0-9]/g,'_'), alwaysOn:false }));
+    const resources    = [...stdResources, ...customParsed];
+    const project      = { ...base, resources };
+    if (selectedResources.includes('gcp_cloudrun') && knownServices.trim())
+      project.knownServices = knownServices.split(',').map(s=>s.trim()).filter(Boolean);
     return project;
   };
 
-  // Requirement 4: Fixed - deep clone providers array properly, find correct provider index
   const handleSubmit = async () => {
-    setSaveError('');
-    if (!form || !form.name.trim()) { setSaveError('Project name is required.'); return; }
+    setSaveError(''); if (!form.name.trim()) { setSaveError('Project name is required.'); return; }
     setSaving(true);
     try {
-      // Deep clone: clone the providers array, then clone each provider and its projects array
-      const newProviders = providers.map(p => ({
-        ...p,
-        projects: p.projects.map(proj => ({ ...proj, resources: proj.resources ? [...proj.resources] : [] }))
-      }));
-
-      const project = buildProject(form);
-      // Find provider index in the cloned array by id
-      const targetPi = newProviders.findIndex(p => p.id === providerId);
-      if (targetPi < 0) throw new Error(`Provider "${providerId}" not found.`);
-
-      if (editPj !== null && editPj !== undefined) {
-        // Editing existing project
-        newProviders[targetPi].projects[editPj] = project;
-      } else {
-        // Adding new project
-        newProviders[targetPi].projects.push(project);
-      }
-
-      await onSave(newProviders);
-      setView('list');
-      setSaveError('');
-    } catch (e) {
-      console.error('[Eagle Eye] Save error:', e);
-      setSaveError(e?.message || 'Save failed. Check console for details.');
-    } finally {
-      setSaving(false);
-    }
+      const newProviders = providers.map(p => ({ ...p, projects:[...p.projects] }));
+      const project = buildProject();
+      if (editInfo) newProviders[pi].projects[editInfo.pj] = project;
+      await onSave(newProviders); setView('list');
+    } catch (e) { setSaveError(e?.message || 'Save failed.'); } finally { setSaving(false); }
   };
 
-  const handleDelete = async (pj) => {
-    setSaveError('');
-    try {
-      const newProviders = providers.map(p => ({
-        ...p,
-        projects: p.projects.map(proj => ({ ...proj, resources: proj.resources ? [...proj.resources] : [] }))
-      }));
-      const targetPi = newProviders.findIndex(p => p.id === providerId);
-      if (targetPi < 0) throw new Error('Provider not found.');
-      newProviders[targetPi].projects.splice(pj, 1);
-      await onSave(newProviders);
-      setDeleteConfirm(null);
-    } catch (e) {
-      setSaveError(e?.message || 'Delete failed.');
-    }
-  };
-
-  const handleArchive = async (pj) => {
-    setSaveError('');
-    try {
-      const newProviders = providers.map(p => ({
-        ...p,
-        projects: p.projects.map(proj => ({ ...proj, resources: proj.resources ? [...proj.resources] : [] }))
-      }));
-      const targetPi = newProviders.findIndex(p => p.id === providerId);
-      if (targetPi < 0) throw new Error('Provider not found.');
-      const proj = { ...newProviders[targetPi].projects[pj], deleted: true, resources: [] };
-      delete proj.billingOnly; delete proj.billingNotConfigured; delete proj.empty;
-      newProviders[targetPi].projects[pj] = proj;
-      await onSave(newProviders);
-    } catch (e) {
-      setSaveError(e?.message || 'Archive failed.');
-    }
-  };
-
-  const handleUnarchive = async (pj) => {
-    setSaveError('');
-    try {
-      const newProviders = providers.map(p => ({
-        ...p,
-        projects: p.projects.map(proj => ({ ...proj, resources: proj.resources ? [...proj.resources] : [] }))
-      }));
-      const targetPi = newProviders.findIndex(p => p.id === providerId);
-      if (targetPi < 0) throw new Error('Provider not found.');
-      const proj = { ...newProviders[targetPi].projects[pj] };
-      delete proj.deleted;
-      newProviders[targetPi].projects[pj] = proj;
-      await onSave(newProviders);
-    } catch (e) {
-      setSaveError(e?.message || 'Unarchive failed.');
-    }
-  };
+  const handleDelete    = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); np[pi].projects.splice(pj,1); await onSave(np); setDeleteConfirm(null); } catch (e) { setSaveError(e?.message||'Delete failed.'); } };
+  const handleArchive   = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); const proj={...np[pi].projects[pj],deleted:true,resources:[]}; delete proj.billingOnly; delete proj.billingNotConfigured; delete proj.empty; np[pi].projects[pj]=proj; await onSave(np); } catch (e) { setSaveError(e?.message||'Archive failed.'); } };
+  const handleUnarchive = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); const proj={...np[pi].projects[pj]}; delete proj.deleted; np[pi].projects[pj]=proj; await onSave(np); } catch (e) { setSaveError(e?.message||'Unarchive failed.'); } };
 
   const s = {
     overlay:      { position:'fixed', inset:0, background:'rgba(8,11,20,0.88)', backdropFilter:'blur(10px)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' },
@@ -983,10 +750,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             </div>
             <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>Edit or manage {provider?.label} projects</div>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
-            <button onClick={startAdd} style={{ ...s.btnPrimary, background:accentColor, padding:'7px 16px', fontSize:12 }}>+ Add Project</button>
-            <button onClick={onClose} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>✕</button>
-          </div>
+          <button onClick={onClose} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>✕</button>
         </div>
         <div style={s.body}>
           {!provider || provider.projects.length === 0 ? (
@@ -995,13 +759,13 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
               {provider.projects.map((project, pj) => {
                 const typeTag  = project.deleted?'Archived':project.empty?'No Monitoring':project.billingNotConfigured?'Billing N/A':project.billingOnly?'Billing':null;
-                const key      = `${providerId}-${pj}`;
+                const key      = `${pi}-${pj}`;
                 const tagColor = project.deleted?'#4a5568':project.billingNotConfigured?'#4285f4':'#7a8aaa';
                 const tagBg    = project.deleted?'rgba(74,85,104,0.15)':project.billingNotConfigured?'rgba(66,133,244,0.12)':'rgba(255,255,255,0.06)';
                 const health   = projectHealthMap?.[project.name] ?? 'unknown';
                 const dotColor = project.deleted?'#4a5568':health==='green'?'#00d4aa':health==='yellow'?'#f5a623':health==='red'?'#ff4d6d':'#7a8aaa';
                 return (
-                  <div key={project.projectDirName || project.name || pj} style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }}
+                  <div key={project.projectDirName || project.name} style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }}
                     onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.03)'}>
                     <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background:dotColor }} />
                     <span style={{ flex:1, fontSize:13, fontWeight:600, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</span>
@@ -1030,19 +794,18 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     </div>
   );
 
-  // ── Edit / Add form ────────────────────────────────────────────────────────────
-  if (!form) return null;
-  const providerOptions = RESOURCE_OPTIONS[providerId] || [];
-  const hasCloudRun     = (form.selectedResources || []).includes('gcp_cloudrun');
-  const goBack          = () => { setView('list'); setSaveError(''); };
+  // ── Edit form ──────────────────────────────────────────────────────────────────
+  const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
+  const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
+  const goBack          = () => setView('list');
 
   return (
     <div style={s.overlay} onClick={goBack}>
       <div style={s.panel} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <div>
-            <div style={{ fontSize:19, fontWeight:800, color:'#f0f4ff' }}>{editPj !== null ? 'Edit Project' : 'Add Project'}</div>
-            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>{editPj !== null ? 'Update the project details below' : 'Configure a new project'}</div>
+            <div style={{ fontSize:19, fontWeight:800, color:'#f0f4ff' }}>Edit Project</div>
+            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>Update the project details below</div>
           </div>
           <button onClick={goBack} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>← Back</button>
         </div>
@@ -1073,8 +836,11 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
           <div style={s.field}>
             <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
             <input value={form.projectDirName} onChange={e => setField('projectDirName', e.target.value)} placeholder="e.g. starapp-uat  →  projects/starapp-uat/" style={s.input} />
+            <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
+              Set this to enable infra buttons. The app will look for <code style={{ color:'#6a8aaa' }}>.tf</code> files under <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/modules/</code> in the GitHub repo.
+            </div>
           </div>
-          {providerId==='gcp' && form.projectType==='normal' && (
+          {form.providerId==='gcp' && form.projectType==='normal' && (
             <div style={s.field}>
               <label style={s.label}>GCP Project ID</label>
               <input value={form.gcpProjectId} onChange={e => setField('gcpProjectId', e.target.value)} placeholder="e.g. my-project-123456" style={s.input} />
@@ -1093,10 +859,10 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               <label style={s.label}>Resources to Monitor</label>
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {providerOptions.map(opt => {
-                  const checked = (form.selectedResources || []).includes(opt.type);
+                  const checked = form.selectedResources.includes(opt.type);
                   return (
-                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?`rgba(${providerId==='gcp'?'66,133,244':'255,153,0'},0.08)`:'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
-                      <input type="checkbox" checked={checked} onChange={e => setField('selectedResources', e.target.checked ? [...(form.selectedResources||[]), opt.type] : (form.selectedResources||[]).filter(t=>t!==opt.type))} style={{ accentColor, width:14, height:14, cursor:'pointer', marginTop:2, flexShrink:0 }} />
+                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?`rgba(${form.providerId==='gcp'?'66,133,244':'255,153,0'},0.08)`:'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
+                      <input type="checkbox" checked={checked} onChange={e => setField('selectedResources', e.target.checked?[...form.selectedResources,opt.type]:form.selectedResources.filter(t=>t!==opt.type))} style={{ accentColor, width:14, height:14, cursor:'pointer', marginTop:2, flexShrink:0 }} />
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontSize:13, fontWeight:600, color:'#c8d4f0' }}>{opt.label}</span>
@@ -1420,58 +1186,58 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
+  // Read GitHub token from context
   const ghToken = React.useContext(GhTokenContext);
 
-  // TF file check — GATES action buttons
+  // ── TF file check — runs as soon as component mounts and token is available.
+  // NOT gated on expanded; we need the result to drive button state at all times.
   const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
+
+  // Infra buttons are only enabled when TF files are confirmed present.
+  const infraReady = hasTf === true;
+
+  // Human-readable reason used in the dropdown when all buttons are disabled.
+  const infraDisabledReason = (() => {
+    if (!project.projectDirName)         return 'No project directory configured';
+    if (!ghToken)                        return 'Set GitHub token (⚙ Config) to enable';
+    if (tfLoading || hasTf === null)     return 'Checking repo for Terraform files…';
+    if (hasTf === false)                 return 'No .tf files found — add infra first';
+    return '';
+  })();
 
   useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
-  const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
+  const getDisabledActions = () => {
+    // Block all 4 infra actions when TF files are absent / unconfirmed
+    if (!infraReady) return ['apply', 'stop', 'start', 'terminate'];
+    // Block all while a workflow is in flight
+    if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
+        actionState !== INFRA_STATES.FAILED && actionState !== INFRA_STATES.TIMEOUT) {
+      return ['apply', 'stop', 'start', 'terminate'];
+    }
+    if (!lifecycle) return [];
+    const allowed = ALLOWED_ACTIONS[lifecycle] || [];
+    return ['apply', 'stop', 'start', 'terminate'].filter(a => !allowed.includes(a));
+  };
 
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
-    setActiveAction(action);
-    setActionState(INFRA_STATES.DISPATCHING);
+    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
     const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
     pollCancelRef.current = { cancelled: false };
     const cancelRef = pollCancelRef.current;
-
-    const onStatusChange = (newState) => {
-      if (!cancelRef.cancelled) setActionState(newState);
-    };
-
+    const onStatusChange = (newState) => { if (!cancelRef.cancelled) setActionState(newState); };
     const onComplete = (conclusion) => {
       if (cancelRef.cancelled) return;
-      if (conclusion === 'success') {
-        setActionState(INFRA_STATES.SUCCEEDED);
-        const next = NEXT_LIFECYCLE[action];
-        if (next) setLifecycle(next);
-      } else if (conclusion === 'timeout') {
-        setActionState(INFRA_STATES.TIMEOUT);
-      } else {
-        setActionState(INFRA_STATES.FAILED);
-      }
-      setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.IDLE);
-          setActiveAction(null);
-        }
-      }, 10000);
+      if (conclusion === 'success') { setActionState(INFRA_STATES.SUCCEEDED); const next=NEXT_LIFECYCLE[action]; if (next) setLifecycle(next); }
+      else if (conclusion === 'timeout') setActionState(INFRA_STATES.TIMEOUT);
+      else setActionState(INFRA_STATES.FAILED);
+      setTimeout(() => { if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); } }, 8000);
     };
-
     if (token && token.trim() !== '') {
       pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
     } else {
       setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.TIMEOUT);
-          setTimeout(() => {
-            if (!cancelRef.cancelled) {
-              setActionState(INFRA_STATES.IDLE);
-              setActiveAction(null);
-            }
-          }, 6000);
-        }
+        if (!cancelRef.cancelled) { setActionState(INFRA_STATES.TIMEOUT); setTimeout(() => { if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); } }, 6000); }
       }, 3000);
     }
   }, []);
@@ -1479,6 +1245,9 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const handleInfraAction = useCallback((proj, action) => {
     onInfraAction(proj, action, handleActionDispatched);
   }, [onInfraAction, handleActionDispatched]);
+
+  const disabledActions = getDisabledActions();
+  const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
 
   // ── Deleted ──────────────────────────────────────────────────────────────────
   if (project.deleted) return (
@@ -1516,29 +1285,21 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   // ── Empty (no monitoring) ─────────────────────────────────────────────────────
   if (project.empty) return (
-    <div className="project-row project-row--clickable" style={{ animationDelay:index*80+'ms', cursor: project.projectDirName ? 'default' : 'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }}>
-      <div className="project-row__main" onClick={() => !project.projectDirName && openDashboard(project)}>
+    <div className="project-row project-row--clickable" style={{ animationDelay:index*80+'ms', cursor:'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }} onClick={() => openDashboard(project)}>
+      <div className="project-row__main">
         <div className="project-row__left" style={{ gap:10 }}>
           <span style={{ fontSize:14, color:'#7a8aaa' }}>◎</span>
           <span className="project-row__name" style={{ color:'#c8d4f0' }}>{project.name}</span>
-          {project.projectDirName && (tfLoading || hasTf === null ? <NoInfraBadge checking /> : hasTf === false ? <NoInfraBadge /> : null)}
+          {/* No Infra badge for empty projects */}
+          {!infraReady && !tfLoading && <NoInfraBadge />}
+          {tfLoading && <NoInfraBadge checking />}
         </div>
         <div className="project-row__right">
+          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
           <span style={{ fontSize:10, fontWeight:600, color:'#8899bb', background:'rgba(100,120,170,0.18)', border:'1px solid rgba(100,120,170,0.4)', borderRadius:100, padding:'2px 10px', textTransform:'uppercase' }}>No Monitoring</span>
           <DashboardIcon onClick={e => { e.stopPropagation(); openDashboard(project); }} />
         </div>
       </div>
-      {/* Show inline action buttons for empty projects that have a projectDirName */}
-      {project.projectDirName && (
-        <div style={{ padding:'0 10px 8px' }}>
-          <InlineActionButtons
-            project={project} lifecycle={lifecycle} actionState={actionState}
-            activeAction={activeAction} hasTf={hasTf} tfLoading={tfLoading}
-            onAction={handleInfraAction} isBusy={isBusy}
-          />
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
-        </div>
-      )}
     </div>
   );
 
@@ -1546,12 +1307,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const status       = loading ? 'unknown' : worstStatus(resourceStatuses.map(r=>r.status));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
-  const hasDir       = !!project.projectDirName;
-
   const handleRowClick = useCallback(() => {
-    if (hasResources || hasDir) setExpanded(p=>!p);
+    if (hasResources || project.projectDirName) setExpanded(p=>!p);
     else if (hasDashboard) openDashboard(project);
-  }, [project, hasResources, hasDir, hasDashboard]);
+  }, [project, hasResources, hasDashboard]);
 
   const uptimeSummary = (() => {
     if (loading) return null;
@@ -1580,21 +1339,21 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
               <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
             </span>
+            {isBusy && <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />}
           </div>
           <div className="project-row__right">
+            <button onClick={e => { e.stopPropagation(); if (!isBusy && infraReady) handleInfraAction(project, 'apply'); }} disabled={isBusy || !infraReady}
+              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:isBusy||!infraReady?'#6a7a8a':'#4285f4', fontWeight:700, fontSize:11, cursor:isBusy||!infraReady?'not-allowed':'pointer', outline:'none', display:'flex', alignItems:'center', gap:5, opacity:isBusy||!infraReady?0.5:1 }}>
+              {isBusy ? <SpinnerIcon size={11} color="#4285f4" /> : null} ⚙ Re-provision
+            </button>
+            <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
           </div>
         </div>
         {expanded && (
           <div className="project-row__detail">
-            <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
-            <InlineActionButtons
-              project={project} lifecycle={lifecycle} actionState={actionState}
-              activeAction={activeAction} hasTf={hasTf} tfLoading={tfLoading}
-              onAction={handleInfraAction} isBusy={isBusy}
-            />
-            <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12, marginTop:6 }}>
-              All resources destroyed. Click <strong style={{ color:'#4285f4' }}>Apply</strong> above to re-provision.
+            <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
+              All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Click <strong style={{ color:'#4285f4' }}>Re-provision</strong> to restore.
             </div>
           </div>
         )}
@@ -1602,24 +1361,37 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   }
 
+  // ── Resource detail content ───────────────────────────────────────────────────
+  const renderResourceDetail = () => {
+    if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
+    if (resourceStatuses.length === 0) {
+      return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
+    }
+    return (
+      <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
+        {resourceStatuses.map((r,i) => <ExpandableResourceRow key={i} resource={r} project={project} />)}
+      </div>
+    );
+  };
+
   return (
-    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||hasDir?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
+    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||project.projectDirName?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
       <div className="project-row__main" onClick={handleRowClick}>
         <div className="project-row__left">
           <StatusDot status={isBusy ? 'yellow' : status} />
           <span className="project-row__name">{project.name}</span>
 
-          {/* TF badge — only shown when not busy and TF check result is known */}
-          {!isBusy && hasDir && (
-            tfLoading || hasTf === null
+          {/* ── Infra status badge (shown when buttons are disabled) ── */}
+          {!isBusy && (
+            tfLoading
               ? <NoInfraBadge checking />
-              : hasTf === false
+              : !infraReady
                 ? <NoInfraBadge />
                 : null
           )}
 
-          {!loading && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
-          {!loading && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
+          {!loading && infraReady && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
+          {!loading && infraReady && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
           {isBusy && (
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
@@ -1628,7 +1400,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           )}
         </div>
         <div className="project-row__right">
-          {(hasResources || hasDir) && !loading && (
+          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
+          {(hasResources || project.projectDirName) && !loading && (
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{ e.stopPropagation(); setExpanded(p=>!p); }}>›</span>
           )}
           {hasDashboard && <DashboardIcon onClick={e=>{ e.stopPropagation(); openDashboard(project); }} />}
@@ -1637,31 +1410,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner
-            actionState={actionState} lastAction={activeAction}
-            onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }}
-          />
-          {/* Requirement 2: Inline action buttons shown in expanded view */}
-          {hasDir && (
-            <div style={{ marginBottom:8 }}>
-              <InlineActionButtons
-                project={project} lifecycle={lifecycle} actionState={actionState}
-                activeAction={activeAction} hasTf={hasTf} tfLoading={tfLoading}
-                onAction={handleInfraAction} isBusy={isBusy}
-              />
-            </div>
-          )}
-          {/* Resource health detail */}
-          {loading
-            ? <span className="project-row__detail-loading">Checking resource health…</span>
-            : resourceStatuses.length === 0
-              ? <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>
-              : (
-                <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0 0' }}>
-                  {resourceStatuses.map((r,i) => <ExpandableResourceRow key={i} resource={r} project={project} />)}
-                </div>
-              )
-          }
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
+          {renderResourceDetail()}
         </div>
       )}
     </div>
@@ -1842,29 +1592,23 @@ const EagleEyeLoader = () => (
   </div>
 );
 
-// Requirement 3: "Change Token" button in header (instead of full config button)
-const ChangeTokenButton = ({ onClick }) => (
-  <button onClick={onClick} title="Change GitHub ACCESS_TOKEN"
-    style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 14px', borderRadius:8, border:'1px solid rgba(0,212,170,0.35)', background:'rgba(0,212,170,0.07)', color:'#00d4aa', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none', transition:'all 0.15s' }}
+const ConfigButton = ({ hasToken, onClick }) => (
+  <button onClick={onClick} title="Configure GitHub ACCESS_TOKEN"
+    style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 14px', borderRadius:8, border:hasToken?'1px solid rgba(0,212,170,0.35)':'1px solid rgba(245,166,35,0.5)', background:hasToken?'rgba(0,212,170,0.07)':'rgba(245,166,35,0.1)', color:hasToken?'#00d4aa':'#f5a623', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none', transition:'all 0.15s' }}
     onMouseEnter={e => e.currentTarget.style.opacity='0.8'} onMouseLeave={e => e.currentTarget.style.opacity='1'}>
-    <span>✓</span>
-    <span>Token set · Change</span>
+    <span>{hasToken ? '✓' : '⚠'}</span>
+    <span>{hasToken ? 'Token configured' : 'Set ACCESS_TOKEN'}</span>
   </button>
 );
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 const EagleEye = () => {
-  const [providers,      setProviders]      = useState(null);
-  const [ghToken,        setGhToken]        = useState('');
-  const [showModal,      setShowModal]      = useState(null);
-  const [showConfig,     setShowConfig]     = useState(false);
-  const [loadError,      setLoadError]      = useState(false);
-  const [infraConfirm,   setInfraConfirm]   = useState(null);
-  // Requirement 3: Track if token gate has been passed this session
-  const [tokenVerified,  setTokenVerified]  = useState(() => {
-    try { return sessionStorage.getItem(SESSION_TOKEN_KEY) === '1'; } catch (_) { return false; }
-  });
-  const [storageLoaded,  setStorageLoaded]  = useState(false);
+  const [providers,    setProviders]    = useState(null);
+  const [ghToken,      setGhToken]      = useState('');
+  const [showModal,    setShowModal]    = useState(null);
+  const [showConfig,   setShowConfig]   = useState(false);
+  const [loadError,    setLoadError]    = useState(false);
+  const [infraConfirm, setInfraConfirm] = useState(null);
 
   useEffect(() => {
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
@@ -1875,54 +1619,23 @@ const EagleEye = () => {
       }).catch(() => { setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
 
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
-      .then(({ data }) => {
-        if (data?.document?.accessToken) setGhToken(data.document.accessToken);
-        setStorageLoaded(true);
-      })
-      .catch(() => { setStorageLoaded(true); });
+      .then(({ data }) => { if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
+      .catch(() => {});
   }, []);
 
   const handleSave = async (newProviders) => {
-    const { error } = await AccountStorageMutation.mutate({
-      accountId: ACCOUNT_ID,
-      actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-      collection: STORAGE_COLLECTION,
-      documentId: STORAGE_DOC_ID,
-      document: { providers: newProviders },
-    });
+    const { error } = await AccountStorageMutation.mutate({ accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID, document:{ providers:newProviders } });
     if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
     setProviders(newProviders);
   };
 
-  const handleSaveToken = async (token, keepExisting = false) => {
-    if (!keepExisting) {
-      const { error } = await AccountStorageMutation.mutate({
-        accountId: ACCOUNT_ID,
-        actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-        collection: STORAGE_COLLECTION,
-        documentId: STORAGE_CONFIG_ID,
-        document: { accessToken: token },
-      });
-      if (error) throw new Error('Failed to save token: ' + (error.message || JSON.stringify(error)));
-      setGhToken(token);
-    }
-    // Mark session as verified regardless
-    try { sessionStorage.setItem(SESSION_TOKEN_KEY, '1'); } catch (_) {}
-    setTokenVerified(true);
-    setShowConfig(false);
+  const handleSaveToken = async (token) => {
+    const { error } = await AccountStorageMutation.mutate({ accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID, document:{ accessToken: token } });
+    if (error) throw new Error('Failed to save token: ' + (error.message || JSON.stringify(error)));
+    setGhToken(token);
   };
 
-  if (!providers || !storageLoaded) return <EagleEyeLoader />;
-
-  // Requirement 3: Show token gate on every fresh session (sessionStorage cleared on close/new tab)
-  if (!tokenVerified) {
-    return (
-      <TokenGateModal
-        existingToken={ghToken}
-        onSave={handleSaveToken}
-      />
-    );
-  }
+  if (!providers) return <EagleEyeLoader />;
 
   const handleInfraAction = (project, action, onDispatched) => {
     setInfraConfirm({ project, action, onDispatched });
@@ -1946,8 +1659,7 @@ const EagleEye = () => {
             <span className="ee-header__pulse-label">Live · auto-refreshes every 60s</span>
           </div>
           <div style={{ marginTop:10 }}>
-            {/* Requirement 3: Always show "Change Token" once verified */}
-            <ChangeTokenButton onClick={() => setShowConfig(true)} />
+            <ConfigButton hasToken={!!ghToken} onClick={() => setShowConfig(true)} />
           </div>
           {loadError && <div style={{ fontSize:11, color:'#f5a623', marginTop:8 }}>⚠ Could not connect to NerdStorage — showing defaults. Changes will not persist.</div>}
         </header>
@@ -1966,30 +1678,19 @@ const EagleEye = () => {
         </footer>
 
         {showModal && (
-          <ProjectManagerModal
-            providers={providers}
-            providerId={showModal.providerId}
-            projectHealthMap={showModal.projectHealthMap}
-            onSave={handleSave}
-            onClose={() => setShowModal(null)}
-          />
+          <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={() => setShowModal(null)} />
         )}
 
-        {/* Requirement 3: Change token modal */}
         {showConfig && (
           <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={() => setShowConfig(false)} />
         )}
 
-        {/* Requirement 2: Simple confirm modal — no long description, just "Sure?" */}
         {infraConfirm && (
-          <SimpleConfirmModal
+          <InfraConfirmModal
             project={infraConfirm.project}
             action={infraConfirm.action}
             ghToken={ghToken}
-            onConfirm={(dispatchTime) => {
-              infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime);
-              setInfraConfirm(null);
-            }}
+            onConfirm={(dispatchTime) => { infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime); setInfraConfirm(null); }}
             onCancel={() => setInfraConfirm(null)}
           />
         )}
@@ -1999,3 +1700,4 @@ const EagleEye = () => {
 };
 
 export default EagleEye;
+
