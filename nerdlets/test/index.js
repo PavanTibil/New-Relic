@@ -3,13 +3,12 @@ import ReactDOM from 'react-dom';
 import { NrqlQuery, navigation, AccountStorageMutation, AccountStorageQuery } from 'nr1';
 import './styles.scss';
 
-// ─── GitHub token context — lets any component read ghToken without prop-drilling
+// ─── GitHub token context ─────────────────────────────────────────────────────
 const GhTokenContext = React.createContext('');
 
 // ─── Auto-discovered projects ─────────────────────────────────────────────────
 let AUTO_DISCOVERED = {};
 try {
-  // eslint-disable-next-line global-require
   AUTO_DISCOVERED = require('./auto-discovered-projects.json');
 } catch (_) {}
 
@@ -63,18 +62,16 @@ const NEXT_LIFECYCLE = {
   apply: 'provisioned', start: 'provisioned', stop: 'stopped', terminate: 'terminated',
 };
 
-// ─── HOOK: check GitHub repo for .tf files under projects/<dirName>/modules/ ──
-// Always runs when projectDirName + token are available — no longer gated on expand.
+// ─── HOOK: check GitHub repo for .tf files ────────────────────────────────────
+// Checks both projects/<dirName>/main.tf AND projects/<dirName>/modules/ for .tf files
 const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
 
   React.useEffect(() => {
-    // No directory configured → definitely no infra
     if (!projectDirName) {
       setState({ loading: false, hasTf: false });
       return;
     }
-    // Token not yet set → can't check; leave hasTf as null (unknown)
     if (!token) {
       setState({ loading: false, hasTf: null });
       return;
@@ -105,7 +102,18 @@ const useGithubTfFiles = (projectDirName, token) => {
       return false;
     };
 
-    checkDir(`projects/${projectDirName}/modules`)
+    // Check project root for main.tf, then check modules/ directory
+    const checkProject = async () => {
+      const rootPath = `projects/${projectDirName}`;
+      // First: check root level for any .tf files (main.tf, etc.)
+      const rootResult = await checkDir(rootPath, 0);
+      if (rootResult) return true;
+      // Second: check modules/ subdirectory (legacy path)
+      const modulesResult = await checkDir(`${rootPath}/modules`, 0);
+      return modulesResult;
+    };
+
+    checkProject()
       .then(hasTf  => { if (!cancelled) setState({ loading: false, hasTf }); })
       .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: false }); });
 
@@ -127,6 +135,25 @@ const SpinnerIcon = ({ size = 12, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round">
     <path d="M12 2a10 10 0 0 1 10 10" style={{ animation:'ee-spin 0.8s linear infinite', transformOrigin:'center' }} />
     <style>{`@keyframes ee-spin{to{transform:rotate(360deg)}}`}</style>
+  </svg>
+);
+
+const PlayIcon = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
+    <polygon points="5,3 19,12 5,21" />
+  </svg>
+);
+
+const StopIcon = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
+    <rect x="5" y="5" width="14" height="14" rx="1" />
+  </svg>
+);
+
+const GearIcon = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </svg>
 );
 
@@ -356,6 +383,137 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
   );
 };
 
+// ─── INLINE INFRA ACTION BUTTONS ──────────────────────────────────────────────
+// Shows Apply / Stop / Start / Terminate buttons inline in the expanded project row
+const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, infraReady, tfLoading, ghToken, onAction }) => {
+  const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
+
+  // Determine which buttons are enabled based on lifecycle + infraReady
+  const getButtonState = (action) => {
+    if (!infraReady) return 'disabled';
+    if (isBusy) return action === activeAction ? 'running' : 'locked';
+    if (!lifecycle) {
+      // No known lifecycle yet — only Apply is enabled (first time)
+      return action === 'apply' ? 'enabled' : 'disabled';
+    }
+    const allowed = ALLOWED_ACTIONS[lifecycle] || [];
+    return allowed.includes(action) ? 'enabled' : 'disabled';
+  };
+
+  const btnDef = [
+    {
+      action: 'apply',
+      label: 'Apply',
+      icon: <GearIcon size={11} color="currentColor" />,
+      colors: { normal: '#4285f4', bg: 'rgba(66,133,244,0.12)', border: 'rgba(66,133,244,0.35)', text: '#4285f4' },
+    },
+    {
+      action: 'stop',
+      label: 'Stop',
+      icon: <StopIcon size={11} color="currentColor" />,
+      colors: { normal: '#f5a623', bg: 'rgba(245,166,35,0.12)', border: 'rgba(245,166,35,0.35)', text: '#f5a623' },
+    },
+    {
+      action: 'start',
+      label: 'Start',
+      icon: <PlayIcon size={11} color="currentColor" />,
+      colors: { normal: '#00d4aa', bg: 'rgba(0,212,170,0.12)', border: 'rgba(0,212,170,0.35)', text: '#00d4aa' },
+    },
+    {
+      action: 'terminate',
+      label: 'Terminate',
+      icon: <PowerOffIcon size={11} color="currentColor" />,
+      colors: { normal: '#ff4d6d', bg: 'rgba(255,77,109,0.12)', border: 'rgba(255,77,109,0.35)', text: '#ff4d6d' },
+    },
+  ];
+
+  const noInfraMsg = (() => {
+    if (!project.projectDirName) return 'No project directory configured';
+    if (!ghToken) return 'Set GitHub token (⚙ Config) to enable';
+    if (tfLoading || !infraReady && infraReady !== false) return 'Checking repo for Terraform files…';
+    if (!infraReady) return `No .tf files found in projects/${project.projectDirName}/`;
+    return null;
+  })();
+
+  return (
+    <div style={{
+      margin: '8px 0 4px',
+      padding: '10px 12px',
+      background: 'rgba(255,255,255,0.025)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 8,
+    }}>
+      {/* Header row */}
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+        <span style={{ fontSize:12 }}>🔧</span>
+        <span style={{ fontSize:11, fontWeight:700, color:'#7a9aaa', letterSpacing:'0.3px' }}>
+          Infrastructure Actions — trigger each GitHub Action:
+        </span>
+      </div>
+
+      {/* Buttons */}
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+        {btnDef.map(({ action, label, icon, colors }) => {
+          const btnState = getButtonState(action);
+          const isRunning = btnState === 'running';
+          const isDisabled = btnState === 'disabled' || btnState === 'locked';
+          const c = colors;
+
+          return (
+            <button
+              key={action}
+              onClick={() => !isDisabled && !isRunning && onAction(project, action)}
+              disabled={isDisabled || isRunning}
+              title={isDisabled && noInfraMsg ? noInfraMsg : undefined}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '5px 13px',
+                borderRadius: 7,
+                border: `1px solid ${isDisabled ? 'rgba(255,255,255,0.1)' : isRunning ? c.border : c.border}`,
+                background: isDisabled ? 'rgba(255,255,255,0.04)' : isRunning ? c.bg : c.bg,
+                color: isDisabled ? '#3d4a5e' : c.text,
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: isDisabled || isRunning ? 'not-allowed' : 'pointer',
+                outline: 'none',
+                opacity: isDisabled ? 0.5 : 1,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { if (!isDisabled && !isRunning) e.currentTarget.style.opacity = '0.75'; }}
+              onMouseLeave={e => { if (!isDisabled && !isRunning) e.currentTarget.style.opacity = '1'; }}
+            >
+              {isRunning
+                ? <SpinnerIcon size={11} color={c.text} />
+                : <span style={{ display:'flex', alignItems:'center', color: isDisabled ? '#3d4a5e' : c.text }}>{icon}</span>
+              }
+              <span>{isRunning ? `${label}ing…` : label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Footer note */}
+      {noInfraMsg && !infraReady ? (
+        <div style={{ marginTop:8, fontSize:10, color:'#4a5e70', display:'flex', alignItems:'center', gap:5 }}>
+          {tfLoading
+            ? <><SpinnerIcon size={9} color="#4a6080" /> <span>Checking repository for Terraform files…</span></>
+            : <><span style={{ color:'#4a6080' }}>📂</span> <span>{noInfraMsg}</span></>
+          }
+        </div>
+      ) : (
+        <div style={{ marginTop:8, fontSize:10, color:'#3d4a5e' }}>
+          Each button dispatches a{' '}
+          <code style={{ color:'#5a7aaa', fontSize:10 }}>workflow_dispatch</code> to{' '}
+          <strong style={{ color:'#4a6a8a' }}>{GH_OWNER}/{GH_REPO}</strong>
+          {' '}→ <code style={{ color:'#5a7aaa', fontSize:10 }}>main.yml</code>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── PROJECT DOTS DROPDOWN ────────────────────────────────────────────────────
 const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAction = null, infraReason = '' }) => {
   const [open, setOpen] = useState(false);
@@ -383,16 +541,12 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   useEffect(() => () => stopTracking(), []);
 
   const isBusy = activeAction !== null;
-  // All 4 actions disabled = no infra available
   const allDisabled = ['apply','stop','start','terminate'].every(a => disabledActions.includes(a));
 
   const menuBtn = (onClick, color, label, desc, disabled, icon) => {
     const isRunning = isBusy && activeAction === label.toLowerCase();
     const actualDisabled = disabled || isBusy;
-    // Determine tooltip text for disabled state
-    const disabledReason = allDisabled && infraReason
-      ? infraReason
-      : isBusy ? `Locked — ${activeAction} in progress` : desc;
+    const disabledReason = allDisabled && infraReason ? infraReason : isBusy ? `Locked — ${activeAction} in progress` : desc;
     return (
       <button onClick={onClick} disabled={actualDisabled}
         style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'10px 14px', background:'transparent', border:'none', cursor:actualDisabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:actualDisabled?0.35:1 }}
@@ -643,7 +797,6 @@ const DashboardIcon = ({ onClick }) => (
 );
 
 // ─── NO INFRA YET BADGE ───────────────────────────────────────────────────────
-// Shows next to project name when no .tf files exist in the repo.
 const NoInfraBadge = ({ checking = false }) => {
   if (checking) {
     return (
@@ -794,7 +947,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     </div>
   );
 
-  // ── Edit form ──────────────────────────────────────────────────────────────────
   const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
   const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
   const goBack          = () => setView('list');
@@ -837,7 +989,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
             <input value={form.projectDirName} onChange={e => setField('projectDirName', e.target.value)} placeholder="e.g. starapp-uat  →  projects/starapp-uat/" style={s.input} />
             <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
-              Set this to enable infra buttons. The app will look for <code style={{ color:'#6a8aaa' }}>.tf</code> files under <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/modules/</code> in the GitHub repo.
+              Set this to enable infra buttons. The app checks for <code style={{ color:'#6a8aaa' }}>.tf</code> files under <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/</code> and <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/modules/</code> in the GitHub repo.
             </div>
           </div>
           {form.providerId==='gcp' && form.projectType==='normal' && (
@@ -1186,17 +1338,11 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
-  // Read GitHub token from context
   const ghToken = React.useContext(GhTokenContext);
 
-  // ── TF file check — runs as soon as component mounts and token is available.
-  // NOT gated on expanded; we need the result to drive button state at all times.
   const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
-
-  // Infra buttons are only enabled when TF files are confirmed present.
   const infraReady = hasTf === true;
 
-  // Human-readable reason used in the dropdown when all buttons are disabled.
   const infraDisabledReason = (() => {
     if (!project.projectDirName)         return 'No project directory configured';
     if (!ghToken)                        return 'Set GitHub token (⚙ Config) to enable';
@@ -1208,9 +1354,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
   const getDisabledActions = () => {
-    // Block all 4 infra actions when TF files are absent / unconfirmed
     if (!infraReady) return ['apply', 'stop', 'start', 'terminate'];
-    // Block all while a workflow is in flight
     if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
         actionState !== INFRA_STATES.FAILED && actionState !== INFRA_STATES.TIMEOUT) {
       return ['apply', 'stop', 'start', 'terminate'];
@@ -1285,12 +1429,12 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   // ── Empty (no monitoring) ─────────────────────────────────────────────────────
   if (project.empty) return (
-    <div className="project-row project-row--clickable" style={{ animationDelay:index*80+'ms', cursor:'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }} onClick={() => openDashboard(project)}>
+    <div className={'project-row project-row--clickable'+(expanded?' project-row--expanded':'')} style={{ animationDelay:index*80+'ms', cursor:'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }}
+      onClick={() => project.projectDirName ? setExpanded(p=>!p) : openDashboard(project)}>
       <div className="project-row__main">
         <div className="project-row__left" style={{ gap:10 }}>
           <span style={{ fontSize:14, color:'#7a8aaa' }}>◎</span>
           <span className="project-row__name" style={{ color:'#c8d4f0' }}>{project.name}</span>
-          {/* No Infra badge for empty projects */}
           {!infraReady && !tfLoading && <NoInfraBadge />}
           {tfLoading && <NoInfraBadge checking />}
         </div>
@@ -1298,8 +1442,26 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
           <span style={{ fontSize:10, fontWeight:600, color:'#8899bb', background:'rgba(100,120,170,0.18)', border:'1px solid rgba(100,120,170,0.4)', borderRadius:100, padding:'2px 10px', textTransform:'uppercase' }}>No Monitoring</span>
           <DashboardIcon onClick={e => { e.stopPropagation(); openDashboard(project); }} />
+          {project.projectDirName && (
+            <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{ e.stopPropagation(); setExpanded(p=>!p); }}>›</span>
+          )}
         </div>
       </div>
+      {expanded && project.projectDirName && (
+        <div className="project-row__detail">
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
+          <InfraActionButtons
+            project={project}
+            lifecycle={lifecycle}
+            actionState={actionState}
+            activeAction={activeAction}
+            infraReady={infraReady}
+            tfLoading={tfLoading}
+            ghToken={ghToken}
+            onAction={handleInfraAction}
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -1307,10 +1469,12 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const status       = loading ? 'unknown' : worstStatus(resourceStatuses.map(r=>r.status));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
+  const canExpand    = hasResources || !!project.projectDirName;
+
   const handleRowClick = useCallback(() => {
-    if (hasResources || project.projectDirName) setExpanded(p=>!p);
+    if (canExpand) setExpanded(p=>!p);
     else if (hasDashboard) openDashboard(project);
-  }, [project, hasResources, hasDashboard]);
+  }, [project, canExpand, hasDashboard]);
 
   const uptimeSummary = (() => {
     if (loading) return null;
@@ -1339,21 +1503,27 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
               <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
             </span>
-            {isBusy && <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />}
           </div>
           <div className="project-row__right">
-            <button onClick={e => { e.stopPropagation(); if (!isBusy && infraReady) handleInfraAction(project, 'apply'); }} disabled={isBusy || !infraReady}
-              style={{ padding:'4px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.6)', background:'rgba(66,133,244,0.15)', color:isBusy||!infraReady?'#6a7a8a':'#4285f4', fontWeight:700, fontSize:11, cursor:isBusy||!infraReady?'not-allowed':'pointer', outline:'none', display:'flex', alignItems:'center', gap:5, opacity:isBusy||!infraReady?0.5:1 }}>
-              {isBusy ? <SpinnerIcon size={11} color="#4285f4" /> : null} ⚙ Re-provision
-            </button>
             <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
           </div>
         </div>
         {expanded && (
           <div className="project-row__detail">
+            <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
+            <InfraActionButtons
+              project={project}
+              lifecycle={lifecycle}
+              actionState={actionState}
+              activeAction={activeAction}
+              infraReady={infraReady}
+              tfLoading={tfLoading}
+              ghToken={ghToken}
+              onAction={handleInfraAction}
+            />
             <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
-              All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Click <strong style={{ color:'#4285f4' }}>Re-provision</strong> to restore.
+              All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
             </div>
           </div>
         )}
@@ -1375,13 +1545,13 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   };
 
   return (
-    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''}${hasDashboard||hasResources||project.projectDirName?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
+    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''}${canExpand||hasDashboard?' project-row--clickable':''}`} style={{ animationDelay:`${index*80}ms` }}>
       <div className="project-row__main" onClick={handleRowClick}>
         <div className="project-row__left">
           <StatusDot status={isBusy ? 'yellow' : status} />
           <span className="project-row__name">{project.name}</span>
 
-          {/* ── Infra status badge (shown when buttons are disabled) ── */}
+          {/* Infra status badges */}
           {!isBusy && (
             tfLoading
               ? <NoInfraBadge checking />
@@ -1401,7 +1571,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         </div>
         <div className="project-row__right">
           <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
-          {(hasResources || project.projectDirName) && !loading && (
+          {canExpand && !loading && (
             <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{ e.stopPropagation(); setExpanded(p=>!p); }}>›</span>
           )}
           {hasDashboard && <DashboardIcon onClick={e=>{ e.stopPropagation(); openDashboard(project); }} />}
@@ -1411,6 +1581,21 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       {expanded && (
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
+
+          {/* ── Inline infra action buttons — always rendered when expanded ── */}
+          {project.projectDirName && (
+            <InfraActionButtons
+              project={project}
+              lifecycle={lifecycle}
+              actionState={actionState}
+              activeAction={activeAction}
+              infraReady={infraReady}
+              tfLoading={tfLoading}
+              ghToken={ghToken}
+              onAction={handleInfraAction}
+            />
+          )}
+
           {renderResourceDetail()}
         </div>
       )}
@@ -1700,4 +1885,3 @@ const EagleEye = () => {
 };
 
 export default EagleEye;
-
