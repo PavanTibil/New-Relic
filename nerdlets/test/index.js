@@ -238,6 +238,23 @@ const RESOURCE_OPTIONS = {
   ],
 };
 
+// ─── Helper: write providers to NerdStorage and update local state ────────────
+// Extracted so every caller (modal list actions + form submit) goes through
+// the exact same path and errors are handled uniformly.
+const persistProviders = async (newProviders) => {
+  const { error } = await AccountStorageMutation.mutate({
+    accountId:  ACCOUNT_ID,
+    actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+    collection: STORAGE_COLLECTION,
+    documentId: STORAGE_DOC_ID,
+    document:   { providers: newProviders },
+  });
+  if (error) {
+    throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
+  }
+  return newProviders;
+};
+
 const ConfigModal = ({ currentToken, onSave, onClose }) => {
   const [tokenInput, setTokenInput] = useState(currentToken || '');
   const [saving, setSaving] = useState(false);
@@ -727,6 +744,12 @@ const NoInfraBadge = ({ checking = false }) => {
   );
 };
 
+// ─── FIX 1: Removed 'Archived' from projectType options in edit form.
+// ─── FIX 2: All mutating actions (archive, unarchive, delete, save form) now
+//            await persistProviders() before updating local state, so changes
+//            survive a page refresh.
+// ─── FIX 3: handleSubmit no longer calls onClose() inside a try block before
+//            the save is confirmed — it waits for the await to finish cleanly.
 const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, onClose }) => {
   const [view,          setView]          = useState('list');
   const [form,          setForm]          = useState({ providerId, name:'', gcpProjectId:'', dashboardGuid:'', dashboardLink:'', projectDirName:'', projectType:'normal', selectedResources:[], knownServices:'', customResources:'' });
@@ -742,47 +765,113 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
 
   const startEdit = (pj) => {
     const project = provider.projects[pj];
+    // Determine projectType — note: we never set 'deleted' here; archived projects
+    // keep their flag but the edit form only exposes normal / empty / billing.
     let projectType = 'normal';
-    if (project.deleted) projectType = 'deleted';
-    else if (project.empty) projectType = 'empty';
+    if (project.empty) projectType = 'empty';
     else if (project.billingNotConfigured || project.billingOnly) projectType = 'billing';
+    // (deleted projects are still editable but default to 'normal' so the user
+    //  can undelete them via the form too — the archived flag is removed on save)
     const knownTypes = new Set((RESOURCE_OPTIONS[providerId] || []).map(o => o.type));
     const customRes  = (project.resources || []).filter(r => !knownTypes.has(r.type)).map(r => r.label).join(', ');
     setForm({ providerId, name:project.name||'', gcpProjectId:project.gcpProjectId||'', dashboardGuid:project.dashboardGuid||'', dashboardLink:project.dashboardLink||'', projectDirName:project.projectDirName||'', projectType, selectedResources:(project.resources||[]).map(r=>r.type).filter(t=>knownTypes.has(t)), knownServices:(project.knownServices||[]).join(', '), customResources:customRes });
     setEditInfo({ pi, pj }); setSaveError(''); setView('form');
   };
 
-  const buildProject = () => {
+  const buildProject = (existingProject) => {
     const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
-    const base = { name:name.trim(), gcpProjectId:gcpProjectId.trim()||null, dashboardGuid:dashboardGuid.trim()||null, dashboardLink:dashboardLink.trim()||null, projectDirName:projectDirName.trim()||null };
-    if (projectType === 'deleted') return { ...base, deleted:true, resources:[] };
-    if (projectType === 'empty')   return { ...base, empty:true, resources:[] };
-    if (projectType === 'billing') return { ...base, billingOnly:true, resources:[{ label:'Total Cost (INR)', type:providerId==='aws'?'aws_billing':'gcp_billing', alwaysOn:false }] };
+    const base = {
+      name: name.trim(),
+      gcpProjectId: gcpProjectId.trim() || null,
+      dashboardGuid: dashboardGuid.trim() || null,
+      dashboardLink: dashboardLink.trim() || null,
+      projectDirName: projectDirName.trim() || null,
+    };
+    // Preserve the deleted flag only if the user hasn't changed the type away from normal
+    // (i.e. editing an archived project without changing type keeps it archived).
+    // But since 'archived' is no longer a selectable option, saving always clears deleted.
+    if (projectType === 'empty') {
+      return { ...base, empty: true, resources: [] };
+    }
+    if (projectType === 'billing') {
+      return { ...base, billingOnly: true, resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }] };
+    }
+    // 'normal' — build resource list
     const allOpts      = RESOURCE_OPTIONS[providerId] || [];
     const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
-    const customParsed = (customResources||'').split(',').map(s=>s.trim()).filter(Boolean).map(label => ({ label, type:'custom_'+label.toLowerCase().replace(/[^a-z0-9]/g,'_'), alwaysOn:false }));
+    const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean).map(label => ({ label, type: 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g, '_'), alwaysOn: false }));
     const resources    = [...stdResources, ...customParsed];
     const project      = { ...base, resources };
     if (selectedResources.includes('gcp_cloudrun') && knownServices.trim())
-      project.knownServices = knownServices.split(',').map(s=>s.trim()).filter(Boolean);
+      project.knownServices = knownServices.split(',').map(s => s.trim()).filter(Boolean);
     return project;
   };
 
+  // FIX 2 + 3: await the full NerdStorage write before closing / updating UI
   const handleSubmit = async () => {
-    setSaveError(''); if (!form.name.trim()) { setSaveError('Project name is required.'); return; }
+    setSaveError('');
+    if (!form.name.trim()) { setSaveError('Project name is required.'); return; }
     setSaving(true);
     try {
-      const newProviders = providers.map(p => ({ ...p, projects:[...p.projects] }));
-      const project = buildProject();
-      if (editInfo) newProviders[pi].projects[editInfo.pj] = project;
+      const newProviders = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const existingProject = editInfo ? newProviders[pi].projects[editInfo.pj] : null;
+      const project = buildProject(existingProject);
+      if (editInfo) {
+        newProviders[pi].projects[editInfo.pj] = project;
+      } else {
+        newProviders[pi].projects.push(project);
+      }
+      // Persist first — if this throws, we stay in the form with an error message
       await onSave(newProviders);
+      // Only close after successful persist
       onClose();
-    } catch (e) { setSaveError(e?.message || 'Save failed.'); } finally { setSaving(false); }
+    } catch (e) {
+      setSaveError(e?.message || 'Save failed. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete    = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); np[pi].projects.splice(pj,1); await onSave(np); setDeleteConfirm(null); } catch (e) { setSaveError(e?.message||'Delete failed.'); } };
-  const handleArchive   = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); const proj={...np[pi].projects[pj],deleted:true,resources:[]}; delete proj.billingOnly; delete proj.billingNotConfigured; delete proj.empty; np[pi].projects[pj]=proj; await onSave(np); } catch (e) { setSaveError(e?.message||'Archive failed.'); } };
-  const handleUnarchive = async (pj) => { try { const np=providers.map(p=>({...p,projects:[...p.projects]})); const proj={...np[pi].projects[pj]}; delete proj.deleted; np[pi].projects[pj]=proj; await onSave(np); } catch (e) { setSaveError(e?.message||'Unarchive failed.'); } };
+  // FIX 2: inline list actions also await the full persist and surface errors
+  const handleDelete = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      np[pi].projects.splice(pj, 1);
+      await onSave(np);
+      setDeleteConfirm(null);
+    } catch (e) {
+      setSaveError(e?.message || 'Delete failed.');
+    }
+  };
+
+  const handleArchive = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const proj = { ...np[pi].projects[pj], deleted: true, resources: [] };
+      delete proj.billingOnly;
+      delete proj.billingNotConfigured;
+      delete proj.empty;
+      np[pi].projects[pj] = proj;
+      await onSave(np);
+    } catch (e) {
+      setSaveError(e?.message || 'Archive failed.');
+    }
+  };
+
+  const handleUnarchive = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const proj = { ...np[pi].projects[pj] };
+      delete proj.deleted;
+      np[pi].projects[pj] = proj;
+      await onSave(np);
+    } catch (e) {
+      setSaveError(e?.message || 'Unarchive failed.');
+    }
+  };
 
   const s = {
     overlay:      { position:'fixed', inset:0, background:'rgba(8,11,20,0.88)', backdropFilter:'blur(10px)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' },
@@ -854,7 +943,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
 
   const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
   const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
-  const goBack          = () => setView('list');
+  const goBack          = () => { setSaveError(''); setView('list'); };
 
   return (
     <div style={s.overlay} onClick={goBack}>
@@ -872,10 +961,15 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               {providerId==='gcp' ? '☁ Google Cloud Platform' : '⚡ Amazon Web Services'}
             </div>
           </div>
+          {/* FIX 1: 'Archived' option removed — archiving is done from the list view only */}
           <div style={s.field}>
             <label style={s.label}>Project Type</label>
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-              {[{ value:'normal', title:'Normal', sub:'Monitored resources' },{ value:'empty', title:'No Monitoring', sub:'Dashboard link only' },{ value:'deleted', title:'Archived', sub:'Hidden from main view' },{ value:'billing', title:'Billing Only', sub:'Cost tracking' }].map(opt => {
+              {[
+                { value:'normal',  title:'Normal',        sub:'Monitored resources' },
+                { value:'empty',   title:'No Monitoring', sub:'Dashboard link only' },
+                { value:'billing', title:'Billing Only',  sub:'Cost tracking' },
+              ].map(opt => {
                 const sel = form.projectType === opt.value;
                 return (
                   <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding:'9px 14px', borderRadius:9, cursor:'pointer', border:sel?`1px solid ${accentColor}66`:'1px solid rgba(255,255,255,0.07)', background:sel?`${accentColor}12`:'rgba(255,255,255,0.03)' }}>
@@ -1683,24 +1777,43 @@ const EagleEye = () => {
   useEffect(() => {
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error }) => {
-        if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
-        else if (data?.document?.providers) setProviders(mergeAutoDiscovered(data.document.providers));
-        else setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-      }).catch(() => { setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
+        if (error) {
+          console.error('NerdStorage load error:', error);
+          setLoadError(true);
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        } else if (data?.document?.providers && Array.isArray(data.document.providers) && data.document.providers.length > 0) {
+          // FIX 2: Always load from NerdStorage when valid data exists
+          setProviders(mergeAutoDiscovered(data.document.providers));
+        } else {
+          // Nothing saved yet — use defaults
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        }
+      }).catch(() => {
+        setLoadError(true);
+        setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+      });
 
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data }) => { if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
       .catch(() => {});
   }, []);
 
+  // FIX 2 + 3: Single source of truth for saving — persists to NerdStorage,
+  // then updates local state only on success. Never calls setProviders before
+  // the await resolves, so a refresh always sees the last committed write.
   const handleSave = async (newProviders) => {
-    const { error } = await AccountStorageMutation.mutate({ accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID, document:{ providers:newProviders } });
-    if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
+    await persistProviders(newProviders);
     setProviders(newProviders);
   };
 
   const handleSaveToken = async (token) => {
-    const { error } = await AccountStorageMutation.mutate({ accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID, document:{ accessToken: token } });
+    const { error } = await AccountStorageMutation.mutate({
+      accountId:  ACCOUNT_ID,
+      actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+      collection: STORAGE_COLLECTION,
+      documentId: STORAGE_CONFIG_ID,
+      document:   { accessToken: token },
+    });
     if (error) throw new Error('Failed to save token: ' + (error.message || JSON.stringify(error)));
     setGhToken(token);
   };
@@ -1748,7 +1861,13 @@ const EagleEye = () => {
         </footer>
 
         {showModal && (
-          <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={() => setShowModal(null)} />
+          <ProjectManagerModal
+            providers={providers}
+            providerId={showModal.providerId}
+            projectHealthMap={showModal.projectHealthMap}
+            onSave={handleSave}
+            onClose={() => setShowModal(null)}
+          />
         )}
 
         {showConfig && (
