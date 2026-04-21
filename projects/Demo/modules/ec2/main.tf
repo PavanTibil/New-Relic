@@ -1,11 +1,12 @@
-resource "aws_instance" "ec2_instances" {
-  count         = var.instance_count
-  ami           = var.ami_id
-  instance_type = var.instance_type
-  key_name      = var.key_name
-  vpc_security_group_ids = [var.security_group_id]
+provider "aws" {
+  region = "ap-south-1"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-0f5ee92e2d63afc18" # Amazon Linux 2 AMI for ap-south-1 (verify latest)
+  instance_type = "t2.micro"
 
   tags = {
-    Name = "TerraformEC2-${count.index + 1}"
+    Name = "NR Test"
   }
 }
