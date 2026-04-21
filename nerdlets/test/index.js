@@ -379,41 +379,42 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   };
 
   const btnDef = [
-    { action:'apply',     label:'Apply',     icon:<GearIcon size={11} color="currentColor" />,      colors:{ bg:'rgba(66,133,244,0.12)',  border:'rgba(66,133,244,0.35)',  text:'#4285f4' } },
-    { action:'stop',      label:'Stop',      icon:<StopIcon size={11} color="currentColor" />,       colors:{ bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.35)', text:'#f5a623' } },
-    { action:'start',     label:'Start',     icon:<PlayIcon size={11} color="currentColor" />,       colors:{ bg:'rgba(0,212,170,0.12)',  border:'rgba(0,212,170,0.35)',  text:'#00d4aa' } },
-    { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={11} color="currentColor" />,  colors:{ bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.35)', text:'#ff4d6d' } },
+    { action:'apply',     label:'Apply',     icon:<GearIcon size={12} color="currentColor" />,     colors:{ bg:'#162d52', border:'#4285f4', text:'#7ab3ff', disabledBg:'#0d1a2e', disabledBorder:'#1e3050', disabledText:'#3a5580' } },
+    { action:'stop',      label:'Stop',      icon:<StopIcon size={12} color="currentColor" />,      colors:{ bg:'#2e1f00', border:'#f5a623', text:'#ffc055', disabledBg:'#1a1200', disabledBorder:'#3d2a00', disabledText:'#5a4010' } },
+    { action:'start',     label:'Start',     icon:<PlayIcon size={12} color="currentColor" />,      colors:{ bg:'#002e22', border:'#00d4aa', text:'#00ffcc', disabledBg:'#001a14', disabledBorder:'#003d2e', disabledText:'#105040' } },
+    { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={12} color="currentColor" />, colors:{ bg:'#2e0010', border:'#ff4d6d', text:'#ff7a96', disabledBg:'#1a000a', disabledBorder:'#3d0015', disabledText:'#581030' } },
   ];
 
   return (
     <div style={{ margin:'8px 0 4px', padding:'10px 12px', background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8 }}>
       <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-        {btnDef.map(({ action, label, icon, colors }) => {
+        {btnDef.map(({ action, label, icon, colors: c }) => {
           const btnState = getButtonState(action);
           const isRunning  = btnState === 'running';
           const isDisabled = btnState === 'disabled' || btnState === 'locked';
-          const c = colors;
           return (
             <button
               key={action}
               onClick={() => !isDisabled && !isRunning && onAction(project, action)}
               disabled={isDisabled || isRunning}
               style={{
-                display:'inline-flex', alignItems:'center', gap:5,
-                padding:'5px 13px', borderRadius:7,
-                border:`1px solid ${isDisabled ? 'rgba(255,255,255,0.1)' : c.border}`,
-                background:isDisabled ? 'rgba(255,255,255,0.04)' : c.bg,
-                color:isDisabled ? '#3d4a5e' : c.text,
+                display:'inline-flex', alignItems:'center', gap:6,
+                padding:'6px 14px', borderRadius:7,
+                border:`1px solid ${isDisabled ? c.disabledBorder : c.border}`,
+                background: isDisabled ? c.disabledBg : c.bg,
+                color: isDisabled ? c.disabledText : c.text,
                 fontWeight:700, fontSize:12,
                 cursor:isDisabled || isRunning ? 'not-allowed' : 'pointer',
-                outline:'none', opacity:isDisabled ? 0.5 : 1, transition:'all 0.15s',
+                outline:'none',
+                transition:'all 0.15s',
+                letterSpacing:'0.3px',
               }}
-              onMouseEnter={e => { if (!isDisabled && !isRunning) e.currentTarget.style.opacity = '0.75'; }}
-              onMouseLeave={e => { if (!isDisabled && !isRunning) e.currentTarget.style.opacity = '1'; }}
+              onMouseEnter={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter='brightness(1.2)'; e.currentTarget.style.transform='translateY(-1px)'; } }}
+              onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter='brightness(1)'; e.currentTarget.style.transform='translateY(0)'; } }}
             >
               {isRunning
-                ? <SpinnerIcon size={11} color={c.text} />
-                : <span style={{ display:'flex', alignItems:'center', color:isDisabled ? '#3d4a5e' : c.text }}>{icon}</span>
+                ? <SpinnerIcon size={12} color={c.text} />
+                : <span style={{ display:'flex', alignItems:'center', color: isDisabled ? c.disabledText : c.text }}>{icon}</span>
               }
               <span>{isRunning ? `${label}ing…` : label}</span>
             </button>
@@ -774,7 +775,8 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
       const newProviders = providers.map(p => ({ ...p, projects:[...p.projects] }));
       const project = buildProject();
       if (editInfo) newProviders[pi].projects[editInfo.pj] = project;
-      await onSave(newProviders); setView('list');
+      await onSave(newProviders);
+      onClose();
     } catch (e) { setSaveError(e?.message || 'Save failed.'); } finally { setSaving(false); }
   };
 
@@ -1363,7 +1365,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const status       = loading ? 'unknown' : worstStatus(resourceStatuses.map(r=>r.status));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
-  const canExpand    = true;
 
   const handleRowClick = useCallback(() => {
     setExpanded(p=>!p);
