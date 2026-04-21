@@ -8,11 +8,6 @@
         "label": "EC2",
         "type": "aws_ec2",
         "alwaysOn": true
-      },
-      {
-        "label": "S3",
-        "type": "aws_s3",
-        "alwaysOn": true
       }
     ]
   }
