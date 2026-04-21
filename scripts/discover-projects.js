@@ -8,7 +8,6 @@ const path = require('path');
 const REPO_ROOT    = process.cwd();
 const PROJECTS_DIR = path.join(REPO_ROOT, 'projects');
 const OUTPUT_PATH  = path.join(REPO_ROOT, 'nerdlets', 'test', 'auto-discovered-projects.json');
-
 const SIGNAL_FILE  = '/tmp/eagle-eye-has-changes';
 
 // ─── Terraform resource map ──────────────────────────────────────────────────
@@ -40,10 +39,6 @@ const TF_RESOURCE_MAP = {
   aws_alb:                         { label: 'ALB/NLB',     type: 'aws_alb',        alwaysOn: true },
 };
 
-const LABEL_TO_RESOURCE = Object.fromEntries(
-  Object.values(TF_RESOURCE_MAP).map(r => [r.label, r])
-);
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function findTfFiles(dir) {
   const results = [];
@@ -72,9 +67,9 @@ function detectProvider(tf) {
 }
 
 function detectResources(tf) {
-  const seen = new Set();
+  const seen  = new Set();
   const found = [];
-  const re = /resource\s+"(\w+)"/g;
+  const re    = /resource\s+"(\w+)"/g;
   let m;
   while ((m = re.exec(tf)) !== null) {
     const meta = TF_RESOURCE_MAP[m[1]];
@@ -90,22 +85,53 @@ function dirToName(name) {
   return name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// ─── Scan a single project directory ─────────────────────────────────────────
+// Checks both the project root AND modules/ subdirectory for .tf files.
+// Returns null if no .tf files are found anywhere.
+function scanProject(projectName) {
+  const projectRoot  = path.join(PROJECTS_DIR, projectName);
+  const modulesPath  = path.join(projectRoot, 'modules');
+
+  // Gather .tf files from both the root and modules/
+  const rootTfFiles    = findTfFiles(projectRoot).filter(f => !f.includes('/modules/'));
+  const moduleTfFiles  = findTfFiles(modulesPath);
+  const allTfFiles     = [...rootTfFiles, ...moduleTfFiles];
+
+  if (allTfFiles.length === 0) return null;
+
+  const tf       = readTfFiles(allTfFiles);
+  const provider = detectProvider(tf);
+  if (!provider) return null;
+
+  return {
+    projectDirName: projectName,
+    name:           dirToName(projectName),
+    provider,
+    resources:      detectResources(tf),
+  };
+}
+
+// Deep-equality check for the resource arrays so we only signal a change
+// when something actually differs (avoids spurious re-deploys).
+function resourcesChanged(oldResources = [], newResources = []) {
+  if (oldResources.length !== newResources.length) return true;
+  const oldTypes = oldResources.map(r => r.type).sort().join(',');
+  const newTypes = newResources.map(r => r.type).sort().join(',');
+  return oldTypes !== newTypes;
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 function main() {
   console.log(`\n🦅 Eagle Eye discovery — ${new Date().toISOString()}`);
 
   let registry = {};
   if (fs.existsSync(OUTPUT_PATH)) {
-    try {
-      registry = JSON.parse(fs.readFileSync(OUTPUT_PATH, 'utf8'));
-    } catch {}
+    try { registry = JSON.parse(fs.readFileSync(OUTPUT_PATH, 'utf8')); } catch {}
   }
 
-  // ✅ FIX: DO NOT EXIT — treat missing folder as empty
   let projectDirs = [];
-
   if (!fs.existsSync(PROJECTS_DIR)) {
-    console.log('⚠️ projects/ directory not found — treating as empty (all projects will be removed)');
+    console.log('⚠️  projects/ directory not found — treating as empty (all projects will be removed)');
   } else {
     projectDirs = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
       .filter(e => e.isDirectory())
@@ -113,52 +139,66 @@ function main() {
   }
 
   const liveOnDisk = new Set(projectDirs);
-
-  let addedCount = 0;
+  let addedCount   = 0;
+  let updatedCount = 0;
   let removedCount = 0;
 
-  // ── ADD ───────────────────────────────────────────────────────────────────
+  // ── UPSERT (add new + update existing) ───────────────────────────────────
   for (const projectName of projectDirs) {
-    if (registry[projectName]) continue;
+    const scanned = scanProject(projectName);
 
-    const modulesPath = path.join(PROJECTS_DIR, projectName, 'modules');
-    const tfFiles = findTfFiles(modulesPath);
+    if (!scanned) {
+      // No .tf files found — leave any existing entry alone
+      // (manual projects added via the UI should not be wiped)
+      continue;
+    }
 
-    if (tfFiles.length === 0) continue;
+    const existing = registry[projectName];
 
-    const tf = readTfFiles(tfFiles);
-    const provider = detectProvider(tf);
-    if (!provider) continue;
+    if (!existing) {
+      // Brand-new project
+      registry[projectName] = scanned;
+      addedCount++;
+      console.log(`  ✅ Added: ${projectName} (provider: ${scanned.provider}, resources: ${scanned.resources.map(r => r.label).join(', ') || 'none'})`);
+    } else {
+      // Existing project — check whether resources changed
+      const changed = existing.provider !== scanned.provider
+        || resourcesChanged(existing.resources, scanned.resources);
 
-    const resources = detectResources(tf);
-
-    registry[projectName] = {
-      projectDirName: projectName,
-      name: dirToName(projectName),
-      provider,
-      resources
-    };
-
-    addedCount++;
+      if (changed) {
+        // Preserve any extra fields the user may have set via the UI
+        // (gcpProjectId, dashboardGuid, dashboardLink, knownServices, etc.)
+        // but refresh the auto-detected fields.
+        registry[projectName] = {
+          ...existing,           // keep manual overrides
+          ...scanned,            // overwrite auto-detected fields
+        };
+        updatedCount++;
+        console.log(`  🔄 Updated: ${projectName} → resources now: [${scanned.resources.map(r => r.label).join(', ') || 'none'}]`);
+      } else {
+        console.log(`  — Unchanged: ${projectName}`);
+      }
+    }
   }
 
-  // ── REMOVE ────────────────────────────────────────────────────────────────
+  // ── REMOVE (projects deleted from disk) ──────────────────────────────────
   for (const key of Object.keys(registry)) {
     if (!liveOnDisk.has(key)) {
       delete registry[key];
       removedCount++;
+      console.log(`  🗑  Removed: ${key}`);
     }
   }
 
+  // ── Write registry ────────────────────────────────────────────────────────
   fs.writeFileSync(OUTPUT_PATH, JSON.stringify(registry, null, 2) + '\n');
 
-  const hasChanges = addedCount > 0 || removedCount > 0;
-
+  const hasChanges = addedCount > 0 || updatedCount > 0 || removedCount > 0;
   if (hasChanges) {
     fs.writeFileSync(SIGNAL_FILE, 'changed\n');
-    console.log(`🚀 Changes detected (added: ${addedCount}, removed: ${removedCount})`);
+    console.log(`\n🚀 Changes detected — added: ${addedCount}, updated: ${updatedCount}, removed: ${removedCount}`);
   } else {
-    console.log('No changes');
+    console.log('\nNo changes detected.');
   }
 }
 
