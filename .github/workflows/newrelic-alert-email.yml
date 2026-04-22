@@ -21,9 +21,10 @@ jobs:
           body: |
             🚨 New Relic Alert Triggered!
 
-            Alert Name : ${{ github.event.client_payload.alertName }}
+            Alert Name : ${{ github.event.client_payload.alert_name }}
             Severity   : ${{ github.event.client_payload.severity }}
             Message    : ${{ github.event.client_payload.message }}
-            Time       : ${{ github.event.client_payload.timestamp }}
+            Time       : ${{ github.event.client_payload.time }}
+            Entity     : ${{ github.event.client_payload.entity_name }}
 
             Please investigate immediately.
