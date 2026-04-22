@@ -1,7 +1,9 @@
 name: New Relic Alert - Send Email
+
 on:
   repository_dispatch:
     types: [newrelic_alert]
+
 jobs:
   send-alert-email:
     runs-on: ubuntu-latest
@@ -16,15 +18,15 @@ jobs:
           subject: "🚨 New Relic Alert: ${{ github.event.client_payload.alertName }}"
           to: pavan.ks@tibilsolutions.com
           from: ${{ secrets.MAIL_USERNAME }}
-          content_type: text/html        # <-- ADD THIS
           body: |
-            <h2>🚨 New Relic Alert Triggered!</h2>
-            <hr/>
-            <table>
-              <tr><td><b>Alert Name</b></td><td>${{ github.event.client_payload.alertName }}</td></tr>
-              <tr><td><b>Severity</b></td><td>${{ github.event.client_payload.severity }}</td></tr>
-              <tr><td><b>Message</b></td><td>${{ github.event.client_payload.message }}</td></tr>
-              <tr><td><b>Time</b></td><td>${{ github.event.client_payload.timestamp }}</td></tr>
-            </table>
-            <br/>
-            <p>Please investigate immediately.</p>
+            🚨 New Relic Alert Triggered!
+
+            Alert Name : ${{ github.event.client_payload.alert_name }}
+            Severity   : ${{ github.event.client_payload.severity }}
+            Message    : ${{ github.event.client_payload.message }}
+            Time       : ${{ github.event.client_payload.time }}
+            Entity     : ${{ github.event.client_payload.entity_name }}
+
+            Please investigate immediately.
+
+
