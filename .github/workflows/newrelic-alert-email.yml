@@ -16,7 +16,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "🚨 New Relic Alert: ${{ github.event.client_payload.alertName }}"
-          to: support@tibilsolutions.com
+          to: pavan.ks@tibilsolutions.com
           from: ${{ secrets.MAIL_USERNAME }}
           body: |
             🚨 New Relic Alert Triggered!
