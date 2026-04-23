@@ -59,10 +59,6 @@ const NEXT_LIFECYCLE = {
   apply: 'provisioned', start: 'provisioned', stop: 'stopped', terminate: 'terminated',
 };
 
-// ─── MINIMAL DEFAULTS: only billing projects hardcoded ────────────────────────
-// All real projects are added manually via the ··· manage UI and persisted
-// in NerdStorage. These billing stubs are kept because they require no
-// projectDirName and don't participate in GitHub Actions workflows.
 const DEFAULT_CLOUD_PROVIDERS = [
   {
     id: 'gcp', name: 'GCP', label: 'Google Cloud Platform', icon: '☁',
@@ -92,29 +88,46 @@ const DEFAULT_CLOUD_PROVIDERS = [
 
 const RESOURCE_OPTIONS = {
   gcp: [
-    { type:'gcp_cloudrun', label:'Cloud Run',  desc:'Serverless containers — scales to zero when idle', alwaysOn:false, scalesToZero:true },
-    { type:'gcp_cloudsql', label:'Cloud SQL',  desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true },
-    { type:'gcp_bigquery', label:'BigQuery',   desc:'Serverless data warehouse & analytics engine', alwaysOn:false },
-    { type:'gcp_gke',      label:'GKE',        desc:'Google Kubernetes Engine clusters', alwaysOn:true },
-    { type:'gcp_pubsub',   label:'Pub/Sub',    desc:'Managed message queues', alwaysOn:false },
+    { type:'gcp_cloudrun',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true  },
+    { type:'gcp_cloudsql',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true                      },
+    { type:'gcp_bigquery',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false                     },
+    { type:'gcp_gke',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true                      },
+    { type:'gcp_pubsub',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false                     },
+    { type:'gcp_compute',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true                      },
+    { type:'gcp_spanner',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true                      },
+    { type:'gcp_storage',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false                     },
+    { type:'gcp_functions', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false                     },
+    { type:'gcp_redis',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true                      },
   ],
   aws: [
     { type:'aws_ec2',        label:'EC2',        desc:'Virtual machines — scoped to this project via tag:Project', alwaysOn:true },
-    { type:'aws_apprunner',  label:'App Runner', desc:'Managed containers & web apps — auto-scales to zero', alwaysOn:true },
-    { type:'aws_rds',        label:'RDS',        desc:'Managed relational databases (MySQL, PostgreSQL, Aurora)', alwaysOn:true },
-    { type:'aws_cloudfront', label:'CloudFront', desc:'Global CDN & content delivery network', alwaysOn:true },
-    { type:'aws_ecs',        label:'ECS',        desc:'Elastic Container Service clusters & services', alwaysOn:true },
-    { type:'aws_lambda',     label:'Lambda',     desc:'Serverless functions', alwaysOn:false },
-    { type:'aws_s3',         label:'S3',         desc:'Object storage buckets', alwaysOn:true },
+    { type:'aws_apprunner',  label:'App Runner', desc:'Managed containers & web apps — auto-scales to zero',       alwaysOn:true },
+    { type:'aws_rds',        label:'RDS',        desc:'Managed relational databases (MySQL, PostgreSQL, Aurora)',   alwaysOn:true },
+    { type:'aws_cloudfront', label:'CloudFront', desc:'Global CDN & content delivery network',                     alwaysOn:true },
+    { type:'aws_ecs',        label:'ECS',        desc:'Elastic Container Service clusters & services',             alwaysOn:true },
+    { type:'aws_lambda',     label:'Lambda',     desc:'Serverless functions',                                      alwaysOn:false },
+    { type:'aws_s3',         label:'S3',         desc:'Object storage buckets',                                    alwaysOn:true },
   ],
 };
 
+// ─── GCP auto-discovery map ────────────────────────────────────────────────────
+// Maps each GCP resource type to the New Relic event table used for detection.
+const GCP_DISCOVERY_MAP = [
+  { type:'gcp_cloudrun',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true,  nrTable:'GcpRunRevisionSample'        },
+  { type:'gcp_cloudsql',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true,                      nrTable:'GcpCloudSqlSample'           },
+  { type:'gcp_bigquery',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false,                     nrTable:'GcpBigQueryDataSetSample'    },
+  { type:'gcp_gke',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true,                      nrTable:'GcpKubernetesClusterSample'  },
+  { type:'gcp_pubsub',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false,                     nrTable:'GcpPubSubTopicSample'        },
+  { type:'gcp_compute',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true,                      nrTable:'GcpVirtualMachineSample'     },
+  { type:'gcp_spanner',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true,                      nrTable:'GcpSpannerInstanceSample'    },
+  { type:'gcp_storage',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false,                     nrTable:'GcpStorageBucketSample'      },
+  { type:'gcp_functions', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false,                     nrTable:'GcpCloudFunctionsSample'     },
+  { type:'gcp_redis',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true,                      nrTable:'GcpRedisInstanceSample'      },
+];
+
 // ─── EC2 project-scoped tag filter ────────────────────────────────────────────
-// All EC2 instances must be tagged `Project = <projectDirName>` (or gcpProjectId
-// as a fallback). This prevents cross-project pollution in NRQL queries.
 const ec2ProjectFilter = (project) => {
   const tag = project.projectDirName || project.gcpProjectId || project.name;
-  // We accept either tag key convention teams might use
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
 };
 
@@ -267,7 +280,6 @@ const buildResourceQuery = (resource, project) => {
   const gcpProjectId = project.gcpProjectId;
   const gcpFilter    = gcpProjectId ? `WHERE projectId = '${gcpProjectId}'` : '';
 
-  // For AWS EC2, scope to this project's instances via tag
   if (resource.type === 'aws_ec2') {
     const pf = ec2ProjectFilter(project);
     return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, max(\`aws.ec2.StatusCheckFailed_Instance\`) AS instanceCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} SINCE 5 minutes ago`;
@@ -279,6 +291,11 @@ const buildResourceQuery = (resource, project) => {
     case 'gcp_bigquery':   return `SELECT count(*) AS samples FROM GcpBigQueryDataSetSample ${gcpFilter} SINCE 30 minutes ago`;
     case 'gcp_gke':        return `SELECT count(*) AS samples FROM GcpKubernetesClusterSample ${gcpFilter} SINCE 5 minutes ago`;
     case 'gcp_pubsub':     return `SELECT count(*) AS samples FROM GcpPubSubTopicSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'gcp_compute':    return `SELECT count(*) AS samples, average(cpu.utilization) AS cpuUtil FROM GcpVirtualMachineSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'gcp_spanner':    return `SELECT count(*) AS samples FROM GcpSpannerInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'gcp_storage':    return `SELECT count(*) AS samples FROM GcpStorageBucketSample ${gcpFilter} SINCE 1 hour ago`;
+    case 'gcp_functions':  return `SELECT count(*) AS samples, sum(executionCount) AS invocations FROM GcpCloudFunctionsSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'gcp_redis':      return `SELECT count(*) AS samples FROM GcpRedisInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
     case 'gcp_billing':    return `SELECT count(*) AS samples FROM Metric SINCE 1 hour ago LIMIT 1`;
     case 'aws_apprunner':  return `SELECT max(\`aws.apprunner.ActiveInstances\`) AS activeInstances, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' SINCE 5 minutes ago`;
     case 'aws_rds':        return `SELECT average(\`aws.rds.FreeableMemory\`) AS freeMemory, average(\`aws.rds.WriteLatency\`) AS writeLatency, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/RDS' SINCE 5 minutes ago`;
@@ -291,16 +308,19 @@ const buildResourceQuery = (resource, project) => {
   }
 };
 
-// Scoped service sub-list queries (project-aware where applicable)
 const SERVICE_QUERIES = {
   gcp_cloudrun:   (p) => `SELECT count(*) AS val FROM GcpRunRevisionSample WHERE projectId = '${p.gcpProjectId}' FACET serviceName SINCE 1 year ago LIMIT 100`,
   gcp_cloudsql:   (p) => `SELECT count(*) AS val FROM GcpCloudSqlSample WHERE projectId = '${p.gcpProjectId}' FACET displayName SINCE 30 minutes ago LIMIT 20`,
   gcp_bigquery:   (p) => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
   gcp_gke:        (p) => `SELECT count(*) AS val FROM GcpKubernetesClusterSample WHERE projectId = '${p.gcpProjectId}' FACET clusterName SINCE 5 minutes ago LIMIT 20`,
   gcp_pubsub:     (p) => `SELECT count(*) AS val FROM GcpPubSubTopicSample WHERE projectId = '${p.gcpProjectId}' FACET topicId SINCE 5 minutes ago LIMIT 20`,
+  gcp_compute:    (p) => `SELECT count(*) AS val FROM GcpVirtualMachineSample WHERE projectId = '${p.gcpProjectId}' FACET instanceName SINCE 5 minutes ago LIMIT 20`,
+  gcp_spanner:    (p) => `SELECT count(*) AS val FROM GcpSpannerInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
+  gcp_storage:    (p) => `SELECT count(*) AS val FROM GcpStorageBucketSample WHERE projectId = '${p.gcpProjectId}' FACET bucketName SINCE 1 hour ago LIMIT 20`,
+  gcp_functions:  (p) => `SELECT count(*) AS val FROM GcpCloudFunctionsSample WHERE projectId = '${p.gcpProjectId}' FACET functionName SINCE 5 minutes ago LIMIT 20`,
+  gcp_redis:      (p) => `SELECT count(*) AS val FROM GcpRedisInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
   aws_apprunner:  ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_rds:        ()  => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
-  // EC2 scoped by project tag:
   aws_ec2:        (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
   aws_cloudfront: ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' FACET aws.cloudfront.DistributionId SINCE 24 hours ago LIMIT 20",
   aws_ecs:        ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/ECS' FACET aws.ecs.ServiceName SINCE 5 minutes ago LIMIT 30",
@@ -314,8 +334,18 @@ const deriveResourceStatus = (resource, row) => {
   if (!row) return noData(resource);
   switch (resource.type) {
     case 'gcp_cloudrun': case 'gcp_cloudsql': case 'gcp_gke': case 'gcp_pubsub':
+    case 'gcp_spanner':  case 'gcp_storage':  case 'gcp_redis':
       return (row.samples ?? 0) === 0 ? noData(resource) : 'green';
-    case 'gcp_bigquery': return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
+    case 'gcp_bigquery':
+    case 'gcp_functions':
+      return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
+    case 'gcp_compute': {
+      if ((row.samples ?? 0) === 0) return resource.alwaysOn ? 'yellow' : 'unknown';
+      const cpu = row.cpuUtil ?? null;
+      if (cpu !== null && cpu > 0.9)  return 'red';
+      if (cpu !== null && cpu > 0.75) return 'yellow';
+      return 'green';
+    }
     case 'gcp_billing':  return 'unknown';
     case 'aws_apprunner': {
       if ((row.samples ?? 0) === 0) return 'yellow';
@@ -341,9 +371,9 @@ const deriveResourceStatus = (resource, row) => {
     }
     case 'aws_ec2': {
       if ((row.samples ?? 0) === 0) return 'yellow';
-      const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
+      const sf  = typeof row.statusCheckFailed   === 'number' ? row.statusCheckFailed   : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
-      const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null;
+      const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
       if (sf > 0 || if_ > 0) return 'red';
       if (cpu !== null && cpu > 90) return 'red';
       if (cpu !== null && cpu > 75) return 'yellow';
@@ -364,7 +394,13 @@ const deriveResourceStatus = (resource, row) => {
 const deriveResourceReason = (resource, row, status) => {
   if (status === 'green' || status === 'unknown' || !row) return null;
   switch (resource.type) {
-    case 'gcp_cloudsql': return 'No metric samples received — DB may be stopped or unreachable';
+    case 'gcp_cloudsql':  return 'No metric samples received — DB may be stopped or unreachable';
+    case 'gcp_compute': {
+      if ((row.samples ?? 0) === 0) return 'No metric samples — VM may be stopped or not reporting';
+      const cpu = row.cpuUtil ?? null;
+      if (cpu !== null && cpu > 0.75) return `CPU usage: ${(cpu * 100).toFixed(1)}%${cpu > 0.9 ? ' (critical)' : ''}`;
+      return null;
+    }
     case 'aws_apprunner': {
       const active = row.activeInstances ?? null, s = row.samples ?? 0;
       if (s === 0) return 'No metrics in last 5 min — services may be stopped';
@@ -388,9 +424,10 @@ const deriveResourceReason = (resource, row, status) => {
       return parts.join(' · ') || null;
     }
     case 'aws_ec2': {
-      const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
+      const sf  = typeof row.statusCheckFailed   === 'number' ? row.statusCheckFailed   : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
-      const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null, s = row.samples ?? 0;
+      const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
+      const s   = row.samples ?? 0;
       if (s === 0) return `No metric samples — tag instances with Project=${resource._projectTag||'<project>'} to scope them`;
       const parts = [];
       if (sf > 0)  parts.push('System status check failed');
@@ -445,8 +482,6 @@ const billingCostToStatus    = (cost) => { if (cost === null) return 'unknown'; 
 const estimatedCostToStatus  = (est)  => { if (est  === null) return 'unknown'; const pct = (est/BILLING_BUDGET_INR)*100;  return pct>=100?'red':pct>=85?'yellow':'green'; };
 
 // ─── Ghost resource row (pre-apply) ───────────────────────────────────────────
-// Shows the configured resources in a "not provisioned yet" state so the user
-// knows what WILL be created when they hit Apply.
 const GhostResourceRow = ({ resource }) => (
   <div style={{
     display:'flex', alignItems:'center', gap:8, padding:'5px 8px',
@@ -966,7 +1001,8 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
               );
             }
 
-            // Generic fallback for RDS, CloudFront, ECS, Lambda, S3, GKE, Pub/Sub, etc.
+            // Generic fallback for RDS, CloudFront, ECS, Lambda, S3, GKE, Pub/Sub,
+            // Compute Engine, Spanner, Storage, Functions, Redis, etc.
             const seen=new Set();
             const items=data.map(s=>{const n=extractFacetName(s);if(!n||seen.has(n))return null;seen.add(n);return n;}).filter(Boolean);
             if (items.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
@@ -1227,6 +1263,9 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <div style={s.field}>
               <label style={s.label}>GCP Project ID</label>
               <input value={form.gcpProjectId} onChange={e=>setField('gcpProjectId',e.target.value)} placeholder="e.g. my-project-123456" style={s.input} />
+              <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
+                Used for auto-detecting GCP resources (Compute Engine, Cloud Run, etc.) — no manual resource selection needed.
+              </div>
             </div>
           )}
           <div style={s.field}>
@@ -1237,14 +1276,22 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <label style={s.label}>Dashboard Short Link</label>
             <input value={form.dashboardLink} onChange={e=>setField('dashboardLink',e.target.value)} placeholder="e.g. https://onenr.io/..." style={s.input} />
           </div>
-          {form.projectType==='normal'&&(
+          {form.projectType==='normal'&&form.providerId==='gcp'&&(
+            <div style={{ padding:'10px 14px', background:'rgba(66,133,244,0.06)', border:'1px solid rgba(66,133,244,0.2)', borderRadius:8, marginBottom:18 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:'#4285f4', marginBottom:4 }}>✦ Auto-detection enabled</div>
+              <div style={{ fontSize:11, color:'#7a8aaa', lineHeight:1.5 }}>
+                When a GCP Project ID is set, Eagle Eye will automatically detect which resources (Compute Engine, Cloud Run, GKE, etc.) are active by querying New Relic. No manual resource selection is needed.
+              </div>
+            </div>
+          )}
+          {form.projectType==='normal'&&form.providerId==='aws'&&(
             <div style={s.field}>
               <label style={s.label}>Resources to Monitor</label>
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {providerOptions.map(opt=>{
                   const checked=form.selectedResources.includes(opt.type);
                   return(
-                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?`rgba(${form.providerId==='gcp'?'66,133,244':'255,153,0'},0.08)`:'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
+                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?'rgba(255,153,0,0.08)':'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
                       <input type="checkbox" checked={checked} onChange={e=>setField('selectedResources',e.target.checked?[...form.selectedResources,opt.type]:form.selectedResources.filter(t=>t!==opt.type))} style={{ accentColor, width:14, height:14, cursor:'pointer', marginTop:2, flexShrink:0 }} />
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -1259,7 +1306,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               </div>
             </div>
           )}
-          {form.projectType==='normal'&&hasCloudRun&&(
+          {form.projectType==='normal'&&form.providerId==='gcp'&&hasCloudRun&&(
             <div style={s.field}>
               <label style={s.label}>Known Cloud Run Services</label>
               <input value={form.knownServices} onChange={e=>setField('knownServices',e.target.value)} placeholder="e.g. my-api, auth-service" style={s.input} />
@@ -1279,6 +1326,96 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
         </div>
       </div>
     </div>
+  );
+};
+
+// ─── GCP auto-detector ────────────────────────────────────────────────────────
+// Runs one NRQL probe per known GCP resource type. Recurses through the
+// GCP_DISCOVERY_MAP and returns only those that have data for this projectId.
+const GcpAutoDetectLoader = ({ project, discoveryIndex, detectedResources, onComplete }) => {
+  if (discoveryIndex >= GCP_DISCOVERY_MAP.length) {
+    // All probes done — hand results back to the caller.
+    // Use setTimeout to avoid setState-during-render issues.
+    React.useEffect(() => { onComplete(detectedResources); }, []); // eslint-disable-line
+    return null;
+  }
+
+  const candidate = GCP_DISCOVERY_MAP[discoveryIndex];
+  const query = `SELECT count(*) AS samples FROM ${candidate.nrTable} WHERE projectId = '${project.gcpProjectId}' SINCE 1 hour ago LIMIT 1`;
+
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
+      {({ data, loading }) => {
+        if (loading) return null; // wait silently for this probe
+        const row    = extractRow(data);
+        const found  = (row?.samples ?? 0) > 0;
+        const next   = found ? [...detectedResources, { ...candidate }] : detectedResources;
+        return (
+          <GcpAutoDetectLoader
+            project={project}
+            discoveryIndex={discoveryIndex + 1}
+            detectedResources={next}
+            onComplete={onComplete}
+          />
+        );
+      }}
+    </NrqlQuery>
+  );
+};
+
+// Wrapper: runs GCP auto-detect then feeds results into the normal loader chain.
+const GcpProjectAutoLoader = ({ project, projectIndex, provider, results, onManage, onInfraAction }) => {
+  const [detectedResources, setDetectedResources] = React.useState(null);
+  const [detecting, setDetecting] = React.useState(false);
+
+  // If no gcpProjectId, skip detection and use static config
+  if (!project.gcpProjectId) {
+    return (
+      <ProjectResourceLoader
+        project={project} resourceIndex={0} collectedStatuses={[]}
+        projectIndex={projectIndex} provider={provider} results={results}
+        onManage={onManage} onInfraAction={onInfraAction}
+      />
+    );
+  }
+
+  if (detectedResources === null && !detecting) {
+    // Trigger detection pass
+    return (
+      <GcpAutoDetectLoader
+        project={project}
+        discoveryIndex={0}
+        detectedResources={[]}
+        onComplete={(found) => {
+          // Fall back to static config if nothing detected (e.g. NR integration not set up yet)
+          const resources = found.length > 0 ? found : (project.resources ?? []);
+          setDetectedResources(resources);
+        }}
+      />
+    );
+  }
+
+  if (detectedResources === null) {
+    // Still detecting — render a subtle indicator inside the project detail area
+    return (
+      <ProjectListInner
+        provider={provider}
+        projectIndex={projectIndex + 1}
+        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
+        onManage={onManage}
+        onInfraAction={onInfraAction}
+      />
+    );
+  }
+
+  // Detection complete — inject discovered resources into the project
+  const enrichedProject = { ...project, resources: detectedResources };
+  return (
+    <ProjectResourceLoader
+      project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
+      projectIndex={projectIndex} provider={provider} results={results}
+      onManage={onManage} onInfraAction={onInfraAction}
+    />
   );
 };
 
@@ -1419,8 +1556,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-
-          {/* Ghost resources shown after terminate — so user knows what will come back on Apply */}
           {project.resources&&project.resources.length>0&&(
             <div style={{ marginTop:8 }}>
               <div style={{ fontSize:10, color:'#4a5568', fontWeight:600, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Will be re-created on Apply</div>
@@ -1429,7 +1564,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
               </div>
             </div>
           )}
-
           <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
             All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
           </div>
@@ -1460,19 +1594,32 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return `₹${b.row.totalCostINR.toFixed(0)}`;
   })();
 
-  // ── Not yet provisioned: show ghost resources so user can see what Apply will create ──
   const isUnprovisioned = !lifecycle && infraReady && hasResources;
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
     if (resourceStatuses.length===0) {
+      // GCP project with gcpProjectId set but no resources yet detected
+      if (project.gcpProjectId) {
+        return (
+          <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+            <SpinnerIcon size={11} color="#4a6080" />
+            <span>Auto-detecting GCP resources…</span>
+          </div>
+        );
+      }
       return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
     }
 
-    // If no lifecycle has been set yet (never been applied in this session) and
-    // no NRQL data is flowing for any resource, show ghost rows as a preview.
-    const allNoData = resourceStatuses.every(r=>r.status==='unknown'||r.row===null);
-    if (isUnprovisioned&&allNoData) {
+    // ── Ghost state: no lifecycle set yet AND all resources show zero samples ──
+    // Covers EC2/AppRunner/RDS returning 'yellow' with zero samples (not just 'unknown').
+    const allNoData = resourceStatuses.every(r => {
+      if (r.status === 'unknown' || r.row === null) return true;
+      if ((r.row?.samples ?? 0) === 0)              return true;
+      return false;
+    });
+
+    if (isUnprovisioned && allNoData) {
       return (
         <div style={{ marginTop:4 }}>
           <div style={{ fontSize:10, color:'#4a5568', fontWeight:600, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Resources (not yet provisioned)</div>
@@ -1603,8 +1750,28 @@ const ProjectListInner = ({ provider, projectIndex, results, onManage, onInfraAc
   }
   const project=provider.projects[projectIndex];
   if (project.deleted||project.empty||project.billingNotConfigured||project.billingOnly||!project.resources||project.resources.length===0) {
+    // For GCP normal projects with a gcpProjectId but no static resources, route through auto-detector
+    if (provider.id === 'gcp' && !project.deleted && !project.empty && !project.billingNotConfigured && !project.billingOnly && project.gcpProjectId) {
+      return (
+        <GcpProjectAutoLoader
+          project={project} projectIndex={projectIndex} provider={provider}
+          results={results} onManage={onManage} onInfraAction={onInfraAction}
+        />
+      );
+    }
     return <ProjectListInner provider={provider} projectIndex={projectIndex+1} results={[...results,{projectIndex,loading:false,resourceStatuses:[]}]} onManage={onManage} onInfraAction={onInfraAction} />;
   }
+
+  // GCP normal projects with a gcpProjectId → use auto-detector regardless of static resources
+  if (provider.id === 'gcp' && project.gcpProjectId) {
+    return (
+      <GcpProjectAutoLoader
+        project={project} projectIndex={projectIndex} provider={provider}
+        results={results} onManage={onManage} onInfraAction={onInfraAction}
+      />
+    );
+  }
+
   return <ProjectResourceLoader project={project} resourceIndex={0} collectedStatuses={[]} projectIndex={projectIndex} provider={provider} results={results} onManage={onManage} onInfraAction={onInfraAction} />;
 };
 
