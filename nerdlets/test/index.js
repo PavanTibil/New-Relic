@@ -88,16 +88,16 @@ const DEFAULT_CLOUD_PROVIDERS = [
 
 const RESOURCE_OPTIONS = {
   gcp: [
-    { type:'gcp_cloudrun',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true  },
-    { type:'gcp_cloudsql',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true                      },
-    { type:'gcp_bigquery',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false                     },
-    { type:'gcp_gke',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true                      },
-    { type:'gcp_pubsub',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false                     },
-    { type:'gcp_compute',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true                      },
-    { type:'gcp_spanner',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true                      },
-    { type:'gcp_storage',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false                     },
-    { type:'gcp_functions', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false                     },
-    { type:'gcp_redis',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true                      },
+    { type:'google_cloud_run_v2_service',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true  },
+    { type:'google_sql_database_instance',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true                      },
+    { type:'google_bigquery_dataset',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false                     },
+    { type:'google_container_cluster',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true                      },
+    { type:'google_pubsub_topic',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false                     },
+    { type:'google_compute_instance',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true                      },
+    { type:'google_spanner_instance',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true                      },
+    { type:'google_storage_bucket',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false                     },
+    { type:'google_cloudfunctions2_function', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false                     },
+    { type:'google_redis_instance',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true                      },
   ],
   aws: [
     { type:'aws_ec2',        label:'EC2',        desc:'Virtual machines — scoped to this project via tag:Project', alwaysOn:true },
