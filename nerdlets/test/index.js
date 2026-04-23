@@ -63,14 +63,8 @@ const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
 
   React.useEffect(() => {
-    if (!projectDirName) {
-      setState({ loading: false, hasTf: false });
-      return;
-    }
-    if (!token) {
-      setState({ loading: false, hasTf: null });
-      return;
-    }
+    if (!projectDirName) { setState({ loading: false, hasTf: false }); return; }
+    if (!token)          { setState({ loading: false, hasTf: null });  return; }
 
     setState({ loading: true, hasTf: null });
     let cancelled = false;
@@ -98,11 +92,10 @@ const useGithubTfFiles = (projectDirName, token) => {
     };
 
     const checkProject = async () => {
-      const rootPath = `projects/${projectDirName}`;
-      const rootResult = await checkDir(rootPath, 0);
+      const rootPath    = `projects/${projectDirName}`;
+      const rootResult  = await checkDir(rootPath, 0);
       if (rootResult) return true;
-      const modulesResult = await checkDir(`${rootPath}/modules`, 0);
-      return modulesResult;
+      return await checkDir(`${rootPath}/modules`, 0);
     };
 
     checkProject()
@@ -114,6 +107,8 @@ const useGithubTfFiles = (projectDirName, token) => {
 
   return state;
 };
+
+// ─── Icons ───────────────────────────────────────────────────────────────────
 
 const PowerOffIcon = ({ size = 13, color = 'currentColor', style = {} }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -129,24 +124,22 @@ const SpinnerIcon = ({ size = 12, color = 'currentColor' }) => (
   </svg>
 );
 
-const PlayIcon = ({ size = 11, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
-    <polygon points="5,3 19,12 5,21" />
-  </svg>
+const PlayIcon  = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none"><polygon points="5,3 19,12 5,21" /></svg>
 );
 
-const StopIcon = ({ size = 11, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
-    <rect x="5" y="5" width="14" height="14" rx="1" />
-  </svg>
+const StopIcon  = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none"><rect x="5" y="5" width="14" height="14" rx="1" /></svg>
 );
 
-const GearIcon = ({ size = 11, color = 'currentColor' }) => (
+const GearIcon  = ({ size = 11, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </svg>
 );
+
+// ─── GitHub Actions polling ───────────────────────────────────────────────────
 
 const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancelRef) => {
   let attempts = 0, lockedRunId = null;
@@ -203,44 +196,42 @@ const callInfraAPI = async (project, action, token) => {
   return { success: true };
 };
 
+// ─── DEFAULT_CLOUD_PROVIDERS — no hardcoded projects ─────────────────────────
+// Add projects manually via the ··· manage button in the UI.
+
 const DEFAULT_CLOUD_PROVIDERS = [
-  {
-    id: 'gcp', name: 'GCP', label: 'Google Cloud Platform', icon: '☁',
-    projects: [
-      { name: 'Starapp UAT',  gcpProjectId: 'starapp-backend-uat',  dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA0ODcw', dashboardLink: 'https://onenr.io/08jqLng1lRl', knownServices: ['keycloak1','starapp-bot-ms','starapp-notification-ms','starapp-registry-ms','starapp-user-ms','starapp-workflow-ms'], resources: [{ label:'Cloud Run', type:'gcp_cloudrun', alwaysOn:false, scalesToZero:true },{ label:'Cloud SQL', type:'gcp_cloudsql', alwaysOn:true }] },
-      { name: 'Starapp PROD', gcpProjectId: 'starapp-backend-prod', dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA0ODcx', dashboardLink: 'https://onenr.io/0gR7dDb5pjo', knownServices: ['keycloak1','starapp-registry-ms'], resources: [{ label:'Cloud Run', type:'gcp_cloudrun', alwaysOn:false, scalesToZero:true },{ label:'Cloud SQL', type:'gcp_cloudsql', alwaysOn:true }] },
-      { name: 'Pulse Dev',    gcpProjectId: 'pulse-dev-477810',     dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA0OTIw', dashboardLink: 'https://onenr.io/08woM1gEWjx', resources: [{ label:'BigQuery', type:'gcp_bigquery', alwaysOn:false }] },
-      { name: 'Pulse PROD',   gcpProjectId: null, dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA0OTIx', dashboardLink: 'https://onenr.io/0dQen6OvZwe', empty: true, resources: [] },
-      { name: 'Mqpro v2',     gcpProjectId: null, dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjA1MjQ4', dashboardLink: 'https://onenr.io/0qQa13xxBQ1', deleted: true, resources: [] },
-      { name: 'GCP Billing',  gcpProjectId: null, dashboardGuid: null, dashboardLink: null, billingOnly: true, billingNotConfigured: true, resources: [{ label:'Total Cost (INR)', type:'gcp_billing', alwaysOn:false }] },
-    ],
-  },
-  {
-    id: 'aws', name: 'AWS', label: 'Amazon Web Services', icon: '⚡',
-    projects: [
-      { name: 'DMS Monitoring', gcpProjectId: null, dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMjAyMDE1', dashboardLink: 'https://onenr.io/0vjAdX8MnRP', resources: [{ label:'App Runner', type:'aws_apprunner', alwaysOn:true },{ label:'RDS', type:'aws_rds', alwaysOn:true },{ label:'CloudFront', type:'aws_cloudfront', alwaysOn:true },{ label:'EC2', type:'aws_ec2', alwaysOn:true }] },
-      { name: 'AWS Billing',    gcpProjectId: null, dashboardGuid: 'Nzc4MjQ3OXxWSVp8REFTSEJPQVJEfGRhOjEyMTg1NjI5', dashboardLink: 'https://onenr.io/0Vwg7Wz8ZwJ', billingOnly: true, resources: [{ label:'Total Cost (INR)', type:'aws_billing', alwaysOn:false }] },
-    ],
-  },
+  { id: 'gcp', name: 'GCP', label: 'Google Cloud Platform', icon: '☁', projects: [] },
+  { id: 'aws', name: 'AWS', label: 'Amazon Web Services',   icon: '⚡', projects: [] },
 ];
 
 const RESOURCE_OPTIONS = {
   gcp: [
     { type:'gcp_cloudrun', label:'Cloud Run', desc:'Serverless containers — scales to zero when idle', alwaysOn:false, scalesToZero:true },
-    { type:'gcp_cloudsql', label:'Cloud SQL', desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true },
-    { type:'gcp_bigquery', label:'BigQuery',  desc:'Serverless data warehouse & analytics engine', alwaysOn:false },
+    { type:'gcp_cloudsql', label:'Cloud SQL', desc:'Managed relational databases (MySQL, PostgreSQL)',  alwaysOn:true },
+    { type:'gcp_bigquery', label:'BigQuery',  desc:'Serverless data warehouse & analytics engine',     alwaysOn:false },
   ],
   aws: [
-    { type:'aws_apprunner',  label:'App Runner', desc:'Managed containers & web apps — auto-scales to zero', alwaysOn:true },
-    { type:'aws_rds',        label:'RDS',        desc:'Managed relational databases (MySQL, PostgreSQL, Aurora)', alwaysOn:true },
-    { type:'aws_cloudfront', label:'CloudFront', desc:'Global CDN & content delivery network', alwaysOn:true },
-    { type:'aws_ec2',        label:'EC2',        desc:'Virtual machines — tracks CPU utilisation & status checks', alwaysOn:true },
+    { type:'aws_apprunner',  label:'App Runner', desc:'Managed containers & web apps — auto-scales to zero',          alwaysOn:true },
+    { type:'aws_rds',        label:'RDS',        desc:'Managed relational databases (MySQL, PostgreSQL, Aurora)',       alwaysOn:true },
+    { type:'aws_cloudfront', label:'CloudFront', desc:'Global CDN & content delivery network',                         alwaysOn:true },
+    { type:'aws_ec2',        label:'EC2',        desc:'Virtual machines — tracks CPU utilisation & status checks',     alwaysOn:true },
   ],
 };
 
-// ─── Helper: write providers to NerdStorage and update local state ────────────
-// Extracted so every caller (modal list actions + form submit) goes through
-// the exact same path and errors are handled uniformly.
+// ─── EC2 tag-filter helper ────────────────────────────────────────────────────
+// Converts [{key:'Project', value:'dms-monitoring'}]
+// into: AND `aws.ec2.tag.Project` = 'dms-monitoring'
+
+const buildEc2TagFilter = (tagFilters) => {
+  if (!tagFilters || tagFilters.length === 0) return '';
+  return tagFilters
+    .filter(f => f.key?.trim() && f.value?.trim())
+    .map(f => `AND \`aws.ec2.tag.${f.key.trim()}\` = '${f.value.trim()}'`)
+    .join(' ');
+};
+
+// ─── NerdStorage persistence helper ──────────────────────────────────────────
+
 const persistProviders = async (newProviders) => {
   const { error } = await AccountStorageMutation.mutate({
     accountId:  ACCOUNT_ID,
@@ -249,11 +240,218 @@ const persistProviders = async (newProviders) => {
     documentId: STORAGE_DOC_ID,
     document:   { providers: newProviders },
   });
-  if (error) {
-    throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
-  }
+  if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
   return newProviders;
 };
+
+// ─── NRQL query builders ──────────────────────────────────────────────────────
+
+const buildResourceQuery = (resource, gcpProjectId) => {
+  const gcpFilter = gcpProjectId ? `WHERE projectId = '${gcpProjectId}'` : '';
+  switch (resource.type) {
+    case 'gcp_cloudrun':    return `SELECT sum(container.BillableInstanceTime) AS billableTime, count(*) AS samples FROM GcpRunRevisionSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'gcp_cloudsql':    return `SELECT count(*) AS samples FROM GcpCloudSqlSample ${gcpFilter} SINCE 30 minutes ago`;
+    case 'gcp_bigquery':    return `SELECT count(*) AS samples FROM GcpBigQueryDataSetSample ${gcpFilter} SINCE 30 minutes ago`;
+    case 'gcp_billing':     return `SELECT count(*) AS samples FROM Metric SINCE 1 hour ago LIMIT 1`;
+    case 'aws_apprunner':   return `SELECT max(\`aws.apprunner.ActiveInstances\`) AS activeInstances, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' SINCE 5 minutes ago`;
+    case 'aws_rds':         return `SELECT average(\`aws.rds.FreeableMemory\`) AS freeMemory, average(\`aws.rds.WriteLatency\`) AS writeLatency, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/RDS' SINCE 5 minutes ago`;
+    case 'aws_cloudfront':  return `SELECT count(*) AS samples, average(\`aws.cloudfront.5xxErrorRate\`) AS errorRate5xx, average(\`aws.cloudfront.TotalErrorRate\`) AS totalErrorRate FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' SINCE 24 hours ago`;
+    case 'aws_ec2': {
+      const tf = buildEc2TagFilter(resource.tagFilters);
+      return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, max(\`aws.ec2.StatusCheckFailed_Instance\`) AS instanceCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} SINCE 5 minutes ago`;
+    }
+    case 'aws_billing':     return `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
+    default:                return `SELECT count(*) AS samples FROM Metric WHERE entity.name = '${resource.label}' SINCE 5 minutes ago`;
+  }
+};
+
+const noData = (resource) => resource.scalesToZero ? 'green' : resource.alwaysOn ? 'yellow' : 'unknown';
+
+const deriveResourceStatus = (resource, row) => {
+  if (!row) return noData(resource);
+  switch (resource.type) {
+    case 'gcp_cloudrun': case 'gcp_cloudsql': return (row.samples ?? 0) === 0 ? noData(resource) : 'green';
+    case 'gcp_bigquery': return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
+    case 'gcp_billing':  return 'unknown';
+    case 'aws_apprunner': {
+      if ((row.samples ?? 0) === 0) return 'yellow';
+      const active = row.activeInstances ?? null;
+      return active !== null && active === 0 ? 'yellow' : 'green';
+    }
+    case 'aws_rds': {
+      if ((row.samples ?? 0) === 0) return 'yellow';
+      const fm = row.freeMemory ?? null, wl = row.writeLatency ?? null;
+      if (fm !== null && fm < 50*1024*1024)  return 'red';
+      if (fm !== null && fm < 200*1024*1024) return 'yellow';
+      if (wl !== null && wl > 1)             return 'yellow';
+      return 'green';
+    }
+    case 'aws_cloudfront': {
+      if ((row.samples ?? 0) === 0) return 'yellow';
+      const e5 = row.errorRate5xx ?? null, ea = row.totalErrorRate ?? null;
+      if (e5 !== null && e5 > 5)  return 'red';
+      if (e5 !== null && e5 > 2)  return 'yellow';
+      if (ea !== null && ea > 25) return 'red';
+      if (ea !== null && ea > 15) return 'yellow';
+      return 'green';
+    }
+    case 'aws_ec2': {
+      if ((row.samples ?? 0) === 0) return 'yellow';
+      const sf  = typeof row.statusCheckFailed         === 'number' ? row.statusCheckFailed         : 0;
+      const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
+      const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
+      if (sf > 0 || if_ > 0)           return 'red';
+      if (cpu !== null && cpu > 90)     return 'red';
+      if (cpu !== null && cpu > 75)     return 'yellow';
+      return 'green';
+    }
+    case 'aws_billing': return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
+    default: return (row.samples ?? 0) === 0 ? noData(resource) : 'green';
+  }
+};
+
+const deriveResourceReason = (resource, row, status) => {
+  if (status === 'green' || status === 'unknown' || !row) return null;
+  switch (resource.type) {
+    case 'gcp_cloudsql': return 'No metric samples received — DB may be stopped or unreachable';
+    case 'aws_apprunner': {
+      const active = row.activeInstances ?? null, s = row.samples ?? 0;
+      if (s === 0)                           return 'No metrics in last 5 min — services may be stopped';
+      if (active !== null && active === 0)   return 'All App Runner services are paused (0 active instances)';
+      return 'App Runner services may be paused or starting up';
+    }
+    case 'aws_rds': {
+      if ((row.samples ?? 0) === 0) return 'No metrics in last 5 min — RDS instance may be stopped';
+      const fm = row.freeMemory ?? null, wl = row.writeLatency ?? null, parts = [];
+      if (fm !== null && fm < 50*1024*1024)       parts.push(`Critical: only ${(fm/1024/1024).toFixed(0)} MB memory free`);
+      else if (fm !== null && fm < 200*1024*1024) parts.push(`Low memory: ${(fm/1024/1024).toFixed(0)} MB free`);
+      if (wl !== null && wl > 1)                  parts.push(`High write latency: ${(wl*1000).toFixed(0)} ms`);
+      return parts.join(' · ') || null;
+    }
+    case 'aws_cloudfront': {
+      const e5 = row.errorRate5xx ?? null, ea = row.totalErrorRate ?? null, s = row.samples ?? 0;
+      if (s === 0) return 'No metric samples received from CloudFront namespace';
+      const parts = [];
+      if (e5 !== null && e5 > 2)  parts.push(`5xx error rate: ${e5.toFixed(1)}%${e5 > 5 ? ' (critical)' : ''}`);
+      if (ea !== null && ea > 15) parts.push(`Total error rate: ${ea.toFixed(1)}% (incl. 4xx)`);
+      return parts.join(' · ') || null;
+    }
+    case 'aws_ec2': {
+      const sf  = typeof row.statusCheckFailed         === 'number' ? row.statusCheckFailed         : 0;
+      const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
+      const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
+      const s   = row.samples ?? 0;
+      if (s === 0) return 'No metric samples in the last 5 minutes';
+      const parts = [];
+      if (sf > 0)                   parts.push('System status check failed');
+      if (if_ > 0)                  parts.push('Instance status check failed');
+      if (cpu !== null && cpu > 75) parts.push(`CPU usage: ${cpu.toFixed(1)}%${cpu > 90 ? ' (critical)' : ''}`);
+      return parts.join(' · ') || null;
+    }
+    case 'gcp_cloudrun': return status === 'yellow' ? 'No billable instance time — all revisions may be scaled to zero' : null;
+    case 'gcp_bigquery': return status === 'yellow' ? 'No dataset samples — BigQuery may be idle or not yet active'     : null;
+    default: return null;
+  }
+};
+
+const worstStatus = (statuses) => {
+  if (statuses.some(s => s === 'red'))    return 'red';
+  if (statuses.some(s => s === 'yellow')) return 'yellow';
+  if (statuses.some(s => s === 'green'))  return 'green';
+  return 'unknown';
+};
+
+const STATUS_META = {
+  green:   { label:'Healthy',      color:'#00d4aa' },
+  yellow:  { label:'Warning',      color:'#f5a623' },
+  red:     { label:'Critical',     color:'#ff4d6d' },
+  unknown: { label:'No Data',      color:'#7a8aaa' },
+  deleted: { label:'Deleted',      color:'#4a5568' },
+  empty:   { label:'No Resources', color:'#3d4a66' },
+};
+
+const PROVIDER_META = {
+  gcp: { gradient:'linear-gradient(135deg, rgba(66,133,244,0.18) 0%, rgba(52,168,83,0.10) 100%)', accent:'#4285F4' },
+  aws: { gradient:'linear-gradient(135deg, rgba(255,153,0,0.18) 0%, rgba(255,90,0,0.10) 100%)',   accent:'#FF9900' },
+};
+
+const canBePaused = (t, row) => t === 'aws_apprunner' && row && (row.activeInstances ?? null) === 0 && (row.samples ?? 0) > 0;
+
+const ec2StateDisplay = (state) => {
+  const s = (state ?? '').toString().toLowerCase().trim();
+  switch (s) {
+    case 'running':  return { dot:'green',  label:'✓ Running',  color:'#00d4aa' };
+    case 'impaired': return { dot:'red',    label:'✗ Impaired', color:'#ff4d6d' };
+    case 'stopped':  return { dot:'yellow', label:'✗ Stopped',  color:'#f5a623' };
+    case 'pending':  return { dot:'yellow', label:'◌ Pending',  color:'#f5a623' };
+    case 'stopping': return { dot:'yellow', label:'◌ Stopping', color:'#f5a623' };
+    default:         return { dot:'grey',   label: s || '— Unknown', color:'#7a8aaa' };
+  }
+};
+
+const BILLING_BUDGET_INR = 4600;
+const billingCostToStatus = (cost) => {
+  if (cost === null) return 'unknown';
+  const pct = (cost / BILLING_BUDGET_INR) * 100;
+  return pct >= 70 ? 'red' : pct >= 50 ? 'yellow' : 'green';
+};
+const estimatedCostToStatus = (est) => {
+  if (est === null) return 'unknown';
+  const pct = (est / BILLING_BUDGET_INR) * 100;
+  return pct >= 100 ? 'red' : pct >= 85 ? 'yellow' : 'green';
+};
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+const BillingHealthBadge = ({ cost }) => {
+  if (cost === null) return <span className="status-badge status-badge--grey"><span className="status-badge__dot" />Billing</span>;
+  const pct = (cost / BILLING_BUDGET_INR) * 100, status = billingCostToStatus(cost);
+  return (
+    <span className={`status-badge status-badge--${status} status-badge--billing`} title={`${pct.toFixed(1)}% of monthly budget`}>
+      <span className="status-badge__dot" />
+      <span className="status-badge__billing-current">{'₹' + cost.toFixed(0)}</span>
+      <span className="status-badge__billing-sep">/</span>
+      <span className="status-badge__billing-budget">{'₹' + BILLING_BUDGET_INR + ' budget'}</span>
+    </span>
+  );
+};
+
+const StatusDot   = ({ status }) => {
+  const cls = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status;
+  return <span className={`status-dot status-dot--${cls}`} />;
+};
+
+const StatusBadge = ({ status, label }) => {
+  const meta = STATUS_META[status] ?? STATUS_META.green;
+  const cls  = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status;
+  return <span className={`status-badge status-badge--${cls}`}><span className="status-badge__dot" />{label ?? meta.label}</span>;
+};
+
+const DashboardIcon = ({ onClick }) => (
+  <span onClick={onClick} title="Open Dashboard" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:26, height:26, borderRadius:6, border:'1px solid rgba(255,255,255,0.12)', background:'rgba(255,255,255,0.05)', cursor:'pointer', flexShrink:0 }}>
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+      <rect x="1"   y="1"   width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.9"/>
+      <rect x="7.5" y="1"   width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.6"/>
+      <rect x="1"   y="7.5" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.6"/>
+      <rect x="7.5" y="7.5" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.35"/>
+    </svg>
+  </span>
+);
+
+const NoInfraBadge = ({ checking = false }) => {
+  if (checking) return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:10, color:'#4a6080', fontWeight:500 }}>
+      <SpinnerIcon size={9} color="#4a6080" /><span>checking…</span>
+    </span>
+  );
+  return (
+    <span style={{ fontSize:10, fontWeight:700, color:'#7a8aaa', background:'rgba(122,138,170,0.10)', border:'1px solid rgba(122,138,170,0.28)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>
+      No Infra Yet
+    </span>
+  );
+};
+
+// ─── Config modal ─────────────────────────────────────────────────────────────
 
 const ConfigModal = ({ currentToken, onSave, onClose }) => {
   const [tokenInput, setTokenInput] = useState(currentToken || '');
@@ -309,6 +507,8 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
   );
 };
 
+// ─── Infra UI ─────────────────────────────────────────────────────────────────
+
 const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   if (actionState === INFRA_STATES.IDLE) return null;
   const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction;
@@ -347,7 +547,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     } catch (e) { setErr(e?.message || 'GitHub Actions dispatch failed.'); setBusy(false); }
   };
 
-  const colors = isApply ? { bg:'rgba(66,133,244,0.12)', border:'rgba(66,133,244,0.4)', text:'#4285f4' }
+  const colors = isApply     ? { bg:'rgba(66,133,244,0.12)', border:'rgba(66,133,244,0.4)', text:'#4285f4' }
     : isTerminate ? { bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.4)', text:'#ff4d6d' }
     : isStart     ? { bg:'rgba(0,212,170,0.12)',  border:'rgba(0,212,170,0.4)',  text:'#00d4aa' }
     :               { bg:'rgba(245,166,35,0.12)', border:'rgba(245,166,35,0.4)', text:'#f5a623' };
@@ -364,9 +564,9 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
         </div>
         <div style={{ fontSize:17, fontWeight:800, color:'#f0f4ff', marginBottom:8 }}>{title}</div>
         <div style={{ fontSize:13, color:'#7a8aaa', lineHeight:1.6, marginBottom:20 }}>
-          {isApply && <>Run <span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform apply</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color:colors.text }}>provisioned or updated</strong>.</>}
-          {isStop  && <>Scale down all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
-          {isStart && <>Scale up all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isApply     && <>Run <span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform apply</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color:colors.text }}>provisioned or updated</strong>.</>}
+          {isStop      && <>Scale down all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
+          {isStart     && <>Scale up all services for <strong style={{ color:'#f0f4ff' }}>{project.name}</strong> via <span style={{ fontFamily:'monospace', color:colors.text }}>gcloud / aws CLI</span>.</>}
           {isTerminate && <><span style={{ fontFamily:'monospace', color:colors.text, fontWeight:700 }}>terraform destroy</span> on <strong style={{ color:'#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color:colors.text }}>permanently destroyed</strong>.<div style={{ marginTop:10, padding:'8px 12px', background:'rgba(255,77,109,0.07)', border:'1px solid rgba(255,77,109,0.2)', borderRadius:8, fontSize:12, color:'#ff4d6d' }}>⚠ Use Apply to re-provision after termination.</div></>}
         </div>
         <div style={{ fontSize:12, color:'#4a6080', marginBottom:14, padding:'8px 12px', background:'rgba(255,255,255,0.03)', borderRadius:6, border:'1px solid rgba(255,255,255,0.07)' }}>
@@ -399,39 +599,27 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
     { action:'apply',     label:'Apply',     icon:<GearIcon size={12} color="currentColor" />,     colors:{ bg:'#162d52', border:'#4285f4', text:'#7ab3ff', disabledBg:'#0d1a2e', disabledBorder:'#1e3050', disabledText:'#3a5580' } },
     { action:'stop',      label:'Stop',      icon:<StopIcon size={12} color="currentColor" />,      colors:{ bg:'#2e1f00', border:'#f5a623', text:'#ffc055', disabledBg:'#1a1200', disabledBorder:'#3d2a00', disabledText:'#5a4010' } },
     { action:'start',     label:'Start',     icon:<PlayIcon size={12} color="currentColor" />,      colors:{ bg:'#002e22', border:'#00d4aa', text:'#00ffcc', disabledBg:'#001a14', disabledBorder:'#003d2e', disabledText:'#105040' } },
-    { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={12} color="currentColor" />, colors:{ bg:'#2e0010', border:'#ff4d6d', text:'#ff7a96', disabledBg:'#1a000a', disabledBorder:'#3d0015', disabledText:'#581030' } },
+    { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={12} color="currentColor" />,  colors:{ bg:'#2e0010', border:'#ff4d6d', text:'#ff7a96', disabledBg:'#1a000a', disabledBorder:'#3d0015', disabledText:'#581030' } },
   ];
 
   return (
     <div style={{ margin:'8px 0 4px', padding:'10px 12px', background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8 }}>
       <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
         {btnDef.map(({ action, label, icon, colors: c }) => {
-          const btnState = getButtonState(action);
+          const btnState  = getButtonState(action);
           const isRunning  = btnState === 'running';
           const isDisabled = btnState === 'disabled' || btnState === 'locked';
           return (
-            <button
-              key={action}
+            <button key={action}
               onClick={() => !isDisabled && !isRunning && onAction(project, action)}
               disabled={isDisabled || isRunning}
-              style={{
-                display:'inline-flex', alignItems:'center', gap:6,
-                padding:'6px 14px', borderRadius:7,
-                border:`1px solid ${isDisabled ? c.disabledBorder : c.border}`,
-                background: isDisabled ? c.disabledBg : c.bg,
-                color: isDisabled ? c.disabledText : c.text,
-                fontWeight:700, fontSize:12,
-                cursor:isDisabled || isRunning ? 'not-allowed' : 'pointer',
-                outline:'none',
-                transition:'all 0.15s',
-                letterSpacing:'0.3px',
-              }}
+              style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'6px 14px', borderRadius:7, border:`1px solid ${isDisabled ? c.disabledBorder : c.border}`, background:isDisabled ? c.disabledBg : c.bg, color:isDisabled ? c.disabledText : c.text, fontWeight:700, fontSize:12, cursor:isDisabled||isRunning?'not-allowed':'pointer', outline:'none', transition:'all 0.15s', letterSpacing:'0.3px' }}
               onMouseEnter={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter='brightness(1.2)'; e.currentTarget.style.transform='translateY(-1px)'; } }}
-              onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter='brightness(1)'; e.currentTarget.style.transform='translateY(0)'; } }}
+              onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter='brightness(1)';   e.currentTarget.style.transform='translateY(0)'; } }}
             >
               {isRunning
                 ? <SpinnerIcon size={12} color={c.text} />
-                : <span style={{ display:'flex', alignItems:'center', color: isDisabled ? c.disabledText : c.text }}>{icon}</span>
+                : <span style={{ display:'flex', alignItems:'center', color:isDisabled ? c.disabledText : c.text }}>{icon}</span>
               }
               <span>{isRunning ? `${label}ing…` : label}</span>
             </button>
@@ -441,6 +629,8 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
     </div>
   );
 };
+
+// ─── Dots dropdown (per-project infra actions) ────────────────────────────────
 
 const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAction = null, infraReason = '' }) => {
   const [open, setOpen] = useState(false);
@@ -457,7 +647,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   };
   const startTracking = () => { const tick = () => { updatePos(); rafRef.current = requestAnimationFrame(tick); }; rafRef.current = requestAnimationFrame(tick); };
   const stopTracking  = () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } };
-  const handleOpen = (e) => { e.stopPropagation(); if (open) { setOpen(false); stopTracking(); return; } updatePos(); setOpen(true); startTracking(); };
+  const handleOpen    = (e) => { e.stopPropagation(); if (open) { setOpen(false); stopTracking(); return; } updatePos(); setOpen(true); startTracking(); };
 
   useEffect(() => {
     if (!open) return;
@@ -467,7 +657,7 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   }, [open]);
   useEffect(() => () => stopTracking(), []);
 
-  const isBusy = activeAction !== null;
+  const isBusy      = activeAction !== null;
   const allDisabled = ['apply','stop','start','terminate'].every(a => disabledActions.includes(a));
 
   const menuBtn = (onClick, color, label, desc, disabled, icon) => {
@@ -502,16 +692,15 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
         <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
         {allDisabled && infraReason && (
           <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#7a8aaa', background:'rgba(122,138,170,0.08)', border:'1px solid rgba(122,138,170,0.2)', borderRadius:5, padding:'4px 8px' }}>
-            <span style={{ fontSize:12 }}>📂</span>
-            <span>{infraReason}</span>
+            <span style={{ fontSize:12 }}>📂</span><span>{infraReason}</span>
           </div>
         )}
         {isBusy && !allDisabled && <div style={{ marginTop:4, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#f5a623' }}><SpinnerIcon size={10} color="#f5a623" /><span>Action in progress — buttons locked</span></div>}
       </div>
-      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'apply');     }, '#4285f4', 'Apply',     'Deploy / update infrastructure',            disabledActions.includes('apply'))}
-      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'stop');      }, '#f5a623', 'Stop',      'Pause all services via CLI',                disabledActions.includes('stop'))}
-      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'start');     }, '#00d4aa', 'Start',     'Resume all services via CLI',               disabledActions.includes('start'))}
-      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project, 'terminate'); }, '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)',  disabledActions.includes('terminate'), <PowerOffIcon size={13} color="#ff4d6d" />)}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project,'apply');     }, '#4285f4', 'Apply',     'Deploy / update infrastructure',           disabledActions.includes('apply'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project,'stop');      }, '#f5a623', 'Stop',      'Pause all services via CLI',               disabledActions.includes('stop'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project,'start');     }, '#00d4aa', 'Start',     'Resume all services via CLI',              disabledActions.includes('start'))}
+      {menuBtn((e) => { e.stopPropagation(); setOpen(false); stopTracking(); onAction(project,'terminate'); }, '#ff4d6d', 'Terminate', 'Destroy all resources (terraform destroy)', disabledActions.includes('terminate'), <PowerOffIcon size={13} color="#ff4d6d" />)}
     </div>,
     document.body
   ) : null;
@@ -533,532 +722,20 @@ const ProjectDotsDropdown = ({ project, onAction, disabledActions = [], activeAc
   );
 };
 
-const buildResourceQuery = (resource, gcpProjectId) => {
-  const gcpFilter = gcpProjectId ? `WHERE projectId = '${gcpProjectId}'` : '';
-  switch (resource.type) {
-    case 'gcp_cloudrun':    return `SELECT sum(container.BillableInstanceTime) AS billableTime, count(*) AS samples FROM GcpRunRevisionSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_cloudsql':    return `SELECT count(*) AS samples FROM GcpCloudSqlSample ${gcpFilter} SINCE 30 minutes ago`;
-    case 'gcp_bigquery':    return `SELECT count(*) AS samples FROM GcpBigQueryDataSetSample ${gcpFilter} SINCE 30 minutes ago`;
-    case 'gcp_billing':     return `SELECT count(*) AS samples FROM Metric SINCE 1 hour ago LIMIT 1`;
-    case 'aws_apprunner':   return `SELECT max(\`aws.apprunner.ActiveInstances\`) AS activeInstances, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' SINCE 5 minutes ago`;
-    case 'aws_rds':         return `SELECT average(\`aws.rds.FreeableMemory\`) AS freeMemory, average(\`aws.rds.WriteLatency\`) AS writeLatency, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/RDS' SINCE 5 minutes ago`;
-    case 'aws_cloudfront':  return `SELECT count(*) AS samples, average(\`aws.cloudfront.5xxErrorRate\`) AS errorRate5xx, average(\`aws.cloudfront.TotalErrorRate\`) AS totalErrorRate FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' SINCE 24 hours ago`;
-    case 'aws_ec2':         return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, max(\`aws.ec2.StatusCheckFailed_Instance\`) AS instanceCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' SINCE 5 minutes ago`;
-    case 'aws_ec2_managed': return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.tag.ManagedBy\` = 'eagle-eye' SINCE 5 minutes ago`;
-    case 'aws_billing':     return `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
-    default:                return `SELECT count(*) AS samples FROM Metric WHERE entity.name = '${resource.label}' SINCE 5 minutes ago`;
-  }
-};
-
-const noData = (resource) => resource.scalesToZero ? 'green' : resource.alwaysOn ? 'yellow' : 'unknown';
-
-const deriveResourceStatus = (resource, row) => {
-  if (!row) return noData(resource);
-  const type = resource.type === 'aws_ec2_managed' ? 'aws_ec2' : resource.type;
-  switch (type) {
-    case 'gcp_cloudrun': case 'gcp_cloudsql': { return (row.samples ?? 0) === 0 ? noData(resource) : 'green'; }
-    case 'gcp_bigquery': { return (row.samples ?? 0) === 0 ? 'unknown' : 'green'; }
-    case 'gcp_billing':  return 'unknown';
-    case 'aws_apprunner': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
-      const active = row.activeInstances ?? null;
-      return active !== null && active === 0 ? 'yellow' : 'green';
-    }
-    case 'aws_rds': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
-      const fm = row.freeMemory ?? null, wl = row.writeLatency ?? null;
-      if (fm !== null && fm < 50*1024*1024)  return 'red';
-      if (fm !== null && fm < 200*1024*1024) return 'yellow';
-      if (wl !== null && wl > 1)             return 'yellow';
-      return 'green';
-    }
-    case 'aws_cloudfront': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
-      const e5 = row.errorRate5xx ?? null, ea = row.totalErrorRate ?? null;
-      if (e5 !== null && e5 > 5)  return 'red';
-      if (e5 !== null && e5 > 2)  return 'yellow';
-      if (ea !== null && ea > 25) return 'red';
-      if (ea !== null && ea > 15) return 'yellow';
-      return 'green';
-    }
-    case 'aws_ec2': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
-      const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
-      const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
-      const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null;
-      if (sf > 0 || if_ > 0) return 'red';
-      if (cpu !== null && cpu > 90) return 'red';
-      if (cpu !== null && cpu > 75) return 'yellow';
-      return 'green';
-    }
-    case 'aws_billing': return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
-    default: return (row.samples ?? 0) === 0 ? noData(resource) : 'green';
-  }
-};
-
-const deriveResourceReason = (resource, row, status) => {
-  if (status === 'green' || status === 'unknown' || !row) return null;
-  const type = resource.type === 'aws_ec2_managed' ? 'aws_ec2' : resource.type;
-  switch (type) {
-    case 'gcp_cloudsql': return 'No metric samples received — DB may be stopped or unreachable';
-    case 'aws_apprunner': {
-      const active = row.activeInstances ?? null, s = row.samples ?? 0;
-      if (s === 0) return 'No metrics in last 5 min — services may be stopped';
-      if (active !== null && active === 0) return 'All App Runner services are paused (0 active instances)';
-      return 'App Runner services may be paused or starting up';
-    }
-    case 'aws_rds': {
-      if ((row.samples ?? 0) === 0) return 'No metrics in last 5 min — RDS instance may be stopped';
-      const fm = row.freeMemory ?? null, wl = row.writeLatency ?? null, parts = [];
-      if (fm !== null && fm < 50*1024*1024)       parts.push(`Critical: only ${(fm/1024/1024).toFixed(0)} MB memory free`);
-      else if (fm !== null && fm < 200*1024*1024) parts.push(`Low memory: ${(fm/1024/1024).toFixed(0)} MB free`);
-      if (wl !== null && wl > 1)                  parts.push(`High write latency: ${(wl*1000).toFixed(0)} ms`);
-      return parts.join(' · ') || null;
-    }
-    case 'aws_cloudfront': {
-      const e5 = row.errorRate5xx ?? null, ea = row.totalErrorRate ?? null, s = row.samples ?? 0;
-      if (s === 0) return 'No metric samples received from CloudFront namespace';
-      const parts = [];
-      if (e5 !== null && e5 > 2)  parts.push(`5xx error rate: ${e5.toFixed(1)}%${e5 > 5 ? ' (critical)' : ''}`);
-      if (ea !== null && ea > 15) parts.push(`Total error rate: ${ea.toFixed(1)}% (incl. 4xx)`);
-      return parts.join(' · ') || null;
-    }
-    case 'aws_ec2': {
-      const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
-      const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
-      const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null, s = row.samples ?? 0;
-      if (s === 0) return 'No metric samples in the last 5 minutes';
-      const parts = [];
-      if (sf > 0)  parts.push('System status check failed');
-      if (if_ > 0) parts.push('Instance status check failed');
-      if (cpu !== null && cpu > 75) parts.push(`CPU usage: ${cpu.toFixed(1)}%${cpu > 90 ? ' (critical)' : ''}`);
-      return parts.join(' · ') || null;
-    }
-    case 'gcp_cloudrun': return status === 'yellow' ? 'No billable instance time — all revisions may be scaled to zero' : null;
-    case 'gcp_bigquery': return status === 'yellow' ? 'No dataset samples — BigQuery may be idle or not yet active' : null;
-    default: return null;
-  }
-};
-
-const worstStatus = (statuses) => {
-  if (statuses.some(s => s === 'red'))    return 'red';
-  if (statuses.some(s => s === 'yellow')) return 'yellow';
-  if (statuses.some(s => s === 'green'))  return 'green';
-  return 'unknown';
-};
-
-const STATUS_META = {
-  green:   { label:'Healthy',      color:'#00d4aa' },
-  yellow:  { label:'Warning',      color:'#f5a623' },
-  red:     { label:'Critical',     color:'#ff4d6d' },
-  unknown: { label:'No Data',      color:'#7a8aaa' },
-  deleted: { label:'Deleted',      color:'#4a5568' },
-  empty:   { label:'No Resources', color:'#3d4a66' },
-};
-
-const PROVIDER_META = {
-  gcp: { gradient:'linear-gradient(135deg, rgba(66,133,244,0.18) 0%, rgba(52,168,83,0.10) 100%)', accent:'#4285F4' },
-  aws: { gradient:'linear-gradient(135deg, rgba(255,153,0,0.18) 0%, rgba(255,90,0,0.10) 100%)',   accent:'#FF9900' },
-};
-
-const canBePaused = (t, row) => t === 'aws_apprunner' && row && (row.activeInstances ?? null) === 0 && (row.samples ?? 0) > 0;
-
-const ec2StateDisplay = (state) => {
-  const s = (state ?? '').toString().toLowerCase().trim();
-  switch (s) {
-    case 'running':  return { dot:'green',  label:'✓ Running',  color:'#00d4aa' };
-    case 'impaired': return { dot:'red',    label:'✗ Impaired', color:'#ff4d6d' };
-    case 'stopped':  return { dot:'yellow', label:'✗ Stopped',  color:'#f5a623' };
-    case 'pending':  return { dot:'yellow', label:'◌ Pending',  color:'#f5a623' };
-    case 'stopping': return { dot:'yellow', label:'◌ Stopping', color:'#f5a623' };
-    default:         return { dot:'grey',   label: s || '— Unknown', color:'#7a8aaa' };
-  }
-};
-
-const BILLING_BUDGET_INR = 4600;
-const billingCostToStatus = (cost) => {
-  if (cost === null) return 'unknown';
-  const pct = (cost / BILLING_BUDGET_INR) * 100;
-  return pct >= 70 ? 'red' : pct >= 50 ? 'yellow' : 'green';
-};
-const estimatedCostToStatus = (est) => {
-  if (est === null) return 'unknown';
-  const pct = (est / BILLING_BUDGET_INR) * 100;
-  return pct >= 100 ? 'red' : pct >= 85 ? 'yellow' : 'green';
-};
-
-const BillingHealthBadge = ({ cost }) => {
-  if (cost === null) return <span className="status-badge status-badge--grey"><span className="status-badge__dot" />Billing</span>;
-  const pct = (cost / BILLING_BUDGET_INR) * 100, status = billingCostToStatus(cost);
-  return (
-    <span className={`status-badge status-badge--${status} status-badge--billing`} title={`${pct.toFixed(1)}% of monthly budget`}>
-      <span className="status-badge__dot" />
-      <span className="status-badge__billing-current">{'₹' + cost.toFixed(0)}</span>
-      <span className="status-badge__billing-sep">/</span>
-      <span className="status-badge__billing-budget">{'₹' + BILLING_BUDGET_INR + ' budget'}</span>
-    </span>
-  );
-};
-
-const StatusDot = ({ status }) => {
-  const cls = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status;
-  return <span className={`status-dot status-dot--${cls}`} />;
-};
-
-const StatusBadge = ({ status, label }) => {
-  const meta = STATUS_META[status] ?? STATUS_META.green;
-  const cls  = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status;
-  return <span className={`status-badge status-badge--${cls}`}><span className="status-badge__dot" />{label ?? meta.label}</span>;
-};
-
-const DashboardIcon = ({ onClick }) => (
-  <span onClick={onClick} title="Open Dashboard" style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:26, height:26, borderRadius:6, border:'1px solid rgba(255,255,255,0.12)', background:'rgba(255,255,255,0.05)', cursor:'pointer', flexShrink:0 }}>
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <rect x="1"   y="1"   width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.9"/>
-      <rect x="7.5" y="1"   width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.6"/>
-      <rect x="1"   y="7.5" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.6"/>
-      <rect x="7.5" y="7.5" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.35"/>
-    </svg>
-  </span>
-);
-
-const NoInfraBadge = ({ checking = false }) => {
-  if (checking) {
-    return (
-      <span style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:10, color:'#4a6080', fontWeight:500 }}>
-        <SpinnerIcon size={9} color="#4a6080" />
-        <span>checking…</span>
-      </span>
-    );
-  }
-  return (
-    <span style={{
-      fontSize:10, fontWeight:700, color:'#7a8aaa',
-      background:'rgba(122,138,170,0.10)',
-      border:'1px solid rgba(122,138,170,0.28)',
-      borderRadius:100, padding:'2px 9px',
-      textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0,
-    }}>
-      No Infra Yet
-    </span>
-  );
-};
-
-// ─── FIX 1: Removed 'Archived' from projectType options in edit form.
-// ─── FIX 2: All mutating actions (archive, unarchive, delete, save form) now
-//            await persistProviders() before updating local state, so changes
-//            survive a page refresh.
-// ─── FIX 3: handleSubmit no longer calls onClose() inside a try block before
-//            the save is confirmed — it waits for the await to finish cleanly.
-const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, onClose }) => {
-  const [view,          setView]          = useState('list');
-  const [form,          setForm]          = useState({ providerId, name:'', gcpProjectId:'', dashboardGuid:'', dashboardLink:'', projectDirName:'', projectType:'normal', selectedResources:[], knownServices:'', customResources:'' });
-  const [editInfo,      setEditInfo]      = useState(null);
-  const [saving,        setSaving]        = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [saveError,     setSaveError]     = useState('');
-
-  const provider    = providers.find(p => p.id === providerId);
-  const pi          = providers.findIndex(p => p.id === providerId);
-  const accentColor = providerId === 'gcp' ? '#4285f4' : '#FF9900';
-  const setField    = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const startEdit = (pj) => {
-    const project = provider.projects[pj];
-    // Determine projectType — note: we never set 'deleted' here; archived projects
-    // keep their flag but the edit form only exposes normal / empty / billing.
-    let projectType = 'normal';
-    if (project.empty) projectType = 'empty';
-    else if (project.billingNotConfigured || project.billingOnly) projectType = 'billing';
-    // (deleted projects are still editable but default to 'normal' so the user
-    //  can undelete them via the form too — the archived flag is removed on save)
-    const knownTypes = new Set((RESOURCE_OPTIONS[providerId] || []).map(o => o.type));
-    const customRes  = (project.resources || []).filter(r => !knownTypes.has(r.type)).map(r => r.label).join(', ');
-    setForm({ providerId, name:project.name||'', gcpProjectId:project.gcpProjectId||'', dashboardGuid:project.dashboardGuid||'', dashboardLink:project.dashboardLink||'', projectDirName:project.projectDirName||'', projectType, selectedResources:(project.resources||[]).map(r=>r.type).filter(t=>knownTypes.has(t)), knownServices:(project.knownServices||[]).join(', '), customResources:customRes });
-    setEditInfo({ pi, pj }); setSaveError(''); setView('form');
-  };
-
-  const buildProject = (existingProject) => {
-    const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
-    const base = {
-      name: name.trim(),
-      gcpProjectId: gcpProjectId.trim() || null,
-      dashboardGuid: dashboardGuid.trim() || null,
-      dashboardLink: dashboardLink.trim() || null,
-      projectDirName: projectDirName.trim() || null,
-    };
-    // Preserve the deleted flag only if the user hasn't changed the type away from normal
-    // (i.e. editing an archived project without changing type keeps it archived).
-    // But since 'archived' is no longer a selectable option, saving always clears deleted.
-    if (projectType === 'empty') {
-      return { ...base, empty: true, resources: [] };
-    }
-    if (projectType === 'billing') {
-      return { ...base, billingOnly: true, resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }] };
-    }
-    // 'normal' — build resource list
-    const allOpts      = RESOURCE_OPTIONS[providerId] || [];
-    const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
-    const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean).map(label => ({ label, type: 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g, '_'), alwaysOn: false }));
-    const resources    = [...stdResources, ...customParsed];
-    const project      = { ...base, resources };
-    if (selectedResources.includes('gcp_cloudrun') && knownServices.trim())
-      project.knownServices = knownServices.split(',').map(s => s.trim()).filter(Boolean);
-    return project;
-  };
-
-  // FIX 2 + 3: await the full NerdStorage write before closing / updating UI
-  const handleSubmit = async () => {
-    setSaveError('');
-    if (!form.name.trim()) { setSaveError('Project name is required.'); return; }
-    setSaving(true);
-    try {
-      const newProviders = providers.map(p => ({ ...p, projects: [...p.projects] }));
-      const existingProject = editInfo ? newProviders[pi].projects[editInfo.pj] : null;
-      const project = buildProject(existingProject);
-      if (editInfo) {
-        newProviders[pi].projects[editInfo.pj] = project;
-      } else {
-        newProviders[pi].projects.push(project);
-      }
-      // Persist first — if this throws, we stay in the form with an error message
-      await onSave(newProviders);
-      // Only close after successful persist
-      onClose();
-    } catch (e) {
-      setSaveError(e?.message || 'Save failed. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // FIX 2: inline list actions also await the full persist and surface errors
-  const handleDelete = async (pj) => {
-    setSaveError('');
-    try {
-      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
-      np[pi].projects.splice(pj, 1);
-      await onSave(np);
-      setDeleteConfirm(null);
-    } catch (e) {
-      setSaveError(e?.message || 'Delete failed.');
-    }
-  };
-
-  const handleArchive = async (pj) => {
-    setSaveError('');
-    try {
-      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
-      const proj = { ...np[pi].projects[pj], deleted: true, resources: [] };
-      delete proj.billingOnly;
-      delete proj.billingNotConfigured;
-      delete proj.empty;
-      np[pi].projects[pj] = proj;
-      await onSave(np);
-    } catch (e) {
-      setSaveError(e?.message || 'Archive failed.');
-    }
-  };
-
-  const handleUnarchive = async (pj) => {
-    setSaveError('');
-    try {
-      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
-      const proj = { ...np[pi].projects[pj] };
-      delete proj.deleted;
-      np[pi].projects[pj] = proj;
-      await onSave(np);
-    } catch (e) {
-      setSaveError(e?.message || 'Unarchive failed.');
-    }
-  };
-
-  const s = {
-    overlay:      { position:'fixed', inset:0, background:'rgba(8,11,20,0.88)', backdropFilter:'blur(10px)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' },
-    panel:        { background:'#0f1629', border:'1px solid rgba(255,255,255,0.12)', borderRadius:20, width:'92%', maxWidth:660, maxHeight:'90vh', overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 32px 100px rgba(0,0,0,0.7)' },
-    header:       { padding:'22px 26px 18px', borderBottom:'1px solid rgba(255,255,255,0.08)', display:'flex', alignItems:'flex-start', justifyContent:'space-between' },
-    body:         { padding:'22px 26px', overflowY:'auto', flex:1 },
-    footer:       { padding:'16px 26px', borderTop:'1px solid rgba(255,255,255,0.08)', display:'flex', gap:10, justifyContent:'flex-end', alignItems:'center' },
-    label:        { fontSize:11, fontWeight:600, color:'#7a8aaa', textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'block' },
-    field:        { marginBottom:18 },
-    input:        { width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'9px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', colorScheme:'dark' },
-    btnPrimary:   { padding:'9px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer' },
-    btnSecondary: { padding:'9px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer' },
-  };
-
-  if (view === 'list') return (
-    <div style={s.overlay} onClick={onClose}>
-      <div style={s.panel} onClick={e => e.stopPropagation()}>
-        <div style={s.header}>
-          <div>
-            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
-              <span style={{ fontSize:18 }}>{provider?.icon}</span>
-              <div style={{ fontSize:19, fontWeight:800, color:accentColor }}>{provider?.name} Projects</div>
-            </div>
-            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>Edit or manage {provider?.label} projects</div>
-          </div>
-          <button onClick={onClose} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>✕</button>
-        </div>
-        <div style={s.body}>
-          {!provider || provider.projects.length === 0 ? (
-            <div style={{ color:'#3d4a66', fontSize:12, fontStyle:'italic', padding:'8px 0' }}>No projects configured yet.</div>
-          ) : (
-            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-              {provider.projects.map((project, pj) => {
-                const typeTag  = project.deleted?'Archived':project.empty?'No Monitoring':project.billingNotConfigured?'Billing N/A':project.billingOnly?'Billing':null;
-                const key      = `${pi}-${pj}`;
-                const tagColor = project.deleted?'#4a5568':project.billingNotConfigured?'#4285f4':'#7a8aaa';
-                const tagBg    = project.deleted?'rgba(74,85,104,0.15)':project.billingNotConfigured?'rgba(66,133,244,0.12)':'rgba(255,255,255,0.06)';
-                const health   = projectHealthMap?.[project.name] ?? 'unknown';
-                const dotColor = project.deleted?'#4a5568':health==='green'?'#00d4aa':health==='yellow'?'#f5a623':health==='red'?'#ff4d6d':'#7a8aaa';
-                return (
-                  <div key={project.projectDirName || project.name} style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }}
-                    onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.03)'}>
-                    <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background:dotColor }} />
-                    <span style={{ flex:1, fontSize:13, fontWeight:600, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</span>
-                    {project.projectDirName && <span style={{ fontSize:10, color:'#3d5070', fontFamily:'monospace', flexShrink:0 }}>{project.projectDirName}</span>}
-                    {typeTag && <span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
-                    {!typeTag && project.resources?.length > 0 && <span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
-                    <button onClick={() => startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
-                    {project.deleted
-                      ? <button onClick={() => handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
-                      : <button onClick={() => handleArchive(pj)}   style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(245,166,35,0.55)',  background:'rgba(245,166,35,0.12)',  color:'#f5a623', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Archive</button>}
-                    {deleteConfirm === key
-                      ? <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                          <span style={{ fontSize:11, color:'#ff4d6d', flexShrink:0 }}>Sure?</span>
-                          <button onClick={() => handleDelete(pj)} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.22)', color:'#ff4d6d', fontWeight:700, fontSize:12, cursor:'pointer', outline:'none' }}>Yes</button>
-                          <button onClick={() => setDeleteConfirm(null)} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#7a8aaa', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none' }}>No</button>
-                        </div>
-                      : <button onClick={() => setDeleteConfirm(key)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.12)', color:'#ff4d6d', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Delete</button>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {saveError && <div style={{ fontSize:12, color:'#ff4d6d', marginTop:10, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {saveError}</div>}
-        </div>
-      </div>
-    </div>
-  );
-
-  const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
-  const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
-  const goBack          = () => { setSaveError(''); setView('list'); };
-
-  return (
-    <div style={s.overlay} onClick={goBack}>
-      <div style={s.panel} onClick={e => e.stopPropagation()}>
-        <div style={s.header}>
-          <div>
-            <div style={{ fontSize:19, fontWeight:800, color:'#f0f4ff' }}>Edit Project</div>
-            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>Update the project details below</div>
-          </div>
-          <button onClick={goBack} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>← Back</button>
-        </div>
-        <div style={s.body}>
-          <div style={{ ...s.field, marginBottom:14 }}>
-            <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 14px', borderRadius:100, border:`1px solid ${accentColor}44`, background:`${accentColor}18`, fontSize:12, fontWeight:700, color:accentColor }}>
-              {providerId==='gcp' ? '☁ Google Cloud Platform' : '⚡ Amazon Web Services'}
-            </div>
-          </div>
-          {/* FIX 1: 'Archived' option removed — archiving is done from the list view only */}
-          <div style={s.field}>
-            <label style={s.label}>Project Type</label>
-            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-              {[
-                { value:'normal',  title:'Normal',        sub:'Monitored resources' },
-                { value:'empty',   title:'No Monitoring', sub:'Dashboard link only' },
-                { value:'billing', title:'Billing Only',  sub:'Cost tracking' },
-              ].map(opt => {
-                const sel = form.projectType === opt.value;
-                return (
-                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding:'9px 14px', borderRadius:9, cursor:'pointer', border:sel?`1px solid ${accentColor}66`:'1px solid rgba(255,255,255,0.07)', background:sel?`${accentColor}12`:'rgba(255,255,255,0.03)' }}>
-                    <div style={{ fontSize:13, fontWeight:700, color:sel?accentColor:'#c8d4f0' }}>{opt.title}</div>
-                    <div style={{ fontSize:11, color:'#4a6080', marginTop:2 }}>{opt.sub}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div style={s.field}>
-            <label style={s.label}>Project Name *</label>
-            <input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="e.g. Starapp UAT" style={s.input} />
-          </div>
-          <div style={s.field}>
-            <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
-            <input value={form.projectDirName} onChange={e => setField('projectDirName', e.target.value)} placeholder="e.g. starapp-uat  →  projects/starapp-uat/" style={s.input} />
-            <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
-              Set this to enable infra buttons. The app checks for <code style={{ color:'#6a8aaa' }}>.tf</code> files under <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/</code> in the GitHub repo.
-            </div>
-          </div>
-          {form.providerId==='gcp' && form.projectType==='normal' && (
-            <div style={s.field}>
-              <label style={s.label}>GCP Project ID</label>
-              <input value={form.gcpProjectId} onChange={e => setField('gcpProjectId', e.target.value)} placeholder="e.g. my-project-123456" style={s.input} />
-            </div>
-          )}
-          <div style={s.field}>
-            <label style={s.label}>Dashboard GUID</label>
-            <input value={form.dashboardGuid} onChange={e => setField('dashboardGuid', e.target.value)} placeholder="e.g. Nzc4MjQ3OX..." style={s.input} />
-          </div>
-          <div style={s.field}>
-            <label style={s.label}>Dashboard Short Link</label>
-            <input value={form.dashboardLink} onChange={e => setField('dashboardLink', e.target.value)} placeholder="e.g. https://onenr.io/..." style={s.input} />
-          </div>
-          {form.projectType==='normal' && (
-            <div style={s.field}>
-              <label style={s.label}>Resources to Monitor</label>
-              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                {providerOptions.map(opt => {
-                  const checked = form.selectedResources.includes(opt.type);
-                  return (
-                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?`rgba(${form.providerId==='gcp'?'66,133,244':'255,153,0'},0.08)`:'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
-                      <input type="checkbox" checked={checked} onChange={e => setField('selectedResources', e.target.checked?[...form.selectedResources,opt.type]:form.selectedResources.filter(t=>t!==opt.type))} style={{ accentColor, width:14, height:14, cursor:'pointer', marginTop:2, flexShrink:0 }} />
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                          <span style={{ fontSize:13, fontWeight:600, color:'#c8d4f0' }}>{opt.label}</span>
-                          <span style={{ fontSize:10, color:opt.scalesToZero?'#4285f4':'#4a5568', background:opt.scalesToZero?'rgba(66,133,244,0.1)':'rgba(255,255,255,0.05)', border:opt.scalesToZero?'1px solid rgba(66,133,244,0.2)':'1px solid rgba(255,255,255,0.07)', borderRadius:100, padding:'1px 7px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px' }}>{opt.scalesToZero?'scales to zero':opt.alwaysOn?'always on':''}</span>
-                        </div>
-                        {opt.desc && <div style={{ fontSize:11, color:'#4a6080', marginTop:3 }}>{opt.desc}</div>}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {form.projectType==='normal' && hasCloudRun && (
-            <div style={s.field}>
-              <label style={s.label}>Known Cloud Run Services</label>
-              <input value={form.knownServices} onChange={e => setField('knownServices', e.target.value)} placeholder="e.g. my-api, auth-service" style={s.input} />
-            </div>
-          )}
-          {form.projectType==='normal' && (
-            <div style={s.field}>
-              <label style={s.label}>Other Services</label>
-              <input value={form.customResources} onChange={e => setField('customResources', e.target.value)} placeholder="e.g. Redis, Kafka" style={s.input} />
-            </div>
-          )}
-          {saveError && <div style={{ fontSize:12, color:'#ff4d6d', marginTop:4, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {saveError}</div>}
-        </div>
-        <div style={s.footer}>
-          <button onClick={goBack} style={s.btnSecondary} disabled={saving}>Cancel</button>
-          <button onClick={handleSubmit} style={{ ...s.btnPrimary, background:accentColor, opacity:saving?0.65:1 }} disabled={saving}>{saving?'Saving…':'Save Changes'}</button>
-        </div>
-      </div>
-    </div>
-  );
-};
+// ─── Service sub-list queries ─────────────────────────────────────────────────
 
 const SERVICE_QUERIES = {
-  gcp_cloudrun:    (p) => `SELECT count(*) AS val FROM GcpRunRevisionSample WHERE projectId = '${p.gcpProjectId}' FACET serviceName SINCE 1 year ago LIMIT 100`,
-  gcp_cloudsql:    (p) => `SELECT count(*) AS val FROM GcpCloudSqlSample WHERE projectId = '${p.gcpProjectId}' FACET displayName SINCE 30 minutes ago LIMIT 20`,
-  gcp_bigquery:    (p) => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
-  aws_apprunner:   ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
-  aws_rds:         ()  => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
-  aws_ec2:         ()  => "SELECT latest(`aws.ec2.StatusCheckFailed`) AS statusFailed, latest(`aws.ec2.CPUUtilization`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' FACET `aws.ec2.InstanceId` SINCE 30 days ago LIMIT 50",
-  aws_ec2_managed: ()  => "SELECT latest(`aws.ec2.StatusCheckFailed`) AS statusFailed, latest(`aws.ec2.CPUUtilization`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND `aws.ec2.tag.ManagedBy` = 'eagle-eye' FACET `aws.ec2.InstanceId` SINCE 30 days ago LIMIT 50",
-  aws_cloudfront:  ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' FACET aws.cloudfront.DistributionId SINCE 24 hours ago LIMIT 20",
+  gcp_cloudrun:   (p)          => `SELECT count(*) AS val FROM GcpRunRevisionSample WHERE projectId = '${p.gcpProjectId}' FACET serviceName SINCE 1 year ago LIMIT 100`,
+  gcp_cloudsql:   (p)          => `SELECT count(*) AS val FROM GcpCloudSqlSample WHERE projectId = '${p.gcpProjectId}' FACET displayName SINCE 30 minutes ago LIMIT 20`,
+  gcp_bigquery:   (p)          => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
+  aws_apprunner:  ()           => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
+  aws_rds:        ()           => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
+  // EC2: applies per-project tag filters so only project-owned instances appear
+  aws_ec2:        (p, resource) => {
+    const tf = buildEc2TagFilter(resource?.tagFilters);
+    return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`;
+  },
+  aws_cloudfront: ()           => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' FACET aws.cloudfront.DistributionId SINCE 24 hours ago LIMIT 20",
 };
 
 const extractFacetName = (series) => {
@@ -1080,13 +757,15 @@ const extractEc2FacetPair = (series) => {
   if (!name) { const n=series?.metadata?.name; const SKIP=new Set(['val','Other','unknown','count','statusFailed','cpu']); if (n&&!SKIP.has(n)) name=n; }
   if (!name) return null;
   const pt=series?.data?.[0]; const sf=pt?.statusFailed??null;
-  return { name, state: (sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
+  return { name, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
 };
 
-const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
-  const tagFilter = managedOnly ? "AND `aws.ec2.tag.ManagedBy` = 'eagle-eye'" : '';
-  const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
-  const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
+// ─── Ec2CountLoader — now uses tagFilters instead of managedOnly ──────────────
+
+const Ec2CountLoader = ({ onCounts, loaded, tagFilters = [] }) => {
+  const tf     = buildEc2TagFilter(tagFilters);
+  const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
+  const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={midQ} pollInterval={60000}>
       {({ data: midData }) => (
@@ -1106,26 +785,31 @@ const Ec2CountLoader = ({ onCounts, loaded, managedOnly = false }) => {
   );
 };
 
+// ─── ExpandableResourceRow ────────────────────────────────────────────────────
+
 const ExpandableResourceRow = ({ resource: r, project }) => {
-  const [open, setOpen] = React.useState(false);
+  const [open,      setOpen]      = React.useState(false);
   const [ec2Counts, setEc2Counts] = React.useState(null);
-  const isManagedEc2 = r.type === 'aws_ec2_managed';
-  const hasSubList   = !!(SERVICE_QUERIES[r.type]);
-  const dotCls       = r.status==='green'?'green':r.status==='yellow'?'yellow':r.status==='red'?'red':'grey';
-  const statusColor  = r.status==='green'?'#00d4aa':r.status==='yellow'?'#f5a623':r.status==='red'?'#ff4d6d':'#7a8aaa';
-  const isPaused     = canBePaused(r.type, r.row);
-  const statusLabel  = r.status==='green'?'✓ Running':r.status==='yellow'?(isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped'):r.status==='red'?(r.alwaysOn?'✗ Errors':'✗ Stopped'):'— No Data';
-  const query        = hasSubList ? SERVICE_QUERIES[r.type](project) : null;
+  const hasSubList  = !!(SERVICE_QUERIES[r.type]);
+  const dotCls      = r.status==='green'?'green':r.status==='yellow'?'yellow':r.status==='red'?'red':'grey';
+  const statusColor = r.status==='green'?'#00d4aa':r.status==='yellow'?'#f5a623':r.status==='red'?'#ff4d6d':'#7a8aaa';
+  const isPaused    = canBePaused(r.type, r.row);
+  const statusLabel = r.status==='green'?'✓ Running':r.status==='yellow'?(isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped'):r.status==='red'?(r.alwaysOn?'✗ Errors':'✗ Stopped'):'— No Data';
+  // Pass the resource to SERVICE_QUERIES so EC2 can use tagFilters
+  const query       = hasSubList ? SERVICE_QUERIES[r.type](project, r) : null;
 
   return (
     <div style={{ borderRadius:6, overflow:'hidden', background:'rgba(255,255,255,0.03)' }}>
-      {(r.type === 'aws_ec2' || isManagedEc2) && <Ec2CountLoader onCounts={setEc2Counts} loaded={!!ec2Counts} managedOnly={isManagedEc2} />}
+      {/* Ec2CountLoader uses tagFilters to scope counts to this project only */}
+      {r.type === 'aws_ec2' && (
+        <Ec2CountLoader onCounts={setEc2Counts} loaded={!!ec2Counts} tagFilters={r.tagFilters} />
+      )}
       <div style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 8px', cursor:hasSubList?'pointer':'default' }} onClick={() => hasSubList && setOpen(o=>!o)}>
         <span className={'status-dot status-dot--'+dotCls} style={{ flexShrink:0, alignSelf:'flex-start', marginTop:3 }} />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
             <span style={{ fontWeight:600, fontSize:'0.8rem', color:'#f0f4ff' }}>{r.label}</span>
-            {(r.type === 'aws_ec2' || isManagedEc2) && ec2Counts && (
+            {r.type === 'aws_ec2' && ec2Counts && (
               <span style={{ fontSize:10, fontWeight:700 }}>
                 {ec2Counts.run  > 0 && <span style={{ color:'#00d4aa' }}>{ec2Counts.run} running</span>}
                 {ec2Counts.run  > 0 && ec2Counts.stop > 0 && <span style={{ color:'#7a8aaa' }}> · </span>}
@@ -1140,6 +824,7 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
         <span style={{ color:statusColor, fontSize:'0.75rem', fontWeight:600, flexShrink:0 }}>{statusLabel}</span>
         {hasSubList && <span style={{ fontSize:14, color:'#3d4a66', transition:'transform 0.2s', display:'inline-block', transform:open?'rotate(90deg)':'rotate(0deg)', flexShrink:0 }}>›</span>}
       </div>
+
       {open && query && (
         <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
           {({ data, loading }) => {
@@ -1148,6 +833,7 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
             const acC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.08)' : 'rgba(66,133,244,0.08)';
             const boC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.12)' : 'rgba(66,133,244,0.12)';
 
+            // ── Cloud Run ────────────────────────────────────────────────────
             if (r.type === 'gcp_cloudrun') {
               const aq = `SELECT sum(container.BillableInstanceTime) AS billableTime FROM GcpRunRevisionSample WHERE projectId = '${project.gcpProjectId}' FACET serviceName SINCE 30 minutes ago LIMIT 100`;
               return (
@@ -1190,6 +876,7 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
               );
             }
 
+            // ── App Runner ───────────────────────────────────────────────────
             if (r.type === 'aws_apprunner') {
               const aq = "SELECT max(`aws.apprunner.ActiveInstances`) AS activeInstances FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30";
               return (
@@ -1235,10 +922,11 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
               );
             }
 
-            if (r.type === 'aws_ec2' || r.type === 'aws_ec2_managed') {
-              const tagFilter = r.type==='aws_ec2_managed' ? "AND `aws.ec2.tag.ManagedBy` = 'eagle-eye'" : '';
-              const aq = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
-              const mq = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tagFilter} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
+            // ── EC2 — tag-filtered instance list ─────────────────────────────
+            if (r.type === 'aws_ec2') {
+              const tf = buildEc2TagFilter(r.tagFilters);
+              const aq = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
+              const mq = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' ${tf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
               return (
                 <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
                   {({ data: ad, loading: al }) => (
@@ -1249,11 +937,20 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
                         (ad||[]).forEach(s => { const p=extractEc2FacetPair(s); if (!p?.name) return; activeI.add(p.name); if (p.state==='impaired') impairedI.add(p.name); });
                         const seen=new Set(), visibleInstances=[];
                         (md||[]).forEach(s => { const p=extractEc2FacetPair(s); if (!p?.name||seen.has(p.name)) return; seen.add(p.name); visibleInstances.push({ name:p.name, state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped' }); });
-                        if (visibleInstances.length===0) return <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>No active instances found</div>;
+                        if (visibleInstances.length===0) return <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>No instances found{r.tagFilters?.length > 0 ? ' matching the configured tag filters' : ''}</div>;
                         const ord={running:0,pending:1,stopping:2,stopped:3,impaired:4};
                         visibleInstances.sort((a,b) => { const ao=ord[a.state]??99,bo=ord[b.state]??99; return ao!==bo?ao-bo:a.name.localeCompare(b.name); });
                         return (
                           <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+                            {r.tagFilters?.length > 0 && (
+                              <div style={{ padding:'5px 10px 3px', borderBottom:'1px solid rgba(255,255,255,0.04)', display:'flex', flexWrap:'wrap', gap:4 }}>
+                                {r.tagFilters.filter(f=>f.key&&f.value).map((f,i) => (
+                                  <span key={i} style={{ fontSize:9, fontWeight:700, color:'#f5a623', background:'rgba(255,153,0,0.08)', border:'1px solid rgba(255,153,0,0.2)', borderRadius:4, padding:'1px 6px', fontFamily:'monospace' }}>
+                                    {f.key}={f.value}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                             {visibleInstances.map((inst,i) => { const d=ec2StateDisplay(inst.state); return (
                               <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<visibleInstances.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
                                 <span className={'status-dot status-dot--'+d.dot} style={{ width:6, height:6, flexShrink:0 }} />
@@ -1270,6 +967,7 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
               );
             }
 
+            // ── Generic facet list ────────────────────────────────────────────
             const seen=new Set();
             const items=data.map(s=>{ const n=extractFacetName(s); if (!n||seen.has(n)) return null; seen.add(n); return n; }).filter(Boolean);
             if (items.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
@@ -1293,6 +991,8 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
     </div>
   );
 };
+
+// ─── Billing widgets ──────────────────────────────────────────────────────────
 
 const BillingSimple = ({ cost, budget }) => {
   if (cost===null) return <div style={{ color:'#7a8aaa', fontSize:12, fontStyle:'italic' }}>No billing data</div>;
@@ -1328,37 +1028,415 @@ const GcpBillingNotConfigured = () => (
   </div>
 );
 
+// ─── ProjectManagerModal ──────────────────────────────────────────────────────
+
+const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, onClose }) => {
+  const [view,          setView]          = useState('list');
+  const [form,          setForm]          = useState({
+    providerId, name:'', gcpProjectId:'', dashboardGuid:'', dashboardLink:'',
+    projectDirName:'', projectType:'normal', selectedResources:[],
+    knownServices:'', customResources:'',
+    ec2TagFilters: [],   // [{key:'', value:''}]
+  });
+  const [editInfo,      setEditInfo]      = useState(null);
+  const [saving,        setSaving]        = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [saveError,     setSaveError]     = useState('');
+
+  const provider    = providers.find(p => p.id === providerId);
+  const pi          = providers.findIndex(p => p.id === providerId);
+  const accentColor = providerId === 'gcp' ? '#4285f4' : '#FF9900';
+  const setField    = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const startEdit = (pj) => {
+    const project = provider.projects[pj];
+    let projectType = 'normal';
+    if (project.empty)                              projectType = 'empty';
+    else if (project.billingNotConfigured || project.billingOnly) projectType = 'billing';
+
+    const knownTypes = new Set((RESOURCE_OPTIONS[providerId] || []).map(o => o.type));
+    const customRes  = (project.resources || []).filter(r => !knownTypes.has(r.type)).map(r => r.label).join(', ');
+
+    // Pull existing EC2 tag filters if any
+    const ec2Res = (project.resources || []).find(r => r.type === 'aws_ec2');
+
+    setForm({
+      providerId,
+      name:              project.name             || '',
+      gcpProjectId:      project.gcpProjectId     || '',
+      dashboardGuid:     project.dashboardGuid    || '',
+      dashboardLink:     project.dashboardLink    || '',
+      projectDirName:    project.projectDirName   || '',
+      projectType,
+      selectedResources: (project.resources||[]).map(r=>r.type).filter(t=>knownTypes.has(t)),
+      knownServices:     (project.knownServices||[]).join(', '),
+      customResources:   customRes,
+      ec2TagFilters:     ec2Res?.tagFilters        || [],
+    });
+    setEditInfo({ pi, pj }); setSaveError(''); setView('form');
+  };
+
+  const buildProject = () => {
+    const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
+    const base = {
+      name:           name.trim(),
+      gcpProjectId:   gcpProjectId.trim()   || null,
+      dashboardGuid:  dashboardGuid.trim()  || null,
+      dashboardLink:  dashboardLink.trim()  || null,
+      projectDirName: projectDirName.trim() || null,
+    };
+    if (projectType === 'empty')   return { ...base, empty: true, resources: [] };
+    if (projectType === 'billing') return { ...base, billingOnly: true, resources: [{ label:'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn:false }] };
+
+    // Normal — build resource list
+    const allOpts      = RESOURCE_OPTIONS[providerId] || [];
+    const stdResources = allOpts
+      .filter(o => selectedResources.includes(o.type))
+      .map(o => {
+        const res = { ...o };
+        // Attach tag filters to the EC2 resource so queries can scope to this project
+        if (o.type === 'aws_ec2') {
+          const validFilters = form.ec2TagFilters.filter(f => f.key?.trim() && f.value?.trim());
+          if (validFilters.length > 0) res.tagFilters = validFilters;
+        }
+        return res;
+      });
+    const customParsed = (customResources || '').split(',').map(s=>s.trim()).filter(Boolean).map(label => ({ label, type:'custom_'+label.toLowerCase().replace(/[^a-z0-9]/g,'_'), alwaysOn:false }));
+    const resources    = [...stdResources, ...customParsed];
+    const project      = { ...base, resources };
+    if (selectedResources.includes('gcp_cloudrun') && knownServices.trim())
+      project.knownServices = knownServices.split(',').map(s=>s.trim()).filter(Boolean);
+    return project;
+  };
+
+  const handleSubmit = async () => {
+    setSaveError('');
+    if (!form.name.trim()) { setSaveError('Project name is required.'); return; }
+    setSaving(true);
+    try {
+      const newProviders = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const project = buildProject();
+      if (editInfo) { newProviders[pi].projects[editInfo.pj] = project; }
+      else          { newProviders[pi].projects.push(project); }
+      await onSave(newProviders);
+      onClose();
+    } catch (e) {
+      setSaveError(e?.message || 'Save failed. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      np[pi].projects.splice(pj, 1);
+      await onSave(np);
+      setDeleteConfirm(null);
+    } catch (e) { setSaveError(e?.message || 'Delete failed.'); }
+  };
+
+  const handleArchive = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const proj = { ...np[pi].projects[pj], deleted:true, resources:[] };
+      delete proj.billingOnly; delete proj.billingNotConfigured; delete proj.empty;
+      np[pi].projects[pj] = proj;
+      await onSave(np);
+    } catch (e) { setSaveError(e?.message || 'Archive failed.'); }
+  };
+
+  const handleUnarchive = async (pj) => {
+    setSaveError('');
+    try {
+      const np = providers.map(p => ({ ...p, projects: [...p.projects] }));
+      const proj = { ...np[pi].projects[pj] };
+      delete proj.deleted;
+      np[pi].projects[pj] = proj;
+      await onSave(np);
+    } catch (e) { setSaveError(e?.message || 'Unarchive failed.'); }
+  };
+
+  const s = {
+    overlay:      { position:'fixed', inset:0, background:'rgba(8,11,20,0.88)', backdropFilter:'blur(10px)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' },
+    panel:        { background:'#0f1629', border:'1px solid rgba(255,255,255,0.12)', borderRadius:20, width:'92%', maxWidth:660, maxHeight:'90vh', overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 32px 100px rgba(0,0,0,0.7)' },
+    header:       { padding:'22px 26px 18px', borderBottom:'1px solid rgba(255,255,255,0.08)', display:'flex', alignItems:'flex-start', justifyContent:'space-between' },
+    body:         { padding:'22px 26px', overflowY:'auto', flex:1 },
+    footer:       { padding:'16px 26px', borderTop:'1px solid rgba(255,255,255,0.08)', display:'flex', gap:10, justifyContent:'flex-end', alignItems:'center' },
+    label:        { fontSize:11, fontWeight:600, color:'#7a8aaa', textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'block' },
+    field:        { marginBottom:18 },
+    input:        { width:'100%', background:'#0d1525', border:'1px solid rgba(255,255,255,0.18)', borderRadius:8, padding:'9px 12px', color:'#f0f4ff', fontSize:13, outline:'none', boxSizing:'border-box', colorScheme:'dark' },
+    btnPrimary:   { padding:'9px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer' },
+    btnSecondary: { padding:'9px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer' },
+  };
+
+  // ── List view ────────────────────────────────────────────────────────────────
+  if (view === 'list') return (
+    <div style={s.overlay} onClick={onClose}>
+      <div style={s.panel} onClick={e => e.stopPropagation()}>
+        <div style={s.header}>
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
+              <span style={{ fontSize:18 }}>{provider?.icon}</span>
+              <div style={{ fontSize:19, fontWeight:800, color:accentColor }}>{provider?.name} Projects</div>
+            </div>
+            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>Edit or manage {provider?.label} projects</div>
+          </div>
+          <button onClick={onClose} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>✕</button>
+        </div>
+        <div style={s.body}>
+          {!provider || provider.projects.length === 0 ? (
+            <div style={{ color:'#3d4a66', fontSize:12, fontStyle:'italic', padding:'8px 0' }}>No projects configured yet. Use the form to add one.</div>
+          ) : (
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {provider.projects.map((project, pj) => {
+                const typeTag  = project.deleted?'Archived':project.empty?'No Monitoring':project.billingNotConfigured?'Billing N/A':project.billingOnly?'Billing':null;
+                const key      = `${pi}-${pj}`;
+                const tagColor = project.deleted?'#4a5568':project.billingNotConfigured?'#4285f4':'#7a8aaa';
+                const tagBg    = project.deleted?'rgba(74,85,104,0.15)':project.billingNotConfigured?'rgba(66,133,244,0.12)':'rgba(255,255,255,0.06)';
+                const health   = projectHealthMap?.[project.name] ?? 'unknown';
+                const dotColor = project.deleted?'#4a5568':health==='green'?'#00d4aa':health==='yellow'?'#f5a623':health==='red'?'#ff4d6d':'#7a8aaa';
+                return (
+                  <div key={project.projectDirName || project.name}
+                    style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 14px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10 }}
+                    onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.055)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.03)'}>
+                    <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background:dotColor }} />
+                    <span style={{ flex:1, fontSize:13, fontWeight:600, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</span>
+                    {project.projectDirName && <span style={{ fontSize:10, color:'#3d5070', fontFamily:'monospace', flexShrink:0 }}>{project.projectDirName}</span>}
+                    {typeTag && <span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
+                    {!typeTag && project.resources?.length > 0 && <span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
+                    <button onClick={() => startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
+                    {project.deleted
+                      ? <button onClick={() => handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)',  background:'rgba(66,133,244,0.12)',  color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
+                      : <button onClick={() => handleArchive(pj)}   style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(245,166,35,0.55)',   background:'rgba(245,166,35,0.12)',  color:'#f5a623', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Archive</button>}
+                    {deleteConfirm === key
+                      ? <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                          <span style={{ fontSize:11, color:'#ff4d6d', flexShrink:0 }}>Sure?</span>
+                          <button onClick={() => handleDelete(pj)} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.22)', color:'#ff4d6d', fontWeight:700, fontSize:12, cursor:'pointer', outline:'none' }}>Yes</button>
+                          <button onClick={() => setDeleteConfirm(null)} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#7a8aaa', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none' }}>No</button>
+                        </div>
+                      : <button onClick={() => setDeleteConfirm(key)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(255,77,109,0.55)', background:'rgba(255,77,109,0.12)', color:'#ff4d6d', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Delete</button>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {saveError && <div style={{ fontSize:12, color:'#ff4d6d', marginTop:10, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {saveError}</div>}
+        </div>
+        <div style={s.footer}>
+          <button onClick={() => { setEditInfo(null); setForm({ providerId, name:'', gcpProjectId:'', dashboardGuid:'', dashboardLink:'', projectDirName:'', projectType:'normal', selectedResources:[], knownServices:'', customResources:'', ec2TagFilters:[] }); setSaveError(''); setView('form'); }} style={{ ...s.btnPrimary, background:accentColor }}>+ Add Project</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Form view ────────────────────────────────────────────────────────────────
+  const providerOptions = RESOURCE_OPTIONS[form.providerId] || [];
+  const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
+  const hasEc2          = form.selectedResources.includes('aws_ec2');
+  const goBack          = () => { setSaveError(''); setView('list'); };
+
+  return (
+    <div style={s.overlay} onClick={goBack}>
+      <div style={s.panel} onClick={e => e.stopPropagation()}>
+        <div style={s.header}>
+          <div>
+            <div style={{ fontSize:19, fontWeight:800, color:'#f0f4ff' }}>{editInfo ? 'Edit Project' : 'Add Project'}</div>
+            <div style={{ fontSize:12, color:'#7a8aaa', marginTop:3 }}>{editInfo ? 'Update the project details below' : 'Fill in the details for the new project'}</div>
+          </div>
+          <button onClick={goBack} style={{ ...s.btnSecondary, padding:'7px 14px', fontSize:12 }}>← Back</button>
+        </div>
+        <div style={s.body}>
+          {/* Provider tag */}
+          <div style={{ ...s.field, marginBottom:14 }}>
+            <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 14px', borderRadius:100, border:`1px solid ${accentColor}44`, background:`${accentColor}18`, fontSize:12, fontWeight:700, color:accentColor }}>
+              {providerId==='gcp' ? '☁ Google Cloud Platform' : '⚡ Amazon Web Services'}
+            </div>
+          </div>
+
+          {/* Project Type */}
+          <div style={s.field}>
+            <label style={s.label}>Project Type</label>
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {[
+                { value:'normal',  title:'Normal',        sub:'Monitored resources' },
+                { value:'empty',   title:'No Monitoring', sub:'Dashboard link only' },
+                { value:'billing', title:'Billing Only',  sub:'Cost tracking' },
+              ].map(opt => {
+                const sel = form.projectType === opt.value;
+                return (
+                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding:'9px 14px', borderRadius:9, cursor:'pointer', border:sel?`1px solid ${accentColor}66`:'1px solid rgba(255,255,255,0.07)', background:sel?`${accentColor}12`:'rgba(255,255,255,0.03)' }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:sel?accentColor:'#c8d4f0' }}>{opt.title}</div>
+                    <div style={{ fontSize:11, color:'#4a6080', marginTop:2 }}>{opt.sub}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Name */}
+          <div style={s.field}>
+            <label style={s.label}>Project Name *</label>
+            <input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="e.g. DMS Monitoring" style={s.input} />
+          </div>
+
+          {/* Dir name */}
+          <div style={s.field}>
+            <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
+            <input value={form.projectDirName} onChange={e => setField('projectDirName', e.target.value)} placeholder="e.g. dms-monitoring  →  projects/dms-monitoring/" style={s.input} />
+            <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
+              Set this to enable infra buttons. The app checks for <code style={{ color:'#6a8aaa' }}>.tf</code> files under <code style={{ color:'#6a8aaa' }}>projects/&lt;dir&gt;/</code> in the GitHub repo.
+            </div>
+          </div>
+
+          {/* GCP project ID */}
+          {form.providerId==='gcp' && form.projectType==='normal' && (
+            <div style={s.field}>
+              <label style={s.label}>GCP Project ID</label>
+              <input value={form.gcpProjectId} onChange={e => setField('gcpProjectId', e.target.value)} placeholder="e.g. my-project-123456" style={s.input} />
+            </div>
+          )}
+
+          {/* Dashboard fields */}
+          <div style={s.field}>
+            <label style={s.label}>Dashboard GUID</label>
+            <input value={form.dashboardGuid} onChange={e => setField('dashboardGuid', e.target.value)} placeholder="e.g. Nzc4MjQ3OX..." style={s.input} />
+          </div>
+          <div style={s.field}>
+            <label style={s.label}>Dashboard Short Link</label>
+            <input value={form.dashboardLink} onChange={e => setField('dashboardLink', e.target.value)} placeholder="e.g. https://onenr.io/..." style={s.input} />
+          </div>
+
+          {/* Resources to monitor */}
+          {form.projectType==='normal' && (
+            <div style={s.field}>
+              <label style={s.label}>Resources to Monitor</label>
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {providerOptions.map(opt => {
+                  const checked = form.selectedResources.includes(opt.type);
+                  return (
+                    <label key={opt.type} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', padding:'10px 12px', background:checked?`rgba(${form.providerId==='gcp'?'66,133,244':'255,153,0'},0.08)`:'rgba(255,255,255,0.03)', borderRadius:8, border:checked?`1px solid ${accentColor}44`:'1px solid rgba(255,255,255,0.07)' }}>
+                      <input type="checkbox" checked={checked} onChange={e => setField('selectedResources', e.target.checked?[...form.selectedResources,opt.type]:form.selectedResources.filter(t=>t!==opt.type))} style={{ accentColor, width:14, height:14, cursor:'pointer', marginTop:2, flexShrink:0 }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <span style={{ fontSize:13, fontWeight:600, color:'#c8d4f0' }}>{opt.label}</span>
+                          <span style={{ fontSize:10, color:opt.scalesToZero?'#4285f4':'#4a5568', background:opt.scalesToZero?'rgba(66,133,244,0.1)':'rgba(255,255,255,0.05)', border:opt.scalesToZero?'1px solid rgba(66,133,244,0.2)':'1px solid rgba(255,255,255,0.07)', borderRadius:100, padding:'1px 7px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px' }}>{opt.scalesToZero?'scales to zero':opt.alwaysOn?'always on':''}</span>
+                        </div>
+                        {opt.desc && <div style={{ fontSize:11, color:'#4a6080', marginTop:3 }}>{opt.desc}</div>}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Cloud Run known services */}
+          {form.projectType==='normal' && hasCloudRun && (
+            <div style={s.field}>
+              <label style={s.label}>Known Cloud Run Services</label>
+              <input value={form.knownServices} onChange={e => setField('knownServices', e.target.value)} placeholder="e.g. my-api, auth-service" style={s.input} />
+            </div>
+          )}
+
+          {/* ── EC2 tag filters ─────────────────────────────────────────────── */}
+          {form.projectType==='normal' && hasEc2 && (
+            <div style={s.field}>
+              <label style={s.label}>
+                EC2 Tag Filters
+                <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0, marginLeft:6 }}>
+                  (scope to only instances matching ALL of these tags)
+                </span>
+              </label>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {form.ec2TagFilters.map((f, i) => (
+                  <div key={i} style={{ display:'flex', gap:6, alignItems:'center' }}>
+                    <input
+                      value={f.key}
+                      onChange={e => { const next=[...form.ec2TagFilters]; next[i]={...next[i],key:e.target.value}; setField('ec2TagFilters',next); }}
+                      placeholder="Tag key  e.g. Project"
+                      style={{ ...s.input, flex:1 }}
+                    />
+                    <span style={{ color:'#4a6080', fontSize:14, flexShrink:0 }}>=</span>
+                    <input
+                      value={f.value}
+                      onChange={e => { const next=[...form.ec2TagFilters]; next[i]={...next[i],value:e.target.value}; setField('ec2TagFilters',next); }}
+                      placeholder="Tag value  e.g. dms-monitoring"
+                      style={{ ...s.input, flex:1 }}
+                    />
+                    <button
+                      onClick={() => setField('ec2TagFilters', form.ec2TagFilters.filter((_,j)=>j!==i))}
+                      style={{ padding:'7px 10px', borderRadius:6, border:'1px solid rgba(255,77,109,0.4)', background:'rgba(255,77,109,0.1)', color:'#ff4d6d', cursor:'pointer', fontWeight:700, fontSize:13, flexShrink:0, outline:'none' }}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setField('ec2TagFilters', [...form.ec2TagFilters, { key:'', value:'' }])}
+                  style={{ alignSelf:'flex-start', padding:'5px 14px', borderRadius:6, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.05)', color:'#7a8aaa', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none' }}>
+                  + Add tag filter
+                </button>
+                <div style={{ fontSize:11, color:'#4a6080', marginTop:2 }}>
+                  Translates to: <code style={{ color:'#6a8aaa' }}>WHERE `aws.ec2.tag.&lt;key&gt;` = '&lt;value&gt;'</code> in NRQL.
+                  Tag your EC2 instances in the AWS console first.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Custom resources */}
+          {form.projectType==='normal' && (
+            <div style={s.field}>
+              <label style={s.label}>Other Services</label>
+              <input value={form.customResources} onChange={e => setField('customResources', e.target.value)} placeholder="e.g. Redis, Kafka" style={s.input} />
+            </div>
+          )}
+
+          {saveError && <div style={{ fontSize:12, color:'#ff4d6d', marginTop:4, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {saveError}</div>}
+        </div>
+        <div style={s.footer}>
+          <button onClick={goBack} style={s.btnSecondary} disabled={saving}>Cancel</button>
+          <button onClick={handleSubmit} style={{ ...s.btnPrimary, background:accentColor, opacity:saving?0.65:1 }} disabled={saving}>{saving?'Saving…':editInfo?'Save Changes':'Add Project'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── ProjectRow ───────────────────────────────────────────────────────────────
+
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction }) => {
   const [expanded,     setExpanded]     = useState(false);
   const [lifecycle,    setLifecycle]    = useState(null);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
-
   const ghToken = React.useContext(GhTokenContext);
 
   const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
   const infraDisabledReason = (() => {
-    if (!project.projectDirName)         return 'No project directory configured';
-    if (!ghToken)                        return 'Set GitHub token (⚙ Config) to enable';
-    if (tfLoading || hasTf === null)     return 'Checking repo for Terraform files…';
-    if (hasTf === false)                 return 'No .tf files found — add infra first';
+    if (!project.projectDirName)     return 'No project directory configured';
+    if (!ghToken)                    return 'Set GitHub token (⚙ Config) to enable';
+    if (tfLoading || hasTf === null) return 'Checking repo for Terraform files…';
+    if (hasTf === false)             return 'No .tf files found — add infra first';
     return '';
   })();
 
   useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
   const getDisabledActions = () => {
-    if (!infraReady) return ['apply', 'stop', 'start', 'terminate'];
+    if (!infraReady) return ['apply','stop','start','terminate'];
     if (actionState !== INFRA_STATES.IDLE && actionState !== INFRA_STATES.SUCCEEDED &&
         actionState !== INFRA_STATES.FAILED && actionState !== INFRA_STATES.TIMEOUT) {
-      return ['apply', 'stop', 'start', 'terminate'];
+      return ['apply','stop','start','terminate'];
     }
     if (!lifecycle) return [];
     const allowed = ALLOWED_ACTIONS[lifecycle] || [];
-    return ['apply', 'stop', 'start', 'terminate'].filter(a => !allowed.includes(a));
+    return ['apply','stop','start','terminate'].filter(a => !allowed.includes(a));
   };
 
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
@@ -1390,6 +1468,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const disabledActions = getDisabledActions();
   const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
 
+  // ── Archived ─────────────────────────────────────────────────────────────────
   if (project.deleted) return (
     <div className="project-row project-row--deleted" style={{ animationDelay:index*80+'ms' }}>
       <div className="project-row__main">
@@ -1399,6 +1478,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     </div>
   );
 
+  // ── Billing ───────────────────────────────────────────────────────────────────
   if (project.billingOnly) {
     const totalCost = billingCost ?? null;
     if (project.billingNotConfigured) return (
@@ -1422,6 +1502,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   }
 
+  // ── Empty / No monitoring ─────────────────────────────────────────────────────
   if (project.empty) return (
     <div className={'project-row project-row--clickable'+(expanded?' project-row--expanded':'')} style={{ animationDelay:index*80+'ms', cursor:'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }}
       onClick={() => setExpanded(p=>!p)}>
@@ -1441,28 +1522,44 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       {expanded && (
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
-          <InfraActionButtons
-            project={project}
-            lifecycle={lifecycle}
-            actionState={actionState}
-            activeAction={activeAction}
-            infraReady={infraReady}
-            tfLoading={tfLoading}
-            ghToken={ghToken}
-            onAction={handleInfraAction}
-          />
+          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
         </div>
       )}
     </div>
   );
 
+  // ── Terminated ────────────────────────────────────────────────────────────────
+  if (lifecycle === 'terminated') return (
+    <div className={`project-row project-row--deleted${expanded?' project-row--expanded':''}`} style={{ animationDelay:`${index*80}ms`, borderColor:'rgba(255,77,109,0.35)' }}>
+      <div className="project-row__main" onClick={() => setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
+        <div className="project-row__left">
+          <span className="status-dot status-dot--grey" />
+          <span className="project-row__name">{project.name}</span>
+          <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
+            <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
+          </span>
+        </div>
+        <div className="project-row__right">
+          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
+          <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="project-row__detail">
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
+          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
+          <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
+            All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Normal project ────────────────────────────────────────────────────────────
   const status       = loading ? 'unknown' : worstStatus(resourceStatuses.map(r=>r.status));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
-
-  const handleRowClick = useCallback(() => {
-    setExpanded(p=>!p);
-  }, []);
 
   const uptimeSummary = (() => {
     if (loading) return null;
@@ -1480,49 +1577,9 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return `₹${b.row.totalCostINR.toFixed(0)}`;
   })();
 
-  if (lifecycle === 'terminated') {
-    return (
-      <div className={`project-row project-row--deleted${expanded?' project-row--expanded':''}`} style={{ animationDelay:`${index*80}ms`, borderColor:'rgba(255,77,109,0.35)' }}>
-        <div className="project-row__main" onClick={() => setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
-          <div className="project-row__left">
-            <span className="status-dot status-dot--grey" />
-            <span className="project-row__name">{project.name}</span>
-            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
-              <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
-            </span>
-          </div>
-          <div className="project-row__right">
-            <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
-            <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
-          </div>
-        </div>
-        {expanded && (
-          <div className="project-row__detail">
-            <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
-            <InfraActionButtons
-              project={project}
-              lifecycle={lifecycle}
-              actionState={actionState}
-              activeAction={activeAction}
-              infraReady={infraReady}
-              tfLoading={tfLoading}
-              ghToken={ghToken}
-              onAction={handleInfraAction}
-            />
-            <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
-              All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
-    if (resourceStatuses.length === 0) {
-      return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
-    }
+    if (resourceStatuses.length === 0) return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
     return (
       <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
         {resourceStatuses.map((r,i) => <ExpandableResourceRow key={i} resource={r} project={project} />)}
@@ -1531,20 +1588,12 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   };
 
   return (
-    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''}${' project-row--clickable'}`} style={{ animationDelay:`${index*80}ms` }}>
-      <div className="project-row__main" onClick={handleRowClick}>
+    <div className={`project-row project-row--${isBusy?'yellow':status}${expanded?' project-row--expanded':''} project-row--clickable`} style={{ animationDelay:`${index*80}ms` }}>
+      <div className="project-row__main" onClick={() => setExpanded(p=>!p)}>
         <div className="project-row__left">
           <StatusDot status={isBusy ? 'yellow' : status} />
           <span className="project-row__name">{project.name}</span>
-
-          {!isBusy && (
-            tfLoading
-              ? <NoInfraBadge checking />
-              : !infraReady
-                ? <NoInfraBadge />
-                : null
-          )}
-
+          {!isBusy && (tfLoading ? <NoInfraBadge checking /> : !infraReady ? <NoInfraBadge /> : null)}
           {!loading && infraReady && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
           {!loading && infraReady && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
           {isBusy && (
@@ -1560,22 +1609,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {hasDashboard && <DashboardIcon onClick={e=>{ e.stopPropagation(); openDashboard(project); }} />}
         </div>
       </div>
-
       {expanded && (
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
-
-          <InfraActionButtons
-            project={project}
-            lifecycle={lifecycle}
-            actionState={actionState}
-            activeAction={activeAction}
-            infraReady={infraReady}
-            tfLoading={tfLoading}
-            ghToken={ghToken}
-            onAction={handleInfraAction}
-          />
-
+          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {hasResources && renderResourceDetail()}
         </div>
       )}
@@ -1583,12 +1620,19 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   );
 };
 
+// ─── Dashboard navigation ─────────────────────────────────────────────────────
+
 const openDashboard = (project) => {
   if (project.dashboardGuid) {
-    try { navigation.openStackedNerdlet({ id:'dashboards.detail', urlState:{ entityGuid:project.dashboardGuid, timeRange:project.billingOnly?{ begin_time:Date.now()-30*24*60*60*1000, end_time:Date.now() }:{ duration:86400000 } } }); return; } catch (_) {}
+    try {
+      navigation.openStackedNerdlet({ id:'dashboards.detail', urlState:{ entityGuid:project.dashboardGuid, timeRange:project.billingOnly?{ begin_time:Date.now()-30*24*60*60*1000, end_time:Date.now() }:{ duration:86400000 } } });
+      return;
+    } catch (_) {}
   }
   if (project.dashboardLink) window.open(project.dashboardLink, '_blank');
 };
+
+// ─── Card / grid components ───────────────────────────────────────────────────
 
 const DotsButton = ({ onClick, accentColor }) => (
   <button onClick={onClick} title="Manage projects"
@@ -1681,7 +1725,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
     <>
       {activeProjects.map((project) => {
         const i = indexOf(project), r = allResults.find(res=>res.projectIndex===i) ?? allResults[i];
-        return <ProjectRow key={project.projectDirName || project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={project.billingOnly?billingCost:null} onInfraAction={onInfraAction} />;
+        return <ProjectRow key={project.projectDirName||project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={project.billingOnly?billingCost:null} onInfraAction={onInfraAction} />;
       })}
       {archivedProjects.length > 0 && (
         <div style={{ marginTop:activeProjects.length>0?10:0 }}>
@@ -1703,10 +1747,12 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
 
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction }) => {
   const projectStatuses = provider.projects.map((p, i) => {
-    if (p.deleted) return 'deleted'; if (p.empty) return 'empty'; if (p.billingNotConfigured) return 'unknown';
-    if (p.billingOnly) return billingCostToStatus(billingCost);
+    if (p.deleted)               return 'deleted';
+    if (p.empty)                 return 'empty';
+    if (p.billingNotConfigured)  return 'unknown';
+    if (p.billingOnly)           return billingCostToStatus(billingCost);
     const r = allResults.find(res=>res.projectIndex===i) ?? allResults[i];
-    if (!r||r.loading) return 'unknown';
+    if (!r||r.loading)           return 'unknown';
     if (!r.resourceStatuses||r.resourceStatuses.length===0) return 'unknown';
     return worstStatus(r.resourceStatuses.map(rs=>rs.status));
   });
@@ -1743,11 +1789,16 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
       </div>
       <div className="cloud-card__divider" />
       <div className="cloud-card__projects">
-        <ArchivedAwareProjectList provider={provider} allResults={allResults} billingCost={billingCost} onInfraAction={onInfraAction} />
+        {provider.projects.length === 0
+          ? <div style={{ padding:'24px 0', textAlign:'center', color:'#3d4a66', fontSize:13 }}>No projects yet — click <strong style={{ color:accentColor }}>···</strong> to add one</div>
+          : <ArchivedAwareProjectList provider={provider} allResults={allResults} billingCost={billingCost} onInfraAction={onInfraAction} />
+        }
       </div>
     </>
   );
 };
+
+// ─── App shell ────────────────────────────────────────────────────────────────
 
 const EagleEyeLoader = () => (
   <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', gap:16 }}>
@@ -1782,10 +1833,8 @@ const EagleEye = () => {
           setLoadError(true);
           setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
         } else if (data?.document?.providers && Array.isArray(data.document.providers) && data.document.providers.length > 0) {
-          // FIX 2: Always load from NerdStorage when valid data exists
           setProviders(mergeAutoDiscovered(data.document.providers));
         } else {
-          // Nothing saved yet — use defaults
           setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
         }
       }).catch(() => {
@@ -1798,9 +1847,6 @@ const EagleEye = () => {
       .catch(() => {});
   }, []);
 
-  // FIX 2 + 3: Single source of truth for saving — persists to NerdStorage,
-  // then updates local state only on success. Never calls setProviders before
-  // the await resolves, so a refresh always sees the last committed write.
   const handleSave = async (newProviders) => {
     await persistProviders(newProviders);
     setProviders(newProviders);
