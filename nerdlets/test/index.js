@@ -113,16 +113,16 @@ const RESOURCE_OPTIONS = {
 // ─── GCP auto-discovery map ────────────────────────────────────────────────────
 // Maps each GCP resource type to the New Relic event table used for detection.
 const GCP_DISCOVERY_MAP = [
-  { type:'gcp_cloudrun',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true,  nrTable:'GcpRunRevisionSample'        },
-  { type:'gcp_cloudsql',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true,                      nrTable:'GcpCloudSqlSample'           },
-  { type:'gcp_bigquery',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false,                     nrTable:'GcpBigQueryDataSetSample'    },
-  { type:'gcp_gke',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true,                      nrTable:'GcpKubernetesClusterSample'  },
-  { type:'gcp_pubsub',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false,                     nrTable:'GcpPubSubTopicSample'        },
-  { type:'gcp_compute',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true,                      nrTable:'GcpVirtualMachineSample'     },
-  { type:'gcp_spanner',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true,                      nrTable:'GcpSpannerInstanceSample'    },
-  { type:'gcp_storage',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false,                     nrTable:'GcpStorageBucketSample'      },
-  { type:'gcp_functions', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false,                     nrTable:'GcpCloudFunctionsSample'     },
-  { type:'gcp_redis',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true,                      nrTable:'GcpRedisInstanceSample'      },
+    { type:'google_cloud_run_v2_service',  label:'Cloud Run',        desc:'Serverless containers — scales to zero when idle',  alwaysOn:false, scalesToZero:true  },
+    { type:'google_sql_database_instance',  label:'Cloud SQL',         desc:'Managed relational databases (MySQL, PostgreSQL)', alwaysOn:true                      },
+    { type:'google_bigquery_dataset',  label:'BigQuery',           desc:'Serverless data warehouse & analytics engine',     alwaysOn:false                     },
+    { type:'google_container_cluster',       label:'GKE',                desc:'Google Kubernetes Engine clusters',                alwaysOn:true                      },
+    { type:'google_pubsub_topic',    label:'Pub/Sub',            desc:'Managed message queues',                           alwaysOn:false                     },
+    { type:'google_compute_instance',   label:'Compute Engine',     desc:'Virtual machines (GCE)',                           alwaysOn:true                      },
+    { type:'google_spanner_instance',   label:'Spanner',            desc:'Globally distributed relational database',         alwaysOn:true                      },
+    { type:'google_storage_bucket',   label:'Cloud Storage',      desc:'Object storage buckets',                           alwaysOn:false                     },
+    { type:'google_cloudfunctions2_function', label:'Cloud Functions',    desc:'Serverless functions',                             alwaysOn:false                     },
+    { type:'google_redis_instance',     label:'Memorystore Redis',  desc:'Managed Redis instances',                          alwaysOn:true                      },
 ];
 
 // ─── EC2 project-scoped tag filter ────────────────────────────────────────────
@@ -286,16 +286,16 @@ const buildResourceQuery = (resource, project) => {
   }
 
   switch (resource.type) {
-    case 'gcp_cloudrun':   return `SELECT sum(container.BillableInstanceTime) AS billableTime, count(*) AS samples FROM GcpRunRevisionSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_cloudsql':   return `SELECT count(*) AS samples FROM GcpCloudSqlSample ${gcpFilter} SINCE 30 minutes ago`;
-    case 'gcp_bigquery':   return `SELECT count(*) AS samples FROM GcpBigQueryDataSetSample ${gcpFilter} SINCE 30 minutes ago`;
-    case 'gcp_gke':        return `SELECT count(*) AS samples FROM GcpKubernetesClusterSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_pubsub':     return `SELECT count(*) AS samples FROM GcpPubSubTopicSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_compute':    return `SELECT count(*) AS samples, average(cpu.utilization) AS cpuUtil FROM GcpVirtualMachineSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_spanner':    return `SELECT count(*) AS samples FROM GcpSpannerInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_storage':    return `SELECT count(*) AS samples FROM GcpStorageBucketSample ${gcpFilter} SINCE 1 hour ago`;
-    case 'gcp_functions':  return `SELECT count(*) AS samples, sum(executionCount) AS invocations FROM GcpCloudFunctionsSample ${gcpFilter} SINCE 5 minutes ago`;
-    case 'gcp_redis':      return `SELECT count(*) AS samples FROM GcpRedisInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_cloud_run_v2_service':   return `SELECT sum(container.BillableInstanceTime) AS billableTime, count(*) AS samples FROM GcpRunRevisionSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_sql_database_instance':   return `SELECT count(*) AS samples FROM GcpCloudSqlSample ${gcpFilter} SINCE 30 minutes ago`;
+    case 'google_bigquery_dataset':   return `SELECT count(*) AS samples FROM GcpBigQueryDataSetSample ${gcpFilter} SINCE 30 minutes ago`;
+    case 'google_container_cluster':        return `SELECT count(*) AS samples FROM GcpKubernetesClusterSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_pubsub_topic':     return `SELECT count(*) AS samples FROM GcpPubSubTopicSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_compute_instance':    return `SELECT count(*) AS samples, average(cpu.utilization) AS cpuUtil FROM GcpVirtualMachineSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_spanner_instance':    return `SELECT count(*) AS samples FROM GcpSpannerInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_storage_bucket':    return `SELECT count(*) AS samples FROM GcpStorageBucketSample ${gcpFilter} SINCE 1 hour ago`;
+    case 'google_cloudfunctions2_function':  return `SELECT count(*) AS samples, sum(executionCount) AS invocations FROM GcpCloudFunctionsSample ${gcpFilter} SINCE 5 minutes ago`;
+    case 'google_redis_instance':      return `SELECT count(*) AS samples FROM GcpRedisInstanceSample ${gcpFilter} SINCE 5 minutes ago`;
     case 'gcp_billing':    return `SELECT count(*) AS samples FROM Metric SINCE 1 hour ago LIMIT 1`;
     case 'aws_apprunner':  return `SELECT max(\`aws.apprunner.ActiveInstances\`) AS activeInstances, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' SINCE 5 minutes ago`;
     case 'aws_rds':        return `SELECT average(\`aws.rds.FreeableMemory\`) AS freeMemory, average(\`aws.rds.WriteLatency\`) AS writeLatency, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/RDS' SINCE 5 minutes ago`;
@@ -309,16 +309,16 @@ const buildResourceQuery = (resource, project) => {
 };
 
 const SERVICE_QUERIES = {
-  gcp_cloudrun:   (p) => `SELECT count(*) AS val FROM GcpRunRevisionSample WHERE projectId = '${p.gcpProjectId}' FACET serviceName SINCE 1 year ago LIMIT 100`,
-  gcp_cloudsql:   (p) => `SELECT count(*) AS val FROM GcpCloudSqlSample WHERE projectId = '${p.gcpProjectId}' FACET displayName SINCE 30 minutes ago LIMIT 20`,
-  gcp_bigquery:   (p) => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
-  gcp_gke:        (p) => `SELECT count(*) AS val FROM GcpKubernetesClusterSample WHERE projectId = '${p.gcpProjectId}' FACET clusterName SINCE 5 minutes ago LIMIT 20`,
-  gcp_pubsub:     (p) => `SELECT count(*) AS val FROM GcpPubSubTopicSample WHERE projectId = '${p.gcpProjectId}' FACET topicId SINCE 5 minutes ago LIMIT 20`,
-  gcp_compute:    (p) => `SELECT count(*) AS val FROM GcpVirtualMachineSample WHERE projectId = '${p.gcpProjectId}' FACET instanceName SINCE 5 minutes ago LIMIT 20`,
-  gcp_spanner:    (p) => `SELECT count(*) AS val FROM GcpSpannerInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
-  gcp_storage:    (p) => `SELECT count(*) AS val FROM GcpStorageBucketSample WHERE projectId = '${p.gcpProjectId}' FACET bucketName SINCE 1 hour ago LIMIT 20`,
-  gcp_functions:  (p) => `SELECT count(*) AS val FROM GcpCloudFunctionsSample WHERE projectId = '${p.gcpProjectId}' FACET functionName SINCE 5 minutes ago LIMIT 20`,
-  gcp_redis:      (p) => `SELECT count(*) AS val FROM GcpRedisInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
+  google_cloud_run_v2_service:   (p) => `SELECT count(*) AS val FROM GcpRunRevisionSample WHERE projectId = '${p.gcpProjectId}' FACET serviceName SINCE 1 year ago LIMIT 100`,
+  google_sql_database_instance:   (p) => `SELECT count(*) AS val FROM GcpCloudSqlSample WHERE projectId = '${p.gcpProjectId}' FACET displayName SINCE 30 minutes ago LIMIT 20`,
+  google_bigquery_dataset:   (p) => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
+  google_container_cluster:        (p) => `SELECT count(*) AS val FROM GcpKubernetesClusterSample WHERE projectId = '${p.gcpProjectId}' FACET clusterName SINCE 5 minutes ago LIMIT 20`,
+  google_pubsub_topic:     (p) => `SELECT count(*) AS val FROM GcpPubSubTopicSample WHERE projectId = '${p.gcpProjectId}' FACET topicId SINCE 5 minutes ago LIMIT 20`,
+  google_compute_instance:    (p) => `SELECT count(*) AS val FROM GcpVirtualMachineSample WHERE projectId = '${p.gcpProjectId}' FACET instanceName SINCE 5 minutes ago LIMIT 20`,
+  google_spanner_instance:    (p) => `SELECT count(*) AS val FROM GcpSpannerInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
+  google_storage_bucket:    (p) => `SELECT count(*) AS val FROM GcpStorageBucketSample WHERE projectId = '${p.gcpProjectId}' FACET bucketName SINCE 1 hour ago LIMIT 20`,
+  google_cloudfunctions2_function:  (p) => `SELECT count(*) AS val FROM GcpCloudFunctionsSample WHERE projectId = '${p.gcpProjectId}' FACET functionName SINCE 5 minutes ago LIMIT 20`,
+  google_redis_instance:      (p) => `SELECT count(*) AS val FROM GcpRedisInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
   aws_apprunner:  ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_rds:        ()  => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
   aws_ec2:        (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
@@ -333,13 +333,13 @@ const noData = (resource) => resource.scalesToZero ? 'green' : resource.alwaysOn
 const deriveResourceStatus = (resource, row) => {
   if (!row) return noData(resource);
   switch (resource.type) {
-    case 'gcp_cloudrun': case 'gcp_cloudsql': case 'gcp_gke': case 'gcp_pubsub':
-    case 'gcp_spanner':  case 'gcp_storage':  case 'gcp_redis':
+    case 'google_cloud_run_v2_service': case 'google_sql_database_instance': case 'google_container_cluster': case 'google_pubsub_topic':
+    case 'google_spanner_instance':  case 'google_storage_bucket':  case 'google_redis_instance':
       return (row.samples ?? 0) === 0 ? noData(resource) : 'green';
-    case 'gcp_bigquery':
-    case 'gcp_functions':
+    case 'google_bigquery_dataset':
+    case 'google_cloudfunctions2_function':
       return (row.samples ?? 0) === 0 ? 'unknown' : 'green';
-    case 'gcp_compute': {
+    case 'google_compute_instance': {
       if ((row.samples ?? 0) === 0) return resource.alwaysOn ? 'yellow' : 'unknown';
       const cpu = row.cpuUtil ?? null;
       if (cpu !== null && cpu > 0.9)  return 'red';
@@ -394,8 +394,8 @@ const deriveResourceStatus = (resource, row) => {
 const deriveResourceReason = (resource, row, status) => {
   if (status === 'green' || status === 'unknown' || !row) return null;
   switch (resource.type) {
-    case 'gcp_cloudsql':  return 'No metric samples received — DB may be stopped or unreachable';
-    case 'gcp_compute': {
+    case 'google_sql_database_instance':  return 'No metric samples received — DB may be stopped or unreachable';
+    case 'google_compute_instance': {
       if ((row.samples ?? 0) === 0) return 'No metric samples — VM may be stopped or not reporting';
       const cpu = row.cpuUtil ?? null;
       if (cpu !== null && cpu > 0.75) return `CPU usage: ${(cpu * 100).toFixed(1)}%${cpu > 0.9 ? ' (critical)' : ''}`;
@@ -435,8 +435,8 @@ const deriveResourceReason = (resource, row, status) => {
       if (cpu !== null && cpu > 75) parts.push(`CPU usage: ${cpu.toFixed(1)}%${cpu > 90 ? ' (critical)' : ''}`);
       return parts.join(' · ') || null;
     }
-    case 'gcp_cloudrun': return 'No billable instance time — all revisions may be scaled to zero';
-    case 'gcp_gke':      return 'No GKE cluster samples — cluster may be stopped or not reporting';
+    case 'google_cloud_run_v2_service': return 'No billable instance time — all revisions may be scaled to zero';
+    case 'google_container_cluster':      return 'No GKE cluster samples — cluster may be stopped or not reporting';
     case 'aws_ecs':      return 'No ECS metrics — service may be stopped or not yet deployed';
     default: return null;
   }
@@ -875,7 +875,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
             const acC=r.type.startsWith('aws')?'rgba(255,153,0,0.08)':'rgba(66,133,244,0.08)';
             const boC=r.type.startsWith('aws')?'rgba(255,153,0,0.12)':'rgba(66,133,244,0.12)';
 
-            if (r.type==='gcp_cloudrun') {
+            if (r.type==='google_cloud_run_v2_service') {
               const aq=`SELECT sum(container.BillableInstanceTime) AS billableTime FROM GcpRunRevisionSample WHERE projectId = '${project.gcpProjectId}' FACET serviceName SINCE 30 minutes ago LIMIT 100`;
               return (
                 <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
@@ -1097,7 +1097,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     const customParsed = (customResources||'').split(',').map(s=>s.trim()).filter(Boolean).map(label=>({ label, type:'custom_'+label.toLowerCase().replace(/[^a-z0-9]/g,'_'), alwaysOn:false }));
     const resources    = [...stdResources, ...customParsed];
     const project      = { ...base, resources };
-    if (selectedResources.includes('gcp_cloudrun')&&knownServices.trim())
+    if (selectedResources.includes('google_cloud_run_v2_service')&&knownServices.trim())
       project.knownServices=knownServices.split(',').map(s=>s.trim()).filter(Boolean);
     return project;
   };
@@ -1211,7 +1211,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
   );
 
   const providerOptions = RESOURCE_OPTIONS[form.providerId]||[];
-  const hasCloudRun     = form.selectedResources.includes('gcp_cloudrun');
+  const hasCloudRun     = form.selectedResources.includes('google_cloud_run_v2_service');
   const goBack          = () => { setSaveError(''); setView('list'); };
 
   return (
@@ -1580,7 +1580,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const uptimeSummary = (() => {
     if (loading) return null;
-    const cr=resourceStatuses.filter(r=>r.type==='gcp_cloudrun'&&r.row);
+    const cr=resourceStatuses.filter(r=>r.type==='google_cloud_run_v2_service'&&r.row);
     if (cr.length===0) return null;
     if (cr.every(r=>r.status==='green')) return '100%';
     if (cr.some(r=>r.status==='green'))  return 'Partial';
