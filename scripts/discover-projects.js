@@ -12,15 +12,15 @@ const SIGNAL_FILE  = '/tmp/eagle-eye-has-changes';
 
 // ─── Terraform resource map ──────────────────────────────────────────────────
 const TF_RESOURCE_MAP = {
-  google_cloud_run_service:        { label: 'Cloud Run',   type: 'gcp_cloudrun',  alwaysOn: false, scalesToZero: true },
-  google_cloud_run_v2_service:     { label: 'Cloud Run',   type: 'gcp_cloudrun',  alwaysOn: false, scalesToZero: true },
-  google_cloud_run_v2_job:         { label: 'Cloud Run',   type: 'gcp_cloudrun',  alwaysOn: false, scalesToZero: true },
-  google_sql_database_instance:    { label: 'Cloud SQL',   type: 'gcp_cloudsql',  alwaysOn: true  },
-  google_bigquery_dataset:         { label: 'BigQuery',    type: 'gcp_bigquery',  alwaysOn: false },
-  google_bigquery_table:           { label: 'BigQuery',    type: 'gcp_bigquery',  alwaysOn: false },
-  google_storage_bucket:           { label: 'GCS',         type: 'gcp_gcs',       alwaysOn: true  },
-  google_container_cluster:        { label: 'GKE',         type: 'gcp_gke',       alwaysOn: true  },
-  google_pubsub_topic:             { label: 'Pub/Sub',     type: 'gcp_pubsub',    alwaysOn: true  },
+  google_cloud_run_service:        { label: 'Cloud Run Service',        type: 'google_cloud_run_v2_service',  alwaysOn: false, scalesToZero: true },
+  google_cloud_run_v2_service:     { label: 'Cloud Run Service (v2)',   type: 'google_cloud_run_v2_service',  alwaysOn: false, scalesToZero: true },
+  google_cloud_run_v2_job:         { label: 'Cloud Run Job',            type: 'google_cloud_run_v2_job',      alwaysOn: false, scalesToZero: true },
+  google_sql_database_instance:    { label: 'Cloud SQL Instance',       type: 'google_sql_database_instance', alwaysOn: true  },
+  google_bigquery_dataset:         { label: 'BigQuery Dataset',         type: 'google_bigquery_dataset',      alwaysOn: false },
+  google_bigquery_table:           { label: 'BigQuery Table',           type: 'google_bigquery_table',        alwaysOn: false },
+  google_storage_bucket:           { label: 'Cloud Storage Bucket',     type: 'google_storage_bucket',        alwaysOn: true  },
+  google_container_cluster:        { label: 'GKE Cluster',              type: 'google_container_cluster',     alwaysOn: true  },
+  google_pubsub_topic:             { label: 'Pub/Sub Topic',            type: 'google_pubsub_topic',          alwaysOn: true  },
 
   aws_instance:                    { label: 'EC2',         type: 'aws_ec2',        alwaysOn: true },
   aws_autoscaling_group:           { label: 'EC2',         type: 'aws_ec2',        alwaysOn: true },
