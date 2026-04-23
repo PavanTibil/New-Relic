@@ -22,5 +22,11 @@
         "alwaysOn": true
       }
     ]
+  },
+  "starapp": {
+    "projectDirName": "starapp",
+    "name": "Starapp",
+    "provider": "gcp",
+    "resources": []
   }
 }
