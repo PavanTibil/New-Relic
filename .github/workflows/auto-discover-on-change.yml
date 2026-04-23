@@ -1,0 +1,159 @@
+name: Auto-discover & Redeploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'projects/**'
+      - 'nerdlets/test/index.js'
+      - 'nerdlets/test/styles.scss'
+
+permissions:
+  contents: write
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Always runs on any trigger.
+  #          Diffs projects/*/modules/ against the registry, commits back.
+  #          Signals job 3 when the registry file actually changed.
+  # ─────────────────────────────────────────────────────────────────────────
+  discover:
+    name: Sync project registry (add + remove)
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.scan.outputs.has_changes }}
+
+    steps:
+      - name: Checkout (full history for reliable git diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run discovery + cleanup script
+        id: scan
+        run: |
+          node scripts/discover-projects.js
+          if [ -f /tmp/eagle-eye-has-changes ]; then
+            echo "has_changes=true"  >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated registry
+        if: steps.scan.outputs.has_changes == 'true'
+        run: |
+          git config user.name  "Eagle Eye Bot"
+          git config user.email "eagle-eye-bot@github-actions"
+          git add nerdlets/test/auto-discovered-projects.json
+          git diff --staged --quiet || \
+            git commit -m "chore(eagle-eye): sync project registry (add/remove) [skip ci]"
+          git push
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Checks if index.js or styles.scss changed directly.
+  #          Signals job 3 so it knows to redeploy.
+  # ─────────────────────────────────────────────────────────────────────────
+  check-files:
+    name: Check if index.js or styles.scss changed
+    runs-on: ubuntu-latest
+    outputs:
+      files_changed: ${{ steps.check.outputs.files_changed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect file changes
+        id: check
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files: $CHANGED"
+          if echo "$CHANGED" | grep -qE 'nerdlets/test/(index\.js|styles\.scss)'; then
+            echo "files_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "files_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Publishes whenever job 1 found registry changes OR
+  #          job 2 detected an index.js / styles.scss edit.
+  # ─────────────────────────────────────────────────────────────────────────
+  redeploy:
+    name: Publish Nerdpack to New Relic
+    runs-on: ubuntu-latest
+    needs: [discover, check-files]
+    if: |
+      always() && !failure() && !cancelled() && (
+        needs.discover.outputs.has_changes == 'true' ||
+        needs.check-files.outputs.files_changed == 'true'
+      )
+
+    steps:
+      - name: Checkout (pick up bot commit)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bump patch version & commit package.json
+        run: |
+          git config user.name  "Eagle Eye Bot"
+          git config user.email "eagle-eye-bot@github-actions"
+          git pull --rebase origin main
+          NEW_VERSION=$(npm version patch --no-git-tag-version)
+          echo "Bumped to ${NEW_VERSION}"
+          git add package.json package-lock.json || true
+          git diff --staged --quiet || \
+            git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
+          git push
+
+      - name: Install NR1 CLI
+        run: |
+          curl -s https://cli.nr-ext.net/installer.sh | sudo bash
+          nr1 --version
+
+      - name: Install Nerdpack dependencies
+        run: npm install
+
+      - name: Configure NR1 profile
+        env:
+          NR_API_KEY:    ${{ secrets.NR_API_KEY }}
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+          NR_REGION:     ${{ secrets.NR_REGION }}
+        run: |
+          REGION="${NR_REGION:-US}"
+          nr1 profiles:add \
+            --name  eagle-eye-ci \
+            --api-key "$NR_API_KEY" \
+            --region  "$REGION"
+          nr1 profiles:default --name eagle-eye-ci
+
+      - name: Publish Nerdpack
+        run: nr1 nerdpack:publish --profile eagle-eye-ci
+
+      - name: Subscribe account to STABLE channel
+        env:
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+        run: |
+          nr1 nerdpack:subscribe \
+            --channel STABLE \
+            --profile eagle-eye-ci
+        continue-on-error: true
+
+      - name: Done
+        run: |
+          echo "✅ Nerdpack published."
+          echo "   Changes are live in Eagle Eye."
