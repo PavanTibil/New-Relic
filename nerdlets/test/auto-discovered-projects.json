@@ -11,12 +11,6 @@
       }
     ]
   },
-  "starapp": {
-    "projectDirName": "starapp",
-    "name": "Starapp",
-    "provider": "gcp",
-    "resources": []
-  },
   "test": {
     "projectDirName": "test",
     "name": "Test",
