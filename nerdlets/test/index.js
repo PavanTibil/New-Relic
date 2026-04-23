@@ -467,21 +467,20 @@ const BILLING_BUDGET_INR = 4600;
 const billingCostToStatus   = (cost) => { if (cost === null) return 'unknown'; const pct = (cost/BILLING_BUDGET_INR)*100; return pct>=70?'red':pct>=50?'yellow':'green'; };
 const estimatedCostToStatus = (est)  => { if (est  === null) return 'unknown'; const pct = (est/BILLING_BUDGET_INR)*100;  return pct>=100?'red':pct>=85?'yellow':'green'; };
 
-// ─── FIX 1: Ghost resource row — shows label, desc, and "not provisioned" badge ─
-const GhostResourceRow = ({ resource }) => (
+// ─── FIX 1 & 2: GhostResourceRow — token-aware badge ─────────────────────────
+// Shows "not provisioned" (blue) when token is set, "no infra yet" (grey) when not.
+const GhostResourceRow = ({ resource, hasToken = false }) => (
   <div style={{
     display:'flex', alignItems:'center', gap:10, padding:'7px 12px',
     borderRadius:8,
     background:'rgba(122,138,170,0.08)',
     border:'1px dashed rgba(122,138,170,0.35)',
   }}>
-    {/* Dashed circle dot */}
     <span style={{
       width:10, height:10, borderRadius:'50%', flexShrink:0,
       background:'transparent',
       border:'2px dashed #4a5a7a',
     }} />
-    {/* FIX: show desc below label */}
     <div style={{ flex:1, minWidth:0 }}>
       <span style={{ fontWeight:600, fontSize:'0.82rem', color:'#8899bb', display:'block' }}>{resource.label}</span>
       {resource.desc && (
@@ -490,17 +489,32 @@ const GhostResourceRow = ({ resource }) => (
         </span>
       )}
     </div>
-    <span style={{
-      fontSize:11, fontWeight:700,
-      color:'#5a6888',
-      background:'rgba(90,104,136,0.15)',
-      border:'1px solid rgba(90,104,136,0.3)',
-      borderRadius:100,
-      padding:'1px 8px',
-      letterSpacing:'0.3px',
-      whiteSpace:'nowrap',
-      flexShrink:0,
-    }}>not provisioned</span>
+    {/* FIX 2: badge depends on whether token is configured */}
+    {hasToken ? (
+      <span style={{
+        fontSize:11, fontWeight:700,
+        color:'#5a9aee',
+        background:'rgba(66,133,244,0.12)',
+        border:'1px solid rgba(66,133,244,0.30)',
+        borderRadius:100,
+        padding:'1px 8px',
+        letterSpacing:'0.3px',
+        whiteSpace:'nowrap',
+        flexShrink:0,
+      }}>not provisioned</span>
+    ) : (
+      <span style={{
+        fontSize:11, fontWeight:700,
+        color:'#5a6888',
+        background:'rgba(90,104,136,0.15)',
+        border:'1px solid rgba(90,104,136,0.3)',
+        borderRadius:100,
+        padding:'1px 8px',
+        letterSpacing:'0.3px',
+        whiteSpace:'nowrap',
+        flexShrink:0,
+      }}>no infra yet</span>
+    )}
   </div>
 );
 
@@ -843,7 +857,6 @@ const Ec2CountLoader = ({ project, onCounts, loaded }) => {
   );
 };
 
-// ─── FIX 2: ExpandableResourceRow — larger, clearer reason text ───────────────
 const ExpandableResourceRow = ({ resource:r, project }) => {
   const [open, setOpen] = React.useState(false);
   const [ec2Counts, setEc2Counts] = React.useState(null);
@@ -872,7 +885,6 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
               </span>
             )}
           </div>
-          {/* FIX: improved reason visibility — larger font, no opacity reduction */}
           {r.reason&&<div style={{ fontSize:'0.75rem', color:statusColor, marginTop:3, lineHeight:1.5, fontWeight:500 }}>{r.reason}</div>}
         </div>
         <span style={{ color:statusColor, fontSize:'0.75rem', fontWeight:600, flexShrink:0 }}>{statusLabel}</span>
@@ -937,7 +949,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                   {({ data:ad, loading:al }) => (
                     <NrqlQuery accountIds={[ACCOUNT_ID]} query={mq} pollInterval={60000}>
                       {({ data:md, loading:ml }) => {
-                        if (al||ml) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+                        if (al||ml) return <div style={{ padding:'4px 12px 6pb', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
                         const activeI=new Set(), impairedI=new Set();
                         (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
                         const seen=new Set(), visibleInstances=[];
@@ -1402,8 +1414,10 @@ const GcpProjectAutoLoader = ({ project, projectIndex, provider, results, onMana
   );
 };
 
-// ─── Ghost state banner ────────────────────────────────────────────────────────
+// ─── FIX 2 & 3: GhostStateBanner — token-aware, visible hint text ─────────────
 const GhostStateBanner = ({ project }) => {
+  // FIX 2: Read token from context to drive badge and hint text
+  const ghToken = React.useContext(GhTokenContext);
   const hasResources = project.resources && project.resources.length > 0;
   if (!hasResources) return null;
   return (
@@ -1419,12 +1433,17 @@ const GhostStateBanner = ({ project }) => {
       </div>
       <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
         {project.resources.map((r, i) => (
-          <GhostResourceRow key={i} resource={r} />
+          // FIX 2: pass hasToken so badge shows correctly
+          <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
         ))}
       </div>
-      <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#5a6888', fontStyle:'italic' }}>
-        <GearIcon size={11} color="#5a6888" />
-        <span>Hit <strong style={{ color:'#7ab3ff', fontStyle:'normal' }}>Apply</strong> above to provision via Terraform</span>
+      {/* FIX 3: visible white hint text; also token-aware message */}
+      <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#c8d4f0' }}>
+        <GearIcon size={11} color="#7ab3ff" />
+        {ghToken
+          ? <span>Hit <strong style={{ color:'#7ab3ff', fontStyle:'normal' }}>Apply</strong> above to provision via Terraform</span>
+          : <span>Set <strong style={{ color:'#f5a623', fontStyle:'normal' }}>GitHub token</strong> via ⚙ Config, then hit <strong style={{ color:'#7ab3ff' }}>Apply</strong> to provision</span>
+        }
       </div>
     </div>
   );
@@ -1596,8 +1615,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return `₹${b.row.totalCostINR.toFixed(0)}`;
   })();
 
-  // ─── FIX 3: Ghost state — always show ghost when lifecycle was never set ──────
-  // This prevents yellow warnings on manually-created resources and pre-Apply projects.
   const showGhostState = !lifecycle && hasResources;
 
   const renderResourceDetail = () => {
@@ -1615,7 +1632,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
     }
 
-    // Always show ghost banner when lifecycle is null (no Apply ever run from Eagle Eye)
     if (showGhostState) {
       return <GhostStateBanner project={project} />;
     }
@@ -1627,7 +1643,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   };
 
-  // Ghost state → always grey dot, never yellow
+  // FIX 1: Ghost state always gets 'unknown' dot — never bleeds yellow into the card pill
   const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
 
   return (
@@ -1639,7 +1655,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {!isBusy&&(tfLoading
             ? <NoInfraBadge checking />
             : showGhostState
-              ? <span style={{ fontSize:10, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px dashed rgba(90,104,136,0.40)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>No Infra Yet</span>
+              // FIX 2: token-aware badge on the project row header too
+              ? ghToken
+                ? <span style={{ fontSize:10, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px dashed rgba(66,133,244,0.35)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>Not Provisioned</span>
+                : <span style={{ fontSize:10, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px dashed rgba(90,104,136,0.40)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>No Infra Yet</span>
               : !infraReady
                 ? <NoInfraBadge />
                 : null
@@ -1796,15 +1815,25 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   );
 };
 
+// ─── FIX 1: ProjectsRendered — ghost-state projects don't colour the card pill ─
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction }) => {
-  const projectStatuses = provider.projects.map((p,i)=>{
-    if (p.deleted) return 'deleted'; if (p.empty) return 'empty'; if (p.billingNotConfigured) return 'unknown';
+  const projectStatuses = provider.projects.map((p, i) => {
+    if (p.deleted) return 'deleted';
+    if (p.empty) return 'empty';
+    if (p.billingNotConfigured) return 'unknown';
     if (p.billingOnly) return billingCostToStatus(billingCost);
-    const r=allResults.find(res=>res.projectIndex===i)??allResults[i];
-    if (!r||r.loading) return 'unknown';
-    if (!r.resourceStatuses||r.resourceStatuses.length===0) return 'unknown';
-    return worstStatus(r.resourceStatuses.map(rs=>rs.status));
+    const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
+    if (!r || r.loading) return 'unknown';
+    if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
+    // FIX 1: If no resource has real data (green/red), the project is in ghost/no-data
+    // state — treat as unknown so it never makes the card pill yellow/red.
+    const hasAnyRealData = r.resourceStatuses.some(
+      rs => rs.status === 'green' || rs.status === 'red'
+    );
+    if (!hasAnyRealData) return 'unknown';
+    return worstStatus(r.resourceStatuses.map(rs => rs.status));
   });
+
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
   const live        = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
