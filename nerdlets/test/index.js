@@ -4,6 +4,8 @@ import { NrqlQuery, navigation, AccountStorageMutation, AccountStorageQuery } fr
 import './styles.scss';
 
 const GhTokenContext = React.createContext('');
+// ── NEW: context that holds persisted lifecycle map and its setter ──────────────
+const LifecycleContext = React.createContext({ lifecycles: {}, setLifecycle: () => {} });
 
 let AUTO_DISCOVERED = {};
 try {
@@ -39,6 +41,8 @@ const ACCOUNT_ID         = 7782479;
 const STORAGE_COLLECTION = 'eagle-eye';
 const STORAGE_DOC_ID     = 'providers';
 const STORAGE_CONFIG_ID  = 'config';
+// ── NEW: document id for persisted lifecycle states ────────────────────────────
+const STORAGE_LIFECYCLE_ID = 'lifecycles';
 
 const GH_OWNER          = 'PavanTibil';
 const GH_REPO           = 'New-Relic';
@@ -467,8 +471,6 @@ const BILLING_BUDGET_INR = 4600;
 const billingCostToStatus   = (cost) => { if (cost === null) return 'unknown'; const pct = (cost/BILLING_BUDGET_INR)*100; return pct>=70?'red':pct>=50?'yellow':'green'; };
 const estimatedCostToStatus = (est)  => { if (est  === null) return 'unknown'; const pct = (est/BILLING_BUDGET_INR)*100;  return pct>=100?'red':pct>=85?'yellow':'green'; };
 
-// ─── FIX 1 & 2: GhostResourceRow — token-aware badge ─────────────────────────
-// Shows "not provisioned" (blue) when token is set, "no infra yet" (grey) when not.
 const GhostResourceRow = ({ resource, hasToken = false }) => (
   <div style={{
     display:'flex', alignItems:'center', gap:10, padding:'7px 12px',
@@ -489,7 +491,6 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
         </span>
       )}
     </div>
-    {/* FIX 2: badge depends on whether token is configured */}
     {hasToken ? (
       <span style={{
         fontSize:11, fontWeight:700,
@@ -1414,9 +1415,7 @@ const GcpProjectAutoLoader = ({ project, projectIndex, provider, results, onMana
   );
 };
 
-// ─── FIX 2 & 3: GhostStateBanner — token-aware, visible hint text ─────────────
 const GhostStateBanner = ({ project }) => {
-  // FIX 2: Read token from context to drive badge and hint text
   const ghToken = React.useContext(GhTokenContext);
   const hasResources = project.resources && project.resources.length > 0;
   if (!hasResources) return null;
@@ -1433,11 +1432,9 @@ const GhostStateBanner = ({ project }) => {
       </div>
       <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
         {project.resources.map((r, i) => (
-          // FIX 2: pass hasToken so badge shows correctly
           <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
         ))}
       </div>
-      {/* FIX 3: visible white hint text; also token-aware message */}
       <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#c8d4f0' }}>
         <GearIcon size={11} color="#7ab3ff" />
         {ghToken
@@ -1452,12 +1449,22 @@ const GhostStateBanner = ({ project }) => {
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction }) => {
   const [expanded,     setExpanded]     = useState(false);
-  const [lifecycle,    setLifecycle]    = useState(null);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
 
   const ghToken = React.useContext(GhTokenContext);
+
+  // ── NEW: read & write lifecycle from NerdStorage-backed context ───────────────
+  const { lifecycles, setLifecycle: persistLifecycle } = React.useContext(LifecycleContext);
+  const projectKey = project.projectDirName || project.name;
+  const lifecycle  = lifecycles[projectKey] ?? null;
+  const setLifecycle = useCallback(
+    (val) => persistLifecycle(projectKey, val),
+    [persistLifecycle, projectKey]
+  );
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
@@ -1487,7 +1494,13 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const onStatusChange=(newState)=>{ if(!cancelRef.cancelled) setActionState(newState); };
     const onComplete=(conclusion)=>{
       if(cancelRef.cancelled) return;
-      if(conclusion==='success'){setActionState(INFRA_STATES.SUCCEEDED);const next=NEXT_LIFECYCLE[action];if(next)setLifecycle(next);}
+      if(conclusion==='success'){
+        setActionState(INFRA_STATES.SUCCEEDED);
+        const next=NEXT_LIFECYCLE[action];
+        // ── NEW: persist the new lifecycle state to NerdStorage ────────────────
+        if(next) setLifecycle(next);
+        // ──────────────────────────────────────────────────────────────────────
+      }
       else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
       else setActionState(INFRA_STATES.FAILED);
       setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
@@ -1497,7 +1510,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     } else {
       setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.TIMEOUT);setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},6000);}},3000);
     }
-  },[]);
+  },[setLifecycle]);
 
   const handleInfraAction = useCallback((proj,action)=>{
     onInfraAction(proj,action,handleActionDispatched);
@@ -1643,7 +1656,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   };
 
-  // FIX 1: Ghost state always gets 'unknown' dot — never bleeds yellow into the card pill
   const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
 
   return (
@@ -1655,7 +1667,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {!isBusy&&(tfLoading
             ? <NoInfraBadge checking />
             : showGhostState
-              // FIX 2: token-aware badge on the project row header too
               ? ghToken
                 ? <span style={{ fontSize:10, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px dashed rgba(66,133,244,0.35)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>Not Provisioned</span>
                 : <span style={{ fontSize:10, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px dashed rgba(90,104,136,0.40)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>No Infra Yet</span>
@@ -1815,7 +1826,6 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   );
 };
 
-// ─── FIX 1: ProjectsRendered — ghost-state projects don't colour the card pill ─
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction }) => {
   const projectStatuses = provider.projects.map((p, i) => {
     if (p.deleted) return 'deleted';
@@ -1825,8 +1835,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
-    // FIX 1: If no resource has real data (green/red), the project is in ghost/no-data
-    // state — treat as unknown so it never makes the card pill yellow/red.
     const hasAnyRealData = r.resourceStatuses.some(
       rs => rs.status === 'green' || rs.status === 'red'
     );
@@ -1900,6 +1908,7 @@ const CloudCard = ({ provider, onManage, onInfraAction }) => {
   );
 };
 
+// ─── EagleEye root — owns lifecycle persistence ────────────────────────────────
 const EagleEye = () => {
   const [providers,    setProviders]    = useState(null);
   const [ghToken,      setGhToken]      = useState('');
@@ -1907,8 +1916,11 @@ const EagleEye = () => {
   const [showConfig,   setShowConfig]   = useState(false);
   const [loadError,    setLoadError]    = useState(false);
   const [infraConfirm, setInfraConfirm] = useState(null);
+  // ── NEW: persisted lifecycle map { [projectKey]: 'provisioned'|'stopped'|'terminated' }
+  const [lifecycles,   setLifecycles]   = useState({});
 
   useEffect(()=>{
+    // Load providers
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
         if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
@@ -1916,10 +1928,32 @@ const EagleEye = () => {
         else { setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
       }).catch(()=>{ setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
 
+    // Load GitHub token
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data })=>{ if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
       .catch(()=>{});
+
+    // ── NEW: Load persisted lifecycle states ───────────────────────────────────
+    AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_LIFECYCLE_ID })
+      .then(({ data })=>{ if (data?.document?.lifecycles) setLifecycles(data.document.lifecycles); })
+      .catch(()=>{});
   },[]);
+
+  // ── NEW: persist a single project's lifecycle to NerdStorage ──────────────────
+  const handleLifecycleChange = useCallback(async (projectKey, newLifecycle) => {
+    setLifecycles(prev => {
+      const updated = { ...prev, [projectKey]: newLifecycle };
+      // fire-and-forget write to NerdStorage
+      AccountStorageMutation.mutate({
+        accountId:  ACCOUNT_ID,
+        actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+        collection: STORAGE_COLLECTION,
+        documentId: STORAGE_LIFECYCLE_ID,
+        document:   { lifecycles: updated },
+      }).catch(err => console.error('[Eagle Eye] lifecycle save failed:', err));
+      return updated;
+    });
+  }, []);
 
   const handleSave = async (newProviders) => {
     await persistProviders(newProviders);
@@ -1937,55 +1971,58 @@ const EagleEye = () => {
   const handleInfraAction=(project,action,onDispatched)=>{ setInfraConfirm({ project, action, onDispatched }); };
 
   return (
-    <GhTokenContext.Provider value={ghToken}>
-      <div className="eagle-eye">
-        <div className="bg-orb bg-orb--blue" />
-        <div className="bg-orb bg-orb--orange" />
-        <div className="bg-orb bg-orb--green" />
+    // ── NEW: wrap both contexts so every ProjectRow can read/write lifecycles ──
+    <LifecycleContext.Provider value={{ lifecycles, setLifecycle: handleLifecycleChange }}>
+      <GhTokenContext.Provider value={ghToken}>
+        <div className="eagle-eye">
+          <div className="bg-orb bg-orb--blue" />
+          <div className="bg-orb bg-orb--orange" />
+          <div className="bg-orb bg-orb--green" />
 
-        <header className="ee-header">
-          <div className="ee-header__eyebrow">Infrastructure Monitoring</div>
-          <h1 className="ee-header__title">
-            <span className="ee-header__title-eagle">Eagle</span>
-            <span className="ee-header__title-eye"> Eye</span>
-          </h1>
-          <div className="ee-header__pulse-bar">
-            <span className="ee-header__pulse-dot" />
-            <span className="ee-header__pulse-label">Live · auto-refreshes every 60s</span>
-          </div>
-          <div style={{ marginTop:10 }}>
-            <ConfigButton hasToken={!!ghToken} onClick={()=>setShowConfig(true)} />
-          </div>
-          {loadError&&<div style={{ fontSize:11, color:'#f5a623', marginTop:8 }}>⚠ Could not connect to NerdStorage — showing defaults. Changes will not persist.</div>}
-        </header>
+          <header className="ee-header">
+            <div className="ee-header__eyebrow">Infrastructure Monitoring</div>
+            <h1 className="ee-header__title">
+              <span className="ee-header__title-eagle">Eagle</span>
+              <span className="ee-header__title-eye"> Eye</span>
+            </h1>
+            <div className="ee-header__pulse-bar">
+              <span className="ee-header__pulse-dot" />
+              <span className="ee-header__pulse-label">Live · auto-refreshes every 60s</span>
+            </div>
+            <div style={{ marginTop:10 }}>
+              <ConfigButton hasToken={!!ghToken} onClick={()=>setShowConfig(true)} />
+            </div>
+            {loadError&&<div style={{ fontSize:11, color:'#f5a623', marginTop:8 }}>⚠ Could not connect to NerdStorage — showing defaults. Changes will not persist.</div>}
+          </header>
 
-        <div className="ee-grid">
-          {providers.map(provider=>(
-            <CloudCard key={provider.id} provider={provider}
-              onManage={(healthMap)=>setShowModal({ providerId:provider.id, projectHealthMap:healthMap })}
-              onInfraAction={handleInfraAction}
+          <div className="ee-grid">
+            {providers.map(provider=>(
+              <CloudCard key={provider.id} provider={provider}
+                onManage={(healthMap)=>setShowModal({ providerId:provider.id, projectHealthMap:healthMap })}
+                onInfraAction={handleInfraAction}
+              />
+            ))}
+          </div>
+
+          <footer className="ee-footer">
+            <span>Click any project to expand health details · click the grid icon to open its dashboard · click ··· for infrastructure actions</span>
+          </footer>
+
+          {showModal&&(
+            <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={()=>setShowModal(null)} />
+          )}
+          {showConfig&&(
+            <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={()=>setShowConfig(false)} />
+          )}
+          {infraConfirm&&(
+            <InfraConfirmModal project={infraConfirm.project} action={infraConfirm.action} ghToken={ghToken}
+              onConfirm={(dispatchTime)=>{ infraConfirm.onDispatched?.(infraConfirm.action,ghToken,dispatchTime); setInfraConfirm(null); }}
+              onCancel={()=>setInfraConfirm(null)}
             />
-          ))}
+          )}
         </div>
-
-        <footer className="ee-footer">
-          <span>Click any project to expand health details · click the grid icon to open its dashboard · click ··· for infrastructure actions</span>
-        </footer>
-
-        {showModal&&(
-          <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={()=>setShowModal(null)} />
-        )}
-        {showConfig&&(
-          <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={()=>setShowConfig(false)} />
-        )}
-        {infraConfirm&&(
-          <InfraConfirmModal project={infraConfirm.project} action={infraConfirm.action} ghToken={ghToken}
-            onConfirm={(dispatchTime)=>{ infraConfirm.onDispatched?.(infraConfirm.action,ghToken,dispatchTime); setInfraConfirm(null); }}
-            onCancel={()=>setInfraConfirm(null)}
-          />
-        )}
-      </div>
-    </GhTokenContext.Provider>
+      </GhTokenContext.Provider>
+    </LifecycleContext.Provider>
   );
 };
 
