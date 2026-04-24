@@ -137,6 +137,12 @@ const ec2ProjectFilter = (project) => {
 // mergeAutoDiscovered runs on load, not on save. This way user changes
 // (like empty:true) are stored faithfully and not overwritten by auto-discovery.
 const persistProviders = async (newProviders) => {
+  console.log('[Eagle Eye] SAVING to NerdStorage:', JSON.stringify(
+    newProviders.map(p => ({
+      id: p.id,
+      projects: p.projects?.map(j => ({ name: j.name, dirName: j.projectDirName, empty: j.empty }))
+    }))
+  ));
   const { error } = await AccountStorageMutation.mutate({
     accountId:  ACCOUNT_ID,
     actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
@@ -144,6 +150,7 @@ const persistProviders = async (newProviders) => {
     documentId: STORAGE_DOC_ID,
     document:   { providers: newProviders },
   });
+  console.log('[Eagle Eye] Save result — error:', JSON.stringify(error));
   if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
   return newProviders;
 };
@@ -1925,6 +1932,7 @@ const EagleEye = () => {
     // Load providers — debug log shows exactly what NerdStorage returns
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
+        console.log('[Eagle Eye] RAW NerdStorage response:', JSON.stringify({ data, error }));
         console.log('[Eagle Eye] NerdStorage providers loaded:', JSON.stringify(
           data?.document?.providers?.map(p => ({
             id: p.id,
