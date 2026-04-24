@@ -22,13 +22,12 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      # 1. Input Validation
       - name: Validate Input
         run: |
           VALID_ACTIONS="apply destroy start stop"
           ACTION="${{ github.event.inputs.action }}"
           if ! echo "$VALID_ACTIONS" | grep -qw "$ACTION"; then
-            echo "❌ Invalid action: '$ACTION'. Valid options: apply | destroy | start | stop"
+            echo "❌ Invalid action: '$ACTION'."
             exit 1
           fi
           echo "✅ Action: $ACTION  |  Project: ${{ github.event.inputs.project }}"
@@ -44,15 +43,11 @@ jobs:
           fi
           echo "✅ Project path confirmed"
 
-      # 2. SANITIZE PROJECT NAME (Fixes the Forward Slash Error)
       - name: Create Safe Project Name
         run: |
-          # Replaces all '/' with '-' so 'projects/Demo' becomes 'projects-Demo'
           SAFE_NAME=$(echo "${{ github.event.inputs.project }}" | sed 's/\//-/g')
           echo "SAFE_PROJECT_NAME=$SAFE_NAME" >> $GITHUB_ENV
-          echo "✅ Sanitized artifact name: tfstate-$SAFE_NAME"
 
-      # 3. Restore previous state + resource map from last run
       - name: Download Terraform State from Previous Runs
         uses: actions/github-script@v7
         env:
@@ -60,32 +55,21 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const artifacts = await github.rest.actions.listArtifactsForRepo({
-              owner,
-              repo,
-            });
-            
+            const artifacts = await github.rest.actions.listArtifactsForRepo({ owner, repo });
             const artifactName = `tfstate-${process.env.SAFE_PROJECT_NAME}`;
-            const filtered = artifacts.data.artifacts
-              .filter(a => a.name === artifactName);
-
+            const filtered = artifacts.data.artifacts.filter(a => a.name === artifactName);
             if (filtered.length === 0) {
-              console.log(`ℹ️ No previous state found for ${artifactName} — fresh run.`);
+              console.log(`ℹ️ No previous state found — fresh run.`);
               return;
             }
-
             const latest = filtered.sort((a, b) =>
               new Date(b.created_at) - new Date(a.created_at)
             )[0];
-
-            console.log(`⬇️ Downloading artifact: ${latest.name} (id ${latest.id})`);
             const download = await github.rest.actions.downloadArtifact({
-              owner,
-              repo,
+              owner, repo,
               artifact_id: latest.id,
               archive_format: 'zip',
             });
-
             const fs = require('fs');
             fs.writeFileSync('artifact.zip', Buffer.from(download.data));
 
@@ -93,84 +77,91 @@ jobs:
         run: |
           if [ -f artifact.zip ]; then
             unzip -o artifact.zip -d "${{ github.event.inputs.project }}"
-            echo "✅ State and resource map extracted"
+            echo "✅ State extracted"
           else
             echo "ℹ️ No artifact to extract"
           fi
 
-      # 4. AWS credentials
+      # ── Detect which cloud providers are used in this project ─────────────
+      - name: Detect Cloud Providers
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          HAS_AWS=false
+          HAS_GCP=false
+
+          # Check Terraform files for provider blocks
+          if grep -rl "provider \"aws\"" . --include="*.tf" > /dev/null 2>&1; then
+            HAS_AWS=true
+          fi
+          if grep -rl "provider \"google\"" . --include="*.tf" > /dev/null 2>&1; then
+            HAS_GCP=true
+          fi
+
+          # Also check tf_resources.json if it exists
+          if [ -f tf_resources.json ]; then
+            AWS_KEYS=$(jq '[
+              .ec2_instance_ids,
+              .apprunner_service_arns,
+              .rds_instance_ids,
+              .rds_cluster_ids,
+              .ecs_service_arns,
+              .eks_cluster_names,
+              .asg_names,
+              .lambda_arns,
+              .s3_buckets,
+              .cloudfront_distribution_ids,
+              .alb_arns
+            ] | map(. // []) | flatten | length' tf_resources.json 2>/dev/null || echo 0)
+            GCP_KEYS=$(jq '[
+              .gce_instances,
+              .cloud_run_services,
+              .gke_clusters,
+              .cloud_sql_instances,
+              .cloud_functions
+            ] | map(. // []) | flatten | length' tf_resources.json 2>/dev/null || echo 0)
+            [ "$AWS_KEYS" -gt 0 ] && HAS_AWS=true
+            [ "$GCP_KEYS" -gt 0 ] && HAS_GCP=true
+          fi
+
+          echo "HAS_AWS=$HAS_AWS" >> $GITHUB_ENV
+          echo "HAS_GCP=$HAS_GCP" >> $GITHUB_ENV
+          echo "✅ AWS: $HAS_AWS | GCP: $HAS_GCP"
+
+      # ── AWS credentials (only if AWS resources exist) ─────────────────────
       - name: Configure AWS
+        if: ${{ env.HAS_AWS == 'true' }}
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      # 5a. START — bring EC2 instances back online
-      - name: Start EC2 Instances
-        if: ${{ github.event.inputs.action == 'start' }}
-        working-directory: ${{ github.event.inputs.project }}
-        run: |
-          RESOURCE_FILE="tf_resources.json"
-          if [ ! -f "$RESOURCE_FILE" ]; then
-            echo "❌ $RESOURCE_FILE not found. Run 'apply' first to build the resource map."
-            exit 1
-          fi
+      # ── GCP credentials (only if GCP resources exist) ─────────────────────
+      - name: Configure GCP
+        if: ${{ env.HAS_GCP == 'true' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
-          INSTANCE_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
+      - name: Setup gcloud CLI
+        if: ${{ env.HAS_GCP == 'true' }}
+        uses: google-github-actions/setup-gcloud@v2
 
-          if [ -z "$INSTANCE_IDS" ]; then
-            echo "⚠️ No EC2 instances found in resource map."
-            exit 0
-          fi
-
-          echo "🚀 Starting instances: $INSTANCE_IDS"
-          aws ec2 start-instances --instance-ids $INSTANCE_IDS
-          aws ec2 wait instance-running --instance-ids $INSTANCE_IDS
-
-          echo "✅ All instances running"
-          aws ec2 describe-instances \
-            --instance-ids $INSTANCE_IDS \
-            --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name,PublicIP:PublicIpAddress}' \
-            --output table
-
-      # 5b. STOP — gracefully stop EC2 instances
-      - name: Stop EC2 Instances
-        if: ${{ github.event.inputs.action == 'stop' }}
-        working-directory: ${{ github.event.inputs.project }}
-        run: |
-          RESOURCE_FILE="tf_resources.json"
-          if [ ! -f "$RESOURCE_FILE" ]; then
-            echo "❌ $RESOURCE_FILE not found. Run 'apply' first to build the resource map."
-            exit 1
-          fi
-
-          INSTANCE_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
-
-          if [ -z "$INSTANCE_IDS" ]; then
-            echo "⚠️ No EC2 instances found in resource map."
-            exit 0
-          fi
-
-          echo "🛑 Stopping instances: $INSTANCE_IDS"
-          aws ec2 stop-instances --instance-ids $INSTANCE_IDS
-          aws ec2 wait instance-stopped --instance-ids $INSTANCE_IDS
-
-          echo "✅ All instances stopped"
-          aws ec2 describe-instances \
-            --instance-ids $INSTANCE_IDS \
-            --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name}' \
-            --output table
-
-      # 6. Terraform steps (apply / destroy only)
+      # ══════════════════════════════════════════════════════════════════════
+      # APPLY
+      # ══════════════════════════════════════════════════════════════════════
       - name: Setup Terraform
-        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
+        if: >
+          github.event.inputs.action == 'apply' ||
+          github.event.inputs.action == 'destroy'
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_wrapper: false
 
       - name: Terraform Init
-        if: ${{ github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy' }}
+        if: >
+          github.event.inputs.action == 'apply' ||
+          github.event.inputs.action == 'destroy'
         working-directory: ${{ github.event.inputs.project }}
         run: terraform init -input=false
 
@@ -179,55 +170,827 @@ jobs:
         working-directory: ${{ github.event.inputs.project }}
         run: terraform apply -auto-approve -input=false
 
-      # 7. AUTO-DETECT RESOURCES after apply
       - name: Detect and Save Resource IDs
         if: ${{ github.event.inputs.action == 'apply' }}
         working-directory: ${{ github.event.inputs.project }}
         run: |
-          echo "🔍 Scanning Terraform state..."
+          echo "🔍 Scanning Terraform state for all resources..."
           terraform show -json > tf_show.json
 
           JQ_WALK='[.. | objects | select(.type? != null and .values? != null)]'
 
-          EC2_IDS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_instance\")) | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
-          ECS_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_ecs_service\")) | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
-          RDS_IDS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_db_instance\")) | .[].values.id" tf_show.json 2>/dev/null | sort -u || true)
-          LAMBDA_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_lambda_function\")) | .[].values.arn" tf_show.json 2>/dev/null | sort -u || true)
-          ALB_ARNS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_lb\" or .type == \"aws_alb\")) | .[].values.arn" tf_show.json 2>/dev/null | sort -u || true)
-          S3_BUCKETS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_s3_bucket\")) | .[].values.bucket" tf_show.json 2>/dev/null | sort -u || true)
-          EKS_CLUSTERS=$(jq -r "$JQ_WALK | map(select(.type == \"aws_eks_cluster\")) | .[].values.name" tf_show.json 2>/dev/null | sort -u || true)
-          ASG_NAMES=$(jq -r "$JQ_WALK | map(select(.type == \"aws_autoscaling_group\")) | .[].values.name" tf_show.json 2>/dev/null | sort -u || true)
+          # ── AWS Resources ─────────────────────────────────────────────────
+          EC2_IDS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_instance\")) | .[].values.id" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          APPRUNNER_ARNS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_apprunner_service\")) | .[].values.arn" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          RDS_INSTANCE_IDS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_db_instance\")) | .[].values.id" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          RDS_CLUSTER_IDS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_rds_cluster\")) | .[].values.id" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          ECS_SERVICE_ARNS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_ecs_service\")) | .[].values.id" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          EKS_CLUSTER_NAMES=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_eks_cluster\")) | .[].values.name" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          EKS_NODEGROUPS=$(jq -c \
+            "$JQ_WALK | map(select(.type == \"aws_eks_node_group\")) | \
+            group_by(.values.cluster_name) | \
+            map({ (.[0].values.cluster_name): map(.values.node_group_name) }) | \
+            add // {}" \
+            tf_show.json 2>/dev/null || echo "{}")
+
+          ASG_NAMES=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_autoscaling_group\")) | .[].values.name" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          LAMBDA_ARNS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_lambda_function\")) | .[].values.arn" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          S3_BUCKETS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_s3_bucket\")) | .[].values.bucket" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          CF_IDS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_cloudfront_distribution\")) | .[].values.id" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          ALB_ARNS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"aws_lb\" or .type == \"aws_alb\")) | .[].values.arn" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # ── GCP Resources ─────────────────────────────────────────────────
+          # Compute Engine VMs — stored as "zone/instance-name"
+          GCE_INSTANCES=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_compute_instance\")) | \
+            .[].values | \"\(.zone)/\(.name)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Cloud Run services — stored as "region/service-name/project"
+          CLOUD_RUN=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_cloud_run_v2_service\" or .type == \"google_cloud_run_service\")) | \
+            .[].values | \"\(.location)/\(.name)/\(.project)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # GKE clusters — stored as "location/cluster-name/project"
+          GKE_CLUSTERS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_container_cluster\")) | \
+            .[].values | \"\(.location)/\(.name)/\(.project)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Cloud SQL instances — stored as "name/project"
+          CLOUD_SQL=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_sql_database_instance\")) | \
+            .[].values | \"\(.name)/\(.project)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Cloud Functions (v1 + v2)
+          CLOUD_FUNCTIONS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_cloudfunctions_function\" or .type == \"google_cloudfunctions2_function\")) | \
+            .[].values | \"\(.region)/\(.name)/\(.project)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Pub/Sub topics — always on, just track
+          PUBSUB_TOPICS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_pubsub_topic\")) | .[].values.name" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Cloud Storage buckets — always on, just track
+          GCS_BUCKETS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_storage_bucket\")) | .[].values.name" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Spanner instances — always on, just track
+          SPANNER=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_spanner_instance\")) | .[].values.name" \
+            tf_show.json 2>/dev/null | sort -u || true)
+
+          # Memorystore Redis — always on, just track
+          REDIS=$(jq -r \
+            "$JQ_WALK | map(select(.type == \"google_redis_instance\")) | \
+            .[].values | \"\(.region)/\(.name)/\(.project)\"" \
+            tf_show.json 2>/dev/null | sort -u || true)
 
           to_array() { echo "$1" | jq -R . | jq -s 'map(select(length > 0))'; }
 
           jq -n \
-            --argjson ec2  "$(to_array "$EC2_IDS")"     \
-            --argjson ecs  "$(to_array "$ECS_ARNS")"    \
-            --argjson rds  "$(to_array "$RDS_IDS")"     \
-            --argjson lmb  "$(to_array "$LAMBDA_ARNS")" \
-            --argjson alb  "$(to_array "$ALB_ARNS")"    \
-            --argjson s3   "$(to_array "$S3_BUCKETS")"  \
-            --argjson eks  "$(to_array "$EKS_CLUSTERS")"\
-            --argjson asg  "$(to_array "$ASG_NAMES")"   \
+            --argjson ec2             "$(to_array "$EC2_IDS")"           \
+            --argjson apprunner       "$(to_array "$APPRUNNER_ARNS")"    \
+            --argjson rds             "$(to_array "$RDS_INSTANCE_IDS")"  \
+            --argjson aurora          "$(to_array "$RDS_CLUSTER_IDS")"   \
+            --argjson ecs             "$(to_array "$ECS_SERVICE_ARNS")"  \
+            --argjson eks             "$(to_array "$EKS_CLUSTER_NAMES")" \
+            --argjson eks_ngs         "$EKS_NODEGROUPS"                  \
+            --argjson asg             "$(to_array "$ASG_NAMES")"         \
+            --argjson lambda          "$(to_array "$LAMBDA_ARNS")"       \
+            --argjson s3              "$(to_array "$S3_BUCKETS")"        \
+            --argjson cf              "$(to_array "$CF_IDS")"            \
+            --argjson alb             "$(to_array "$ALB_ARNS")"          \
+            --argjson gce             "$(to_array "$GCE_INSTANCES")"     \
+            --argjson cloud_run       "$(to_array "$CLOUD_RUN")"         \
+            --argjson gke             "$(to_array "$GKE_CLUSTERS")"      \
+            --argjson cloud_sql       "$(to_array "$CLOUD_SQL")"         \
+            --argjson cloud_functions "$(to_array "$CLOUD_FUNCTIONS")"   \
+            --argjson pubsub          "$(to_array "$PUBSUB_TOPICS")"     \
+            --argjson gcs             "$(to_array "$GCS_BUCKETS")"       \
+            --argjson spanner         "$(to_array "$SPANNER")"           \
+            --argjson redis           "$(to_array "$REDIS")"             \
             '{
-              ec2_instance_ids: $ec2,
-              ecs_service_arns: $ecs,
-              rds_identifiers:  $rds,
-              lambda_arns:      $lmb,
-              alb_arns:         $alb,
-              s3_buckets:       $s3,
-              eks_clusters:     $eks,
-              asg_names:        $asg
+              ec2_instance_ids:            $ec2,
+              apprunner_service_arns:      $apprunner,
+              rds_instance_ids:            $rds,
+              rds_cluster_ids:             $aurora,
+              ecs_service_arns:            $ecs,
+              eks_cluster_names:           $eks,
+              eks_nodegroups:              $eks_ngs,
+              asg_names:                   $asg,
+              lambda_arns:                 $lambda,
+              s3_buckets:                  $s3,
+              cloudfront_distribution_ids: $cf,
+              alb_arns:                    $alb,
+              gce_instances:               $gce,
+              cloud_run_services:          $cloud_run,
+              gke_clusters:                $gke,
+              cloud_sql_instances:         $cloud_sql,
+              cloud_functions:             $cloud_functions,
+              pubsub_topics:               $pubsub,
+              gcs_buckets:                 $gcs,
+              spanner_instances:           $spanner,
+              redis_instances:             $redis,
+              ecs_desired_counts:          {},
+              asg_original_configs:        {},
+              eks_nodegroup_configs:       {},
+              gke_nodepool_configs:        {}
             }' > tf_resources.json
 
+          echo "✅ Resource map saved:"
+          cat tf_resources.json
           rm -f tf_show.json
 
+      # ══════════════════════════════════════════════════════════════════════
+      # DESTROY
+      # ══════════════════════════════════════════════════════════════════════
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}
         run: terraform destroy -auto-approve -input=false
 
-      # 8. Persist state using the SANITIZED NAME
+      # ══════════════════════════════════════════════════════════════════════
+      # START
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Start Resources
+        if: ${{ github.event.inputs.action == 'start' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          RESOURCE_FILE="tf_resources.json"
+          if [ ! -f "$RESOURCE_FILE" ]; then
+            echo "❌ $RESOURCE_FILE not found. Run 'apply' first."
+            exit 1
+          fi
+
+          echo "📋 Resource map:"
+          cat "$RESOURCE_FILE"
+          echo ""
+
+          # ════════════════════════════════════════════════════════════════
+          # AWS
+          # ════════════════════════════════════════════════════════════════
+
+          # ── EC2 ──────────────────────────────────────────────────────────
+          EC2_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
+          if [ -n "$EC2_IDS" ]; then
+            echo "▶️  Starting EC2 instances: $EC2_IDS"
+            aws ec2 start-instances --instance-ids $EC2_IDS
+            aws ec2 wait instance-running --instance-ids $EC2_IDS
+            echo "✅ EC2 instances running"
+            aws ec2 describe-instances \
+              --instance-ids $EC2_IDS \
+              --query 'Reservations[*].Instances[*].{ID:InstanceId,State:State.Name,IP:PublicIpAddress}' \
+              --output table
+          else
+            echo "ℹ️  No EC2 instances."
+          fi
+
+          # ── App Runner ───────────────────────────────────────────────────
+          while IFS= read -r ARN; do
+            [ -z "$ARN" ] && continue
+            NAME=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query 'Service.ServiceName' --output text)
+            STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query 'Service.Status' --output text)
+            echo "🔍 AppRunner [$NAME] — $STATUS"
+            if [ "$STATUS" = "PAUSED" ]; then
+              echo "▶️  Resuming $NAME..."
+              aws apprunner resume-service --service-arn "$ARN"
+              for i in $(seq 1 30); do
+                STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+                  --query 'Service.Status' --output text)
+                echo "  attempt $i/30 — $STATUS"
+                [ "$STATUS" = "RUNNING" ] && break
+                sleep 10
+              done
+              echo "✅ $NAME running"
+            elif [ "$STATUS" = "RUNNING" ]; then
+              echo "✅ $NAME already running"
+            else
+              echo "⚠️  $NAME in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.apprunner_service_arns // [] | .[]' "$RESOURCE_FILE")
+
+          # ── RDS Instances ────────────────────────────────────────────────
+          while IFS= read -r DB; do
+            [ -z "$DB" ] && continue
+            STATUS=$(aws rds describe-db-instances \
+              --db-instance-identifier "$DB" \
+              --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "unknown")
+            echo "🔍 RDS [$DB] — $STATUS"
+            if [ "$STATUS" = "stopped" ]; then
+              echo "▶️  Starting RDS $DB..."
+              aws rds start-db-instance --db-instance-identifier "$DB"
+              for i in $(seq 1 90); do
+                STATUS=$(aws rds describe-db-instances \
+                  --db-instance-identifier "$DB" \
+                  --query 'DBInstances[0].DBInstanceStatus' --output text)
+                echo "  attempt $i/90 — $STATUS"
+                [ "$STATUS" = "available" ] && break
+                sleep 10
+              done
+              echo "✅ RDS $DB available"
+            elif [ "$STATUS" = "available" ]; then
+              echo "✅ RDS $DB already available"
+            else
+              echo "⚠️  RDS $DB in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.rds_instance_ids // [] | .[]' "$RESOURCE_FILE")
+
+          # ── RDS Aurora Clusters ──────────────────────────────────────────
+          while IFS= read -r CLUSTER; do
+            [ -z "$CLUSTER" ] && continue
+            STATUS=$(aws rds describe-db-clusters \
+              --db-cluster-identifier "$CLUSTER" \
+              --query 'DBClusters[0].Status' --output text 2>/dev/null || echo "unknown")
+            echo "🔍 Aurora [$CLUSTER] — $STATUS"
+            if [ "$STATUS" = "stopped" ]; then
+              echo "▶️  Starting Aurora $CLUSTER..."
+              aws rds start-db-cluster --db-cluster-identifier "$CLUSTER"
+              for i in $(seq 1 90); do
+                STATUS=$(aws rds describe-db-clusters \
+                  --db-cluster-identifier "$CLUSTER" \
+                  --query 'DBClusters[0].Status' --output text)
+                echo "  attempt $i/90 — $STATUS"
+                [ "$STATUS" = "available" ] && break
+                sleep 10
+              done
+              echo "✅ Aurora $CLUSTER available"
+            elif [ "$STATUS" = "available" ]; then
+              echo "✅ Aurora $CLUSTER already available"
+            else
+              echo "⚠️  Aurora $CLUSTER in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.rds_cluster_ids // [] | .[]' "$RESOURCE_FILE")
+
+          # ── ECS Services ─────────────────────────────────────────────────
+          while IFS= read -r SVC_ARN; do
+            [ -z "$SVC_ARN" ] && continue
+            CLUSTER=$(echo "$SVC_ARN" | cut -d'/' -f2)
+            SERVICE=$(echo "$SVC_ARN" | cut -d'/' -f3)
+            SAVED_COUNT=$(jq -r \
+              --arg svc "$SERVICE" \
+              '.ecs_desired_counts[$svc] // 1' "$RESOURCE_FILE")
+            echo "▶️  ECS [$SERVICE] — restoring desired count to $SAVED_COUNT"
+            aws ecs update-service \
+              --cluster "$CLUSTER" \
+              --service "$SERVICE" \
+              --desired-count "$SAVED_COUNT" > /dev/null
+            echo "✅ ECS $SERVICE scaled to $SAVED_COUNT"
+          done < <(jq -r '.ecs_service_arns // [] | .[]' "$RESOURCE_FILE")
+
+          # ── EKS Node Groups ──────────────────────────────────────────────
+          while IFS= read -r CLUSTER_NAME; do
+            [ -z "$CLUSTER_NAME" ] && continue
+            while IFS= read -r NG; do
+              [ -z "$NG" ] && continue
+              SAVED=$(jq -r \
+                --arg c "$CLUSTER_NAME" --arg ng "$NG" \
+                '.eks_nodegroup_configs[$c][$ng] // {"min":1,"max":2,"desired":1}' \
+                "$RESOURCE_FILE")
+              MIN=$(echo "$SAVED"     | jq -r '.min')
+              MAX=$(echo "$SAVED"     | jq -r '.max')
+              DESIRED=$(echo "$SAVED" | jq -r '.desired')
+              echo "▶️  EKS [$CLUSTER_NAME/$NG] — restoring min=$MIN max=$MAX desired=$DESIRED"
+              aws eks update-nodegroup-config \
+                --cluster-name "$CLUSTER_NAME" \
+                --nodegroup-name "$NG" \
+                --scaling-config "minSize=$MIN,maxSize=$MAX,desiredSize=$DESIRED"
+              echo "✅ EKS $CLUSTER_NAME/$NG restored"
+            done < <(jq -r \
+              --arg c "$CLUSTER_NAME" \
+              '.eks_nodegroups[$c] // [] | .[]' "$RESOURCE_FILE")
+          done < <(jq -r '.eks_cluster_names // [] | .[]' "$RESOURCE_FILE")
+
+          # ── ASG ──────────────────────────────────────────────────────────
+          while IFS= read -r ASG; do
+            [ -z "$ASG" ] && continue
+            SAVED=$(jq -r \
+              --arg asg "$ASG" \
+              '.asg_original_configs[$asg] // {"min":1,"max":2,"desired":1}' \
+              "$RESOURCE_FILE")
+            MIN=$(echo "$SAVED"     | jq -r '.min')
+            MAX=$(echo "$SAVED"     | jq -r '.max')
+            DESIRED=$(echo "$SAVED" | jq -r '.desired')
+            echo "▶️  ASG [$ASG] — restoring min=$MIN max=$MAX desired=$DESIRED"
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG" \
+              --min-size "$MIN" --max-size "$MAX" --desired-capacity "$DESIRED"
+            echo "✅ ASG $ASG restored"
+          done < <(jq -r '.asg_names // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Lambda / S3 / CloudFront / ALB — always on ───────────────────
+          for KEY in lambda_arns s3_buckets cloudfront_distribution_ids alb_arns; do
+            COUNT=$(jq ".[\"$KEY\"] // [] | length" "$RESOURCE_FILE")
+            [ "$COUNT" -gt 0 ] && echo "ℹ️  $KEY ($COUNT) — always-on, no start needed."
+          done
+
+          # ════════════════════════════════════════════════════════════════
+          # GCP
+          # ════════════════════════════════════════════════════════════════
+
+          # ── GCE Instances ─────────────────────────────────────────────────
+          # Format stored: "zone/instance-name"
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            ZONE=$(echo "$ENTRY"     | cut -d'/' -f1)
+            INSTANCE=$(echo "$ENTRY" | cut -d'/' -f2)
+            STATUS=$(gcloud compute instances describe "$INSTANCE" \
+              --zone "$ZONE" \
+              --format='value(status)' 2>/dev/null || echo "UNKNOWN")
+            echo "🔍 GCE [$INSTANCE] zone=$ZONE — $STATUS"
+            if [ "$STATUS" = "TERMINATED" ] || [ "$STATUS" = "STOPPED" ]; then
+              echo "▶️  Starting GCE $INSTANCE..."
+              gcloud compute instances start "$INSTANCE" --zone "$ZONE" --quiet
+              # Wait for RUNNING
+              for i in $(seq 1 30); do
+                STATUS=$(gcloud compute instances describe "$INSTANCE" \
+                  --zone "$ZONE" --format='value(status)')
+                echo "  attempt $i/30 — $STATUS"
+                [ "$STATUS" = "RUNNING" ] && break
+                sleep 10
+              done
+              echo "✅ GCE $INSTANCE running"
+            elif [ "$STATUS" = "RUNNING" ]; then
+              echo "✅ GCE $INSTANCE already running"
+            else
+              echo "⚠️  GCE $INSTANCE in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.gce_instances // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Cloud SQL ─────────────────────────────────────────────────────
+          # Format stored: "name/project"
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            NAME=$(echo "$ENTRY"    | cut -d'/' -f1)
+            PROJECT=$(echo "$ENTRY" | cut -d'/' -f2)
+            STATUS=$(gcloud sql instances describe "$NAME" \
+              --project "$PROJECT" \
+              --format='value(state)' 2>/dev/null || echo "UNKNOWN")
+            echo "🔍 Cloud SQL [$NAME] project=$PROJECT — $STATUS"
+            if [ "$STATUS" = "STOPPED" ] || [ "$STATUS" = "SUSPENDED" ]; then
+              echo "▶️  Starting Cloud SQL $NAME..."
+              gcloud sql instances patch "$NAME" \
+                --project "$PROJECT" \
+                --activation-policy=ALWAYS \
+                --quiet
+              for i in $(seq 1 60); do
+                STATUS=$(gcloud sql instances describe "$NAME" \
+                  --project "$PROJECT" --format='value(state)')
+                echo "  attempt $i/60 — $STATUS"
+                [ "$STATUS" = "RUNNABLE" ] && break
+                sleep 10
+              done
+              echo "✅ Cloud SQL $NAME runnable"
+            elif [ "$STATUS" = "RUNNABLE" ]; then
+              echo "✅ Cloud SQL $NAME already runnable"
+            else
+              echo "⚠️  Cloud SQL $NAME in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.cloud_sql_instances // [] | .[]' "$RESOURCE_FILE")
+
+          # ── GKE Node Pools ────────────────────────────────────────────────
+          # Format stored: "location/cluster-name/project"
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            LOCATION=$(echo "$ENTRY" | cut -d'/' -f1)
+            CLUSTER=$(echo "$ENTRY"  | cut -d'/' -f2)
+            PROJECT=$(echo "$ENTRY"  | cut -d'/' -f3)
+            echo "🔍 GKE cluster [$CLUSTER] location=$LOCATION project=$PROJECT"
+            # Get all node pools for this cluster
+            NODE_POOLS=$(gcloud container node-pools list \
+              --cluster "$CLUSTER" \
+              --region "$LOCATION" \
+              --project "$PROJECT" \
+              --format='value(name)' 2>/dev/null || \
+              gcloud container node-pools list \
+                --cluster "$CLUSTER" \
+                --zone "$LOCATION" \
+                --project "$PROJECT" \
+                --format='value(name)' 2>/dev/null || true)
+            while IFS= read -r NP; do
+              [ -z "$NP" ] && continue
+              SAVED=$(jq -r \
+                --arg c "$CLUSTER" --arg np "$NP" \
+                '.gke_nodepool_configs[$c][$np] // {"min":1,"max":2,"initial":1}' \
+                "$RESOURCE_FILE")
+              MIN=$(echo "$SAVED"     | jq -r '.min')
+              MAX=$(echo "$SAVED"     | jq -r '.max')
+              INITIAL=$(echo "$SAVED" | jq -r '.initial')
+              echo "▶️  GKE [$CLUSTER/$NP] — restoring min=$MIN max=$MAX initial=$INITIAL"
+              gcloud container clusters update "$CLUSTER" \
+                --enable-autoscaling \
+                --node-pool "$NP" \
+                --min-nodes "$MIN" \
+                --max-nodes "$MAX" \
+                --region "$LOCATION" \
+                --project "$PROJECT" \
+                --quiet 2>/dev/null || \
+              gcloud container clusters update "$CLUSTER" \
+                --enable-autoscaling \
+                --node-pool "$NP" \
+                --min-nodes "$MIN" \
+                --max-nodes "$MAX" \
+                --zone "$LOCATION" \
+                --project "$PROJECT" \
+                --quiet
+              echo "✅ GKE $CLUSTER/$NP autoscaling restored"
+            done <<< "$NODE_POOLS"
+          done < <(jq -r '.gke_clusters // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Cloud Run — always on (scales to zero) ────────────────────────
+          CR_COUNT=$(jq '.cloud_run_services // [] | length' "$RESOURCE_FILE")
+          if [ "$CR_COUNT" -gt 0 ]; then
+            echo "ℹ️  Cloud Run services ($CR_COUNT) — serverless, scale to zero automatically."
+            jq -r '.cloud_run_services[]' "$RESOURCE_FILE" | while read -r E; do
+              echo "   • $(echo "$E" | cut -d'/' -f2)"
+            done
+          fi
+
+          # ── Cloud Functions — always on ───────────────────────────────────
+          CF_COUNT=$(jq '.cloud_functions // [] | length' "$RESOURCE_FILE")
+          if [ "$CF_COUNT" -gt 0 ]; then
+            echo "ℹ️  Cloud Functions ($CF_COUNT) — serverless, no start needed."
+          fi
+
+          # ── Pub/Sub / GCS / Spanner / Redis — always on ───────────────────
+          for KEY in pubsub_topics gcs_buckets spanner_instances redis_instances; do
+            COUNT=$(jq ".[\"$KEY\"] // [] | length" "$RESOURCE_FILE")
+            [ "$COUNT" -gt 0 ] && echo "ℹ️  $KEY ($COUNT) — always-on, no start needed."
+          done
+
+          echo ""
+          echo "🎉 Start complete."
+
+      # ══════════════════════════════════════════════════════════════════════
+      # STOP
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Stop Resources
+        if: ${{ github.event.inputs.action == 'stop' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          RESOURCE_FILE="tf_resources.json"
+          if [ ! -f "$RESOURCE_FILE" ]; then
+            echo "❌ $RESOURCE_FILE not found. Run 'apply' first."
+            exit 1
+          fi
+
+          echo "📋 Resource map:"
+          cat "$RESOURCE_FILE"
+          echo ""
+
+          # ════════════════════════════════════════════════════════════════
+          # AWS
+          # ════════════════════════════════════════════════════════════════
+
+          # ── EC2 ──────────────────────────────────────────────────────────
+          EC2_IDS=$(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE" | tr '\n' ' ' | xargs)
+          if [ -n "$EC2_IDS" ]; then
+            echo "⏹️  Stopping EC2 instances: $EC2_IDS"
+            aws ec2 stop-instances --instance-ids $EC2_IDS
+            aws ec2 wait instance-stopped --instance-ids $EC2_IDS
+            echo "✅ EC2 instances stopped"
+          else
+            echo "ℹ️  No EC2 instances."
+          fi
+
+          # ── App Runner ───────────────────────────────────────────────────
+          while IFS= read -r ARN; do
+            [ -z "$ARN" ] && continue
+            NAME=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query 'Service.ServiceName' --output text)
+            STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query 'Service.Status' --output text)
+            echo "🔍 AppRunner [$NAME] — $STATUS"
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "⏸️  Pausing $NAME..."
+              aws apprunner pause-service --service-arn "$ARN"
+              for i in $(seq 1 30); do
+                STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+                  --query 'Service.Status' --output text)
+                echo "  attempt $i/30 — $STATUS"
+                [ "$STATUS" = "PAUSED" ] && break
+                sleep 10
+              done
+              echo "✅ $NAME paused"
+            elif [ "$STATUS" = "PAUSED" ]; then
+              echo "✅ $NAME already paused"
+            else
+              echo "⚠️  $NAME in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.apprunner_service_arns // [] | .[]' "$RESOURCE_FILE")
+
+          # ── RDS Instances ────────────────────────────────────────────────
+          while IFS= read -r DB; do
+            [ -z "$DB" ] && continue
+            STATUS=$(aws rds describe-db-instances \
+              --db-instance-identifier "$DB" \
+              --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "unknown")
+            echo "🔍 RDS [$DB] — $STATUS"
+            if [ "$STATUS" = "available" ]; then
+              echo "⏹️  Stopping RDS $DB..."
+              aws rds stop-db-instance --db-instance-identifier "$DB"
+              for i in $(seq 1 90); do
+                STATUS=$(aws rds describe-db-instances \
+                  --db-instance-identifier "$DB" \
+                  --query 'DBInstances[0].DBInstanceStatus' --output text)
+                echo "  attempt $i/90 — $STATUS"
+                [ "$STATUS" = "stopped" ] && break
+                sleep 10
+              done
+              echo "✅ RDS $DB stopped"
+            elif [ "$STATUS" = "stopped" ]; then
+              echo "✅ RDS $DB already stopped"
+            else
+              echo "⚠️  RDS $DB in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.rds_instance_ids // [] | .[]' "$RESOURCE_FILE")
+
+          # ── RDS Aurora Clusters ──────────────────────────────────────────
+          while IFS= read -r CLUSTER; do
+            [ -z "$CLUSTER" ] && continue
+            STATUS=$(aws rds describe-db-clusters \
+              --db-cluster-identifier "$CLUSTER" \
+              --query 'DBClusters[0].Status' --output text 2>/dev/null || echo "unknown")
+            echo "🔍 Aurora [$CLUSTER] — $STATUS"
+            if [ "$STATUS" = "available" ]; then
+              echo "⏹️  Stopping Aurora $CLUSTER..."
+              aws rds stop-db-cluster --db-cluster-identifier "$CLUSTER"
+              for i in $(seq 1 90); do
+                STATUS=$(aws rds describe-db-clusters \
+                  --db-cluster-identifier "$CLUSTER" \
+                  --query 'DBClusters[0].Status' --output text)
+                echo "  attempt $i/90 — $STATUS"
+                [ "$STATUS" = "stopped" ] && break
+                sleep 10
+              done
+              echo "✅ Aurora $CLUSTER stopped"
+            elif [ "$STATUS" = "stopped" ]; then
+              echo "✅ Aurora $CLUSTER already stopped"
+            else
+              echo "⚠️  Aurora $CLUSTER in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.rds_cluster_ids // [] | .[]' "$RESOURCE_FILE")
+
+          # ── ECS — save counts then scale to 0 ────────────────────────────
+          ECS_COUNTS="{}"
+          while IFS= read -r SVC_ARN; do
+            [ -z "$SVC_ARN" ] && continue
+            CLUSTER=$(echo "$SVC_ARN" | cut -d'/' -f2)
+            SERVICE=$(echo "$SVC_ARN" | cut -d'/' -f3)
+            COUNT=$(aws ecs describe-services \
+              --cluster "$CLUSTER" --services "$SERVICE" \
+              --query 'services[0].desiredCount' --output text)
+            echo "💾 ECS [$SERVICE] — saving desired count: $COUNT"
+            ECS_COUNTS=$(echo "$ECS_COUNTS" | \
+              jq --arg k "$SERVICE" --argjson v "$COUNT" '. + {($k): $v}')
+            aws ecs update-service \
+              --cluster "$CLUSTER" --service "$SERVICE" \
+              --desired-count 0 > /dev/null
+            echo "✅ ECS $SERVICE scaled to 0"
+          done < <(jq -r '.ecs_service_arns // [] | .[]' "$RESOURCE_FILE")
+
+          # ── EKS — save configs then scale to 0 ───────────────────────────
+          EKS_NG_CONFIGS="{}"
+          while IFS= read -r CLUSTER_NAME; do
+            [ -z "$CLUSTER_NAME" ] && continue
+            EKS_NG_CONFIGS=$(echo "$EKS_NG_CONFIGS" | \
+              jq --arg c "$CLUSTER_NAME" '. + {($c): {}}')
+            while IFS= read -r NG; do
+              [ -z "$NG" ] && continue
+              CONFIG=$(aws eks describe-nodegroup \
+                --cluster-name "$CLUSTER_NAME" --nodegroup-name "$NG" \
+                --query 'nodegroup.scalingConfig' --output json)
+              MIN=$(echo "$CONFIG"     | jq -r '.minSize')
+              MAX=$(echo "$CONFIG"     | jq -r '.maxSize')
+              DESIRED=$(echo "$CONFIG" | jq -r '.desiredSize')
+              echo "💾 EKS [$CLUSTER_NAME/$NG] — saving min=$MIN max=$MAX desired=$DESIRED"
+              EKS_NG_CONFIGS=$(echo "$EKS_NG_CONFIGS" | jq \
+                --arg c "$CLUSTER_NAME" --arg ng "$NG" \
+                --argjson min "$MIN" --argjson max "$MAX" --argjson desired "$DESIRED" \
+                '.[$c][$ng] = {"min":$min,"max":$max,"desired":$desired}')
+              aws eks update-nodegroup-config \
+                --cluster-name "$CLUSTER_NAME" --nodegroup-name "$NG" \
+                --scaling-config "minSize=0,maxSize=$MAX,desiredSize=0"
+              echo "✅ EKS $CLUSTER_NAME/$NG scaled to 0"
+            done < <(jq -r \
+              --arg c "$CLUSTER_NAME" \
+              '.eks_nodegroups[$c] // [] | .[]' "$RESOURCE_FILE")
+          done < <(jq -r '.eks_cluster_names // [] | .[]' "$RESOURCE_FILE")
+
+          # ── ASG — save configs then scale to 0 ───────────────────────────
+          ASG_CONFIGS="{}"
+          while IFS= read -r ASG; do
+            [ -z "$ASG" ] && continue
+            INFO=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG" \
+              --query 'AutoScalingGroups[0].{min:MinSize,max:MaxSize,desired:DesiredCapacity}' \
+              --output json)
+            MIN=$(echo "$INFO"     | jq -r '.min')
+            MAX=$(echo "$INFO"     | jq -r '.max')
+            DESIRED=$(echo "$INFO" | jq -r '.desired')
+            echo "💾 ASG [$ASG] — saving min=$MIN max=$MAX desired=$DESIRED"
+            ASG_CONFIGS=$(echo "$ASG_CONFIGS" | jq \
+              --arg asg "$ASG" \
+              --argjson min "$MIN" --argjson max "$MAX" --argjson desired "$DESIRED" \
+              '. + {($asg): {"min":$min,"max":$max,"desired":$desired}}')
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG" \
+              --min-size 0 --max-size 0 --desired-capacity 0
+            echo "✅ ASG $ASG scaled to 0"
+          done < <(jq -r '.asg_names // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Lambda / S3 / CloudFront / ALB — always on ───────────────────
+          for KEY in lambda_arns s3_buckets cloudfront_distribution_ids alb_arns; do
+            COUNT=$(jq ".[\"$KEY\"] // [] | length" "$RESOURCE_FILE")
+            [ "$COUNT" -gt 0 ] && echo "ℹ️  $KEY ($COUNT) — always-on, no stop needed."
+          done
+
+          # ════════════════════════════════════════════════════════════════
+          # GCP
+          # ════════════════════════════════════════════════════════════════
+
+          # ── GCE Instances ─────────────────────────────────────────────────
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            ZONE=$(echo "$ENTRY"     | cut -d'/' -f1)
+            INSTANCE=$(echo "$ENTRY" | cut -d'/' -f2)
+            STATUS=$(gcloud compute instances describe "$INSTANCE" \
+              --zone "$ZONE" \
+              --format='value(status)' 2>/dev/null || echo "UNKNOWN")
+            echo "🔍 GCE [$INSTANCE] zone=$ZONE — $STATUS"
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "⏹️  Stopping GCE $INSTANCE..."
+              gcloud compute instances stop "$INSTANCE" --zone "$ZONE" --quiet
+              for i in $(seq 1 30); do
+                STATUS=$(gcloud compute instances describe "$INSTANCE" \
+                  --zone "$ZONE" --format='value(status)')
+                echo "  attempt $i/30 — $STATUS"
+                [ "$STATUS" = "TERMINATED" ] && break
+                sleep 10
+              done
+              echo "✅ GCE $INSTANCE stopped"
+            elif [ "$STATUS" = "TERMINATED" ]; then
+              echo "✅ GCE $INSTANCE already stopped"
+            else
+              echo "⚠️  GCE $INSTANCE in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.gce_instances // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Cloud SQL ─────────────────────────────────────────────────────
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            NAME=$(echo "$ENTRY"    | cut -d'/' -f1)
+            PROJECT=$(echo "$ENTRY" | cut -d'/' -f2)
+            STATUS=$(gcloud sql instances describe "$NAME" \
+              --project "$PROJECT" \
+              --format='value(state)' 2>/dev/null || echo "UNKNOWN")
+            echo "🔍 Cloud SQL [$NAME] — $STATUS"
+            if [ "$STATUS" = "RUNNABLE" ]; then
+              echo "⏹️  Stopping Cloud SQL $NAME..."
+              gcloud sql instances patch "$NAME" \
+                --project "$PROJECT" \
+                --activation-policy=NEVER \
+                --quiet
+              for i in $(seq 1 60); do
+                STATUS=$(gcloud sql instances describe "$NAME" \
+                  --project "$PROJECT" --format='value(state)')
+                echo "  attempt $i/60 — $STATUS"
+                [ "$STATUS" = "STOPPED" ] || [ "$STATUS" = "SUSPENDED" ] && break
+                sleep 10
+              done
+              echo "✅ Cloud SQL $NAME stopped"
+            elif [ "$STATUS" = "STOPPED" ] || [ "$STATUS" = "SUSPENDED" ]; then
+              echo "✅ Cloud SQL $NAME already stopped"
+            else
+              echo "⚠️  Cloud SQL $NAME in '$STATUS' — skipping"
+            fi
+          done < <(jq -r '.cloud_sql_instances // [] | .[]' "$RESOURCE_FILE")
+
+          # ── GKE — save node pool configs then scale to 0 ──────────────────
+          GKE_NP_CONFIGS="{}"
+          while IFS= read -r ENTRY; do
+            [ -z "$ENTRY" ] && continue
+            LOCATION=$(echo "$ENTRY" | cut -d'/' -f1)
+            CLUSTER=$(echo "$ENTRY"  | cut -d'/' -f2)
+            PROJECT=$(echo "$ENTRY"  | cut -d'/' -f3)
+            GKE_NP_CONFIGS=$(echo "$GKE_NP_CONFIGS" | \
+              jq --arg c "$CLUSTER" '. + {($c): {}}')
+            NODE_POOLS=$(gcloud container node-pools list \
+              --cluster "$CLUSTER" \
+              --region "$LOCATION" \
+              --project "$PROJECT" \
+              --format='value(name)' 2>/dev/null || \
+              gcloud container node-pools list \
+                --cluster "$CLUSTER" \
+                --zone "$LOCATION" \
+                --project "$PROJECT" \
+                --format='value(name)' 2>/dev/null || true)
+            while IFS= read -r NP; do
+              [ -z "$NP" ] && continue
+              NP_CONFIG=$(gcloud container node-pools describe "$NP" \
+                --cluster "$CLUSTER" \
+                --region "$LOCATION" \
+                --project "$PROJECT" \
+                --format='json(autoscaling,initialNodeCount)' 2>/dev/null || \
+                gcloud container node-pools describe "$NP" \
+                  --cluster "$CLUSTER" \
+                  --zone "$LOCATION" \
+                  --project "$PROJECT" \
+                  --format='json(autoscaling,initialNodeCount)' 2>/dev/null || echo "{}")
+              MIN=$(echo "$NP_CONFIG"     | jq -r '.autoscaling.minNodeCount // 1')
+              MAX=$(echo "$NP_CONFIG"     | jq -r '.autoscaling.maxNodeCount // 3')
+              INITIAL=$(echo "$NP_CONFIG" | jq -r '.initialNodeCount // 1')
+              echo "💾 GKE [$CLUSTER/$NP] — saving min=$MIN max=$MAX initial=$INITIAL"
+              GKE_NP_CONFIGS=$(echo "$GKE_NP_CONFIGS" | jq \
+                --arg c "$CLUSTER" --arg np "$NP" \
+                --argjson min "$MIN" --argjson max "$MAX" --argjson initial "$INITIAL" \
+                '.[$c][$np] = {"min":$min,"max":$max,"initial":$initial}')
+              echo "⏹️  Scaling GKE $CLUSTER/$NP to 0..."
+              gcloud container clusters update "$CLUSTER" \
+                --enable-autoscaling \
+                --node-pool "$NP" \
+                --min-nodes 0 \
+                --max-nodes "$MAX" \
+                --region "$LOCATION" \
+                --project "$PROJECT" \
+                --quiet 2>/dev/null || \
+              gcloud container clusters update "$CLUSTER" \
+                --enable-autoscaling \
+                --node-pool "$NP" \
+                --min-nodes 0 \
+                --max-nodes "$MAX" \
+                --zone "$LOCATION" \
+                --project "$PROJECT" \
+                --quiet
+              echo "✅ GKE $CLUSTER/$NP scaled to 0"
+            done <<< "$NODE_POOLS"
+          done < <(jq -r '.gke_clusters // [] | .[]' "$RESOURCE_FILE")
+
+          # ── Cloud Run / Cloud Functions / Pub/Sub / GCS / Spanner / Redis ─
+          for KEY in cloud_run_services cloud_functions pubsub_topics gcs_buckets spanner_instances redis_instances; do
+            COUNT=$(jq ".[\"$KEY\"] // [] | length" "$RESOURCE_FILE")
+            [ "$COUNT" -gt 0 ] && echo "ℹ️  $KEY ($COUNT) — always-on or serverless, no stop needed."
+          done
+
+          # ── Persist all saved configs back into tf_resources.json ─────────
+          UPDATED=$(jq \
+            --argjson ecs_counts    "$ECS_COUNTS"     \
+            --argjson asg_configs   "$ASG_CONFIGS"    \
+            --argjson eks_configs   "$EKS_NG_CONFIGS" \
+            --argjson gke_configs   "$GKE_NP_CONFIGS" \
+            '. + {
+              ecs_desired_counts:    $ecs_counts,
+              asg_original_configs:  $asg_configs,
+              eks_nodegroup_configs: $eks_configs,
+              gke_nodepool_configs:  $gke_configs
+            }' "$RESOURCE_FILE")
+          echo "$UPDATED" > "$RESOURCE_FILE"
+
+          echo ""
+          echo "🎉 Stop complete."
+
+      # ══════════════════════════════════════════════════════════════════════
+      # PERSIST STATE
+      # ══════════════════════════════════════════════════════════════════════
       - name: Upload Terraform State
         if: always()
         uses: actions/upload-artifact@v4
