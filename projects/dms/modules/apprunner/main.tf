@@ -35,6 +35,6 @@ resource "aws_apprunner_service" "example" {
 
   tags = {
     Name = "NRDMS"
-    dms  = "true"
+    Project = "DMS"
   }
 }

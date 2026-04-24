@@ -8,6 +8,6 @@ resource "aws_instance" "example" {
 
   tags = {
     Name = "NR-Test"
-    Test  = "true"
+    Project = "Test"
   }
 }
