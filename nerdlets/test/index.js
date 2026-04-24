@@ -197,6 +197,88 @@ const useGithubTfFiles = (projectDirName, token) => {
   return state;
 };
 
+// ─── Terraform resource name extractor ───────────────────────────────────────
+const useTerraformResources = (projectDirName, token) => {
+  const [state, setState] = React.useState({ loading: false, resources: {} });
+  React.useEffect(() => {
+    if (!projectDirName || !token) { setState({ loading: false, resources: {} }); return; }
+    setState({ loading: true, resources: {} });
+    let cancelled = false;
+    const ghHeaders = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const TF_TYPE_MAP = {
+      'aws_instance':                    'aws_ec2',
+      'aws_db_instance':                 'aws_rds',
+      'aws_rds_cluster':                 'aws_rds',
+      'aws_apprunner_service':           'aws_apprunner',
+      'aws_cloudfront_distribution':     'aws_cloudfront',
+      'aws_ecs_service':                 'aws_ecs',
+      'aws_lambda_function':             'aws_lambda',
+      'aws_s3_bucket':                   'aws_s3',
+      'google_cloud_run_v2_service':     'google_cloud_run_v2_service',
+      'google_sql_database_instance':    'google_sql_database_instance',
+      'google_container_cluster':        'google_container_cluster',
+      'google_compute_instance':         'google_compute_instance',
+      'google_bigquery_dataset':         'google_bigquery_dataset',
+      'google_pubsub_topic':             'google_pubsub_topic',
+      'google_spanner_instance':         'google_spanner_instance',
+      'google_storage_bucket':           'google_storage_bucket',
+      'google_cloudfunctions2_function': 'google_cloudfunctions2_function',
+      'google_redis_instance':           'google_redis_instance',
+    };
+    const parseTfContent = (content) => {
+      const regex = /resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/g;
+      const found = {};
+      let match;
+      while ((match = regex.exec(content)) !== null) {
+        const tfType = match[1], tfName = match[2];
+        const internalType = TF_TYPE_MAP[tfType];
+        if (!internalType) continue;
+        if (!found[internalType]) found[internalType] = [];
+        if (!found[internalType].includes(tfName)) found[internalType].push(tfName);
+      }
+      return found;
+    };
+    const fetchFile = async (path) => {
+      const r = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`, { headers: ghHeaders });
+      if (!r.ok) return null;
+      const json = await r.json();
+      if (!json.content) return null;
+      return atob(json.content.replace(/\n/g, ''));
+    };
+    const fetchDir = async (path, depth = 0) => {
+      if (depth > 4) return {};
+      const r = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`, { headers: ghHeaders });
+      if (!r.ok) return {};
+      const items = await r.json();
+      if (!Array.isArray(items)) return {};
+      const merged = {};
+      for (const item of items) {
+        let found = {};
+        if (item.type === 'file' && item.name.endsWith('.tf')) {
+          const content = await fetchFile(item.path);
+          if (content) found = parseTfContent(content);
+        } else if (item.type === 'dir') {
+          found = await fetchDir(item.path, depth + 1);
+        }
+        for (const [type, names] of Object.entries(found)) {
+          if (!merged[type]) merged[type] = [];
+          names.forEach(n => { if (!merged[type].includes(n)) merged[type].push(n); });
+        }
+      }
+      return merged;
+    };
+    fetchDir(`projects/${projectDirName}`)
+      .then(resources => { if (!cancelled) setState({ loading: false, resources }); })
+      .catch(()       => { if (!cancelled) setState({ loading: false, resources: {} }); });
+    return () => { cancelled = true; };
+  }, [projectDirName, token]);
+  return state;
+};
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const PowerOffIcon = ({ size = 13, color = 'currentColor', style = {} }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -376,7 +458,7 @@ const deriveResourceStatus = (resource, row) => {
       return 'green';
     }
     case 'aws_ec2': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
+      if ((row.samples ?? 0) === 0) return 'unknown';
       const sf  = typeof row.statusCheckFailed   === 'number' ? row.statusCheckFailed   : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
       const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
@@ -400,9 +482,9 @@ const deriveResourceStatus = (resource, row) => {
 const deriveResourceReason = (resource, row, status) => {
   if (status === 'green' || status === 'unknown' || !row) return null;
   switch (resource.type) {
-    case 'google_sql_database_instance':  return 'No metric samples received — DB may be stopped or unreachable';
+    case 'google_sql_database_instance':  return null;
     case 'google_compute_instance': {
-      if ((row.samples ?? 0) === 0) return 'No metric samples — VM may be stopped or not reporting';
+      if ((row.samples ?? 0) === 0) return null;
       const cpu = row.cpuUtil ?? null;
       if (cpu !== null && cpu > 0.75) return `CPU usage: ${(cpu * 100).toFixed(1)}%${cpu > 0.9 ? ' (critical)' : ''}`;
       return null;
@@ -423,7 +505,7 @@ const deriveResourceReason = (resource, row, status) => {
     }
     case 'aws_cloudfront': {
       const e5 = row.errorRate5xx ?? null, ea = row.totalErrorRate ?? null, s = row.samples ?? 0;
-      if (s === 0) return 'No metric samples received from CloudFront namespace';
+      if (s === 0) return null;
       const parts = [];
       if (e5 !== null && e5 > 2)  parts.push(`5xx error rate: ${e5.toFixed(1)}%${e5 > 5 ? ' (critical)' : ''}`);
       if (ea !== null && ea > 15) parts.push(`Total error rate: ${ea.toFixed(1)}% (incl. 4xx)`);
@@ -434,7 +516,7 @@ const deriveResourceReason = (resource, row, status) => {
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
       const cpu = typeof row.cpuUsage            === 'number' ? row.cpuUsage            : null;
       const s   = row.samples ?? 0;
-      if (s === 0) return `No metric samples — tag instances with Project=${resource._projectTag||'<project>'} to scope them`;
+      if (s === 0) return null;
       const parts = [];
       if (sf > 0)  parts.push('System status check failed');
       if (if_ > 0) parts.push('Instance status check failed');
@@ -442,8 +524,8 @@ const deriveResourceReason = (resource, row, status) => {
       return parts.join(' · ') || null;
     }
     case 'google_cloud_run_v2_service': return 'No billable instance time — all revisions may be scaled to zero';
-    case 'google_container_cluster':    return 'No GKE cluster samples — cluster may be stopped or not reporting';
-    case 'aws_ecs':  return 'No ECS metrics — service may be stopped or not yet deployed';
+    case 'google_container_cluster':    return null;
+    case 'aws_ecs':  return null;
     default: return null;
   }
 };
@@ -789,28 +871,64 @@ const Ec2CountLoader = ({ project, onCounts, loaded }) => {
   );
 };
 
-// ─── CHANGE 6: ExpandableResourceRow — accepts lifecycle, overrides display status ───
-const ExpandableResourceRow = ({ resource:r, project, lifecycle }) => {
+// ─── TF static name list renderer ─────────────────────────────────────────────
+const TfNameList = ({ names, lifecycle, resourceType }) => {
+  const isTerminated = lifecycle === 'terminated';
+  const acC = resourceType.startsWith('aws') ? 'rgba(255,153,0,0.08)' : 'rgba(66,133,244,0.08)';
+  const boC = resourceType.startsWith('aws') ? 'rgba(255,153,0,0.12)' : 'rgba(66,133,244,0.12)';
+  const dotCls = isTerminated ? 'red' : 'yellow';
+  const labelColor = isTerminated ? '#ff4d6d' : '#f5a623';
+  const labelText  = isTerminated ? '✗ Terminated' : '✗ Stopped';
+  return (
+    <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+      {names.map((name, i) => (
+        <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<names.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
+          <span className={`status-dot status-dot--${dotCls}`} style={{ width:6, height:6, flexShrink:0 }} />
+          <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
+          <span style={{ fontSize:10, color:labelColor, fontWeight:600 }}>{labelText}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── ExpandableResourceRow ────────────────────────────────────────────────────
+const ExpandableResourceRow = ({ resource:r, project, lifecycle, tfResources = {} }) => {
   const [open, setOpen] = React.useState(false);
   const [ec2Counts, setEc2Counts] = React.useState(null);
   const hasSubList = !!(SERVICE_QUERIES[r.type]);
 
-  // Lifecycle-aware display: stopped forces yellow, provisioned keeps unknown (grey + waiting label)
+  // Lifecycle-aware display status
   const displayStatus = (() => {
-    if (lifecycle === 'stopped')  return 'yellow';
+    if (lifecycle === 'terminated')  return 'red';
+    if (lifecycle === 'stopped')     return 'yellow';
+    if (lifecycle === 'provisioned' && r.status === 'unknown') return 'green';
     return r.status;
   })();
 
   const dotCls      = displayStatus==='green'?'green':displayStatus==='yellow'?'yellow':displayStatus==='red'?'red':'grey';
   const statusColor = displayStatus==='green'?'#00d4aa':displayStatus==='yellow'?'#f5a623':displayStatus==='red'?'#ff4d6d':'#7a8aaa';
   const isPaused    = canBePaused(r.type, r.row);
-  const statusLabel = displayStatus==='green'  ? '✓ Running'
-    : displayStatus==='yellow' ? (isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped')
-    : displayStatus==='red'    ? (r.alwaysOn?'✗ Errors':'✗ Stopped')
-    : lifecycle==='provisioned' ? '◌ Waiting for metrics'
-    : '— No Data';
+
+  const statusLabel = lifecycle === 'terminated'
+    ? '✗ Terminated'
+    : lifecycle === 'stopped'
+      ? '✗ Stopped'
+      : lifecycle === 'provisioned' && r.status === 'red'
+        ? (r.alwaysOn ? '✗ Errors' : '✗ Stopped')
+        : lifecycle === 'provisioned' && r.status === 'yellow'
+          ? (isPaused ? '⊘ Paused' : '⚠ Warning')
+          : lifecycle === 'provisioned' && (r.status === 'unknown' || r.status === 'green')
+            ? '✓ Running'
+            : displayStatus==='green'  ? '✓ Running'
+            : displayStatus==='yellow' ? (isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped')
+            : displayStatus==='red'    ? (r.alwaysOn?'✗ Errors':'✗ Stopped')
+            : '— No Data';
 
   const query = hasSubList?(typeof SERVICE_QUERIES[r.type]==='function'?SERVICE_QUERIES[r.type](project):null):null;
+
+  // Whether to show TF names instead of live query
+  const useTfNames = (lifecycle === 'stopped' || lifecycle === 'terminated') && tfResources[r.type]?.length > 0;
 
   return (
     <div style={{ borderRadius:6, overflow:'hidden', background:'rgba(255,255,255,0.03)' }}>
@@ -820,7 +938,7 @@ const ExpandableResourceRow = ({ resource:r, project, lifecycle }) => {
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
             <span style={{ fontWeight:600, fontSize:'0.8rem', color:'#f0f4ff' }}>{r.label}</span>
-            {r.type==='aws_ec2'&&ec2Counts&&(
+            {r.type==='aws_ec2'&&ec2Counts&&lifecycle!=='stopped'&&lifecycle!=='terminated'&&(
               <span style={{ fontSize:10, fontWeight:700 }}>
                 {ec2Counts.run>0&&<span style={{ color:'#00d4aa' }}>{ec2Counts.run} running</span>}
                 {ec2Counts.run>0&&ec2Counts.stop>0&&<span style={{ color:'#7a8aaa' }}> · </span>}
@@ -829,166 +947,177 @@ const ExpandableResourceRow = ({ resource:r, project, lifecycle }) => {
                 {ec2Counts.imp>0&&<span style={{ color:'#ff4d6d' }}>{ec2Counts.imp} impaired</span>}
               </span>
             )}
+            {/* Show TF name count badge when stopped/terminated */}
+            {useTfNames&&(
+              <span style={{ fontSize:10, color:'#4a5a7a', fontWeight:600 }}>
+                {tfResources[r.type].length} resource{tfResources[r.type].length!==1?'s':''}
+              </span>
+            )}
           </div>
           {r.reason&&<div style={{ fontSize:'0.75rem', color:statusColor, marginTop:3, lineHeight:1.5, fontWeight:500 }}>{r.reason}</div>}
         </div>
         <span style={{ color:statusColor, fontSize:'0.75rem', fontWeight:600, flexShrink:0 }}>{statusLabel}</span>
         {hasSubList&&<span style={{ fontSize:14, color:'#3d4a66', transition:'transform 0.2s', display:'inline-block', transform:open?'rotate(90deg)':'rotate(0deg)', flexShrink:0 }}>›</span>}
       </div>
-      {open&&query&&(
-        <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
-          {({ data, loading }) => {
-            if (loading) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
-            if (!data||data.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
-            const acC=r.type.startsWith('aws')?'rgba(255,153,0,0.08)':'rgba(66,133,244,0.08)';
-            const boC=r.type.startsWith('aws')?'rgba(255,153,0,0.12)':'rgba(66,133,244,0.12)';
 
-            if (r.type==='google_cloud_run_v2_service') {
-              const aq=`SELECT sum(container.BillableInstanceTime) AS billableTime FROM GcpRunRevisionSample WHERE projectId = '${project.gcpProjectId}' FACET serviceName SINCE 30 minutes ago LIMIT 100`;
-              return (
-                <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
-                  {({ data:ad, loading:al }) => {
-                    if (al) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
-                    const activeServices=new Set();
-                    (ad||[]).forEach(series=>{
-                      let name=null; const g=series?.metadata?.groups;
-                      if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
-                      if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
-                      if (!name) name=series?.metadata?.name;
-                      const b=series?.data?.[0]?.y??0; if (name&&b>0) activeServices.add(name);
-                    });
-                    const seen=new Set(), NONSVC=new Set(['val','Other','unknown','count','latest']);
-                    const allServices=data.map(series=>{
-                      let name=null; const g=series?.metadata?.groups;
-                      if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
-                      if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
-                      if (!name) name=series?.metadata?.name;
-                      if (!name||NONSVC.has(name)||seen.has(name)) return null;
-                      seen.add(name); return name;
-                    }).filter(Boolean);
-                    (project.knownServices||[]).forEach(s=>{if(!seen.has(s)){seen.add(s);allServices.push(s);}});
-                    if (allServices.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No services found</div>;
-                    allServices.sort((a,b)=>{const aA=activeServices.has(a),bA=activeServices.has(b);if(aA!==bA)return bA?1:-1;return a.localeCompare(b);});
-                    return (
-                      <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
-                        {allServices.map((name,i)=>(
-                          <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<allServices.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
-                            <span className="status-dot status-dot--green" style={{ width:6,height:6,flexShrink:0 }} />
-                            <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-                            <span style={{ fontSize:10, color:'#00d4aa', fontWeight:600 }}>{activeServices.has(name)?'▶ Running':'◼ Scaled to zero'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }}
-                </NrqlQuery>
-              );
-            }
+      {open && (
+        useTfNames ? (
+          <TfNameList names={tfResources[r.type]} lifecycle={lifecycle} resourceType={r.type} />
+        ) : query ? (
+          <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
+            {({ data, loading }) => {
+              if (loading) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+              if (!data||data.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
+              const acC=r.type.startsWith('aws')?'rgba(255,153,0,0.08)':'rgba(66,133,244,0.08)';
+              const boC=r.type.startsWith('aws')?'rgba(255,153,0,0.12)':'rgba(66,133,244,0.12)';
 
-            if (r.type==='aws_ec2') {
-              const pf=ec2ProjectFilter(project);
-              const aq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
-              const mq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
-              return (
-                <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
-                  {({ data:ad, loading:al }) => (
-                    <NrqlQuery accountIds={[ACCOUNT_ID]} query={mq} pollInterval={60000}>
-                      {({ data:md, loading:ml }) => {
-                        if (al||ml) return <div style={{ padding:'4px 12px 6pb', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
-                        const activeI=new Set(), impairedI=new Set();
-                        (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
-                        const seen=new Set(), visibleInstances=[];
-                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
-                        if (visibleInstances.length===0) return (
-                          <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
-                            No instances tagged <code style={{ color:'#4285f4', fontSize:10 }}>Project={project.projectDirName||project.name}</code> found
-                          </div>
-                        );
-                        const ord={running:0,pending:1,stopping:2,stopped:3,impaired:4};
-                        visibleInstances.sort((a,b)=>{const ao=ord[a.state]??99,bo=ord[b.state]??99;return ao!==bo?ao-bo:a.name.localeCompare(b.name);});
-                        return (
-                          <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
-                            {visibleInstances.map((inst,i)=>{const d=ec2StateDisplay(inst.state);return(
-                              <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<visibleInstances.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
-                                <span className={'status-dot status-dot--'+d.dot} style={{ width:6,height:6,flexShrink:0 }} />
-                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{inst.name}</span>
-                                <span style={{ fontSize:10, color:d.color, fontWeight:600 }}>{d.label}</span>
-                              </div>
-                            );})}
-                          </div>
-                        );
-                      }}
-                    </NrqlQuery>
-                  )}
-                </NrqlQuery>
-              );
-            }
-
-            if (r.type==='aws_apprunner') {
-              const aq="SELECT max(`aws.apprunner.ActiveInstances`) AS activeInstances FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30";
-              return (
-                <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
-                  {({ data:ad, loading:al }) => {
-                    if (al) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
-                    const activeMap={};
-                    (ad||[]).forEach(series=>{
-                      let name=null; const g=series?.metadata?.groups;
-                      if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
-                      if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
-                      if (!name) return;
-                      const pt=series?.data?.[0]; const ai=pt?.activeInstances??pt?.y??null;
-                      if (name&&ai!==null) activeMap[name]=ai;
-                    });
-                    const seen=new Set(), NONSVC=new Set(['val','Other','unknown','count','activeInstances']);
-                    const services=data.map(series=>{
-                      let name=null; const g=series?.metadata?.groups;
-                      if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
-                      if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
-                      if (!name) name=series?.metadata?.name;
-                      if (!name||NONSVC.has(name)||seen.has(name)) return null;
-                      seen.add(name); return name;
-                    }).filter(Boolean);
-                    if (services.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No services found</div>;
-                    services.sort((a,b)=>{const aA=activeMap[a]??null,bA=activeMap[b]??null;if(aA!==null&&bA===null)return -1;if(bA!==null&&aA===null)return 1;if((aA??0)>0&&(bA??0)===0)return -1;if((bA??0)>0&&(aA??0)===0)return 1;return a.localeCompare(b);});
-                    return (
-                      <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
-                        {services.map((name,i)=>{
-                          const ai=activeMap[name]??null, sDot=ai===null?'grey':ai>0?'green':'yellow', sLabel=ai===null?'— Unknown':ai>0?'✓ Running':'⊘ Paused', sColor=ai===null?'#7a8aaa':ai>0?'#00d4aa':'#f5a623';
-                          return(
-                            <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<services.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
-                              <span className={'status-dot status-dot--'+sDot} style={{ width:6,height:6,flexShrink:0 }} />
+              if (r.type==='google_cloud_run_v2_service') {
+                const aq=`SELECT sum(container.BillableInstanceTime) AS billableTime FROM GcpRunRevisionSample WHERE projectId = '${project.gcpProjectId}' FACET serviceName SINCE 30 minutes ago LIMIT 100`;
+                return (
+                  <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
+                    {({ data:ad, loading:al }) => {
+                      if (al) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+                      const activeServices=new Set();
+                      (ad||[]).forEach(series=>{
+                        let name=null; const g=series?.metadata?.groups;
+                        if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
+                        if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
+                        if (!name) name=series?.metadata?.name;
+                        const b=series?.data?.[0]?.y??0; if (name&&b>0) activeServices.add(name);
+                      });
+                      const seen=new Set(), NONSVC=new Set(['val','Other','unknown','count','latest']);
+                      const allServices=data.map(series=>{
+                        let name=null; const g=series?.metadata?.groups;
+                        if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
+                        if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
+                        if (!name) name=series?.metadata?.name;
+                        if (!name||NONSVC.has(name)||seen.has(name)) return null;
+                        seen.add(name); return name;
+                      }).filter(Boolean);
+                      (project.knownServices||[]).forEach(s=>{if(!seen.has(s)){seen.add(s);allServices.push(s);}});
+                      if (allServices.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No services found</div>;
+                      allServices.sort((a,b)=>{const aA=activeServices.has(a),bA=activeServices.has(b);if(aA!==bA)return bA?1:-1;return a.localeCompare(b);});
+                      return (
+                        <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+                          {allServices.map((name,i)=>(
+                            <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<allServices.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
+                              <span className="status-dot status-dot--green" style={{ width:6,height:6,flexShrink:0 }} />
                               <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-                              <span style={{ fontSize:10, color:sColor, fontWeight:600 }}>{sLabel}</span>
+                              <span style={{ fontSize:10, color:'#00d4aa', fontWeight:600 }}>{activeServices.has(name)?'▶ Running':'◼ Scaled to zero'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }}
+                  </NrqlQuery>
+                );
+              }
+
+              if (r.type==='aws_ec2') {
+                const pf=ec2ProjectFilter(project);
+                const aq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
+                const mq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
+                return (
+                  <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
+                    {({ data:ad, loading:al }) => (
+                      <NrqlQuery accountIds={[ACCOUNT_ID]} query={mq} pollInterval={60000}>
+                        {({ data:md, loading:ml }) => {
+                          if (al||ml) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+                          const activeI=new Set(), impairedI=new Set();
+                          (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
+                          const seen=new Set(), visibleInstances=[];
+                          (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
+                          if (visibleInstances.length===0) return (
+                            <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
+                              No instances found in last 7 days
                             </div>
                           );
-                        })}
-                      </div>
-                    );
-                  }}
-                </NrqlQuery>
-              );
-            }
+                          const ord={running:0,pending:1,stopping:2,stopped:3,impaired:4};
+                          visibleInstances.sort((a,b)=>{const ao=ord[a.state]??99,bo=ord[b.state]??99;return ao!==bo?ao-bo:a.name.localeCompare(b.name);});
+                          return (
+                            <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+                              {visibleInstances.map((inst,i)=>{const d=ec2StateDisplay(inst.state);return(
+                                <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<visibleInstances.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
+                                  <span className={'status-dot status-dot--'+d.dot} style={{ width:6,height:6,flexShrink:0 }} />
+                                  <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{inst.name}</span>
+                                  <span style={{ fontSize:10, color:d.color, fontWeight:600 }}>{d.label}</span>
+                                </div>
+                              );})}
+                            </div>
+                          );
+                        }}
+                      </NrqlQuery>
+                    )}
+                  </NrqlQuery>
+                );
+              }
 
-            // Generic fallback
-            const seen=new Set();
-            const items=data.map(s=>{const n=extractFacetName(s);if(!n||seen.has(n))return null;seen.add(n);return n;}).filter(Boolean);
-            if (items.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
-            const iD=r.status==='green'?'green':r.status==='red'?'red':'yellow';
-            const iL=r.status==='green'?'✓ Active':r.status==='red'?'✗ Errors':'⚠ Warning';
-            const iC=r.status==='green'?'#00d4aa':r.status==='red'?'#ff4d6d':'#f5a623';
-            return (
-              <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
-                {items.map((name,i)=>(
-                  <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 10px', borderBottom:i<items.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
-                    <span className={'status-dot status-dot--'+iD} style={{ width:6,height:6,flexShrink:0 }} />
-                    <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-                    <span style={{ fontSize:10, color:iC, fontWeight:600 }}>{iL}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          }}
-        </NrqlQuery>
+              if (r.type==='aws_apprunner') {
+                const aq="SELECT max(`aws.apprunner.ActiveInstances`) AS activeInstances FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30";
+                return (
+                  <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
+                    {({ data:ad, loading:al }) => {
+                      if (al) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+                      const activeMap={};
+                      (ad||[]).forEach(series=>{
+                        let name=null; const g=series?.metadata?.groups;
+                        if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
+                        if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
+                        if (!name) return;
+                        const pt=series?.data?.[0]; const ai=pt?.activeInstances??pt?.y??null;
+                        if (name&&ai!==null) activeMap[name]=ai;
+                      });
+                      const seen=new Set(), NONSVC=new Set(['val','Other','unknown','count','activeInstances']);
+                      const services=data.map(series=>{
+                        let name=null; const g=series?.metadata?.groups;
+                        if (Array.isArray(g)){const f=g.find(x=>x.type==='facet');if(f?.value)name=f.value;}
+                        if (!name){const pt=series?.data?.[0];if(pt?.facet)name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);}
+                        if (!name) name=series?.metadata?.name;
+                        if (!name||NONSVC.has(name)||seen.has(name)) return null;
+                        seen.add(name); return name;
+                      }).filter(Boolean);
+                      if (services.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No services found</div>;
+                      services.sort((a,b)=>{const aA=activeMap[a]??null,bA=activeMap[b]??null;if(aA!==null&&bA===null)return -1;if(bA!==null&&aA===null)return 1;if((aA??0)>0&&(bA??0)===0)return -1;if((bA??0)>0&&(aA??0)===0)return 1;return a.localeCompare(b);});
+                      return (
+                        <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+                          {services.map((name,i)=>{
+                            const ai=activeMap[name]??null, sDot=ai===null?'grey':ai>0?'green':'yellow', sLabel=ai===null?'— Unknown':ai>0?'✓ Running':'⊘ Paused', sColor=ai===null?'#7a8aaa':ai>0?'#00d4aa':'#f5a623';
+                            return(
+                              <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<services.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
+                                <span className={'status-dot status-dot--'+sDot} style={{ width:6,height:6,flexShrink:0 }} />
+                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
+                                <span style={{ fontSize:10, color:sColor, fontWeight:600 }}>{sLabel}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }}
+                  </NrqlQuery>
+                );
+              }
+
+              // Generic fallback
+              const seen=new Set();
+              const items=data.map(s=>{const n=extractFacetName(s);if(!n||seen.has(n))return null;seen.add(n);return n;}).filter(Boolean);
+              if (items.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
+              const iD=r.status==='green'?'green':r.status==='red'?'red':'yellow';
+              const iL=r.status==='green'?'✓ Active':r.status==='red'?'✗ Errors':'⚠ Warning';
+              const iC=r.status==='green'?'#00d4aa':r.status==='red'?'#ff4d6d':'#f5a623';
+              return (
+                <div style={{ margin:'0 8px 6px', background:acC, border:`1px solid ${boC}`, borderRadius:6, overflow:'hidden' }}>
+                  {items.map((name,i)=>(
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 10px', borderBottom:i<items.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
+                      <span className={'status-dot status-dot--'+iD} style={{ width:6,height:6,flexShrink:0 }} />
+                      <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
+                      <span style={{ fontSize:10, color:iC, fontWeight:600 }}>{iL}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            }}
+          </NrqlQuery>
+        ) : null
       )}
     </div>
   );
@@ -1223,7 +1352,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
             <input value={form.projectDirName} onChange={e=>setField('projectDirName',e.target.value)} placeholder="e.g. my-service-uat  →  projects/my-service-uat/" style={s.input} />
             <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
-              Required for infra actions. EC2 instances must be tagged <code style={{ color:'#6a8aaa' }}>Project=&lt;this value&gt;</code> to be scoped correctly.
+              Required for infra actions and Terraform resource discovery.
             </div>
           </div>
           {form.providerId==='gcp'&&form.projectType==='normal'&&(
@@ -1397,7 +1526,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [expanded,     setExpanded]     = useState(false);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
-  // CHANGE 2: hidden state for terminated auto-hide
   const [hidden,       setHidden]       = useState(false);
   const pollCancelRef = useRef({ cancelled: false });
 
@@ -1412,25 +1540,17 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   );
 
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
+  const { resources:tfResources }    = useTerraformResources(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
   useEffect(()=>{ return ()=>{ pollCancelRef.current.cancelled=true; }; },[]);
 
-  // CHANGE 3: auto-hide terminated row after 45s
   useEffect(()=>{
     if (lifecycle === 'terminated') {
       const t = setTimeout(()=>setHidden(true), 45000);
       return ()=>clearTimeout(t);
     }
   }, [lifecycle]);
-
-  const getDisabledActions = () => {
-    if (!infraReady) return ['apply','stop','start','terminate'];
-    if (actionState!==INFRA_STATES.IDLE&&actionState!==INFRA_STATES.SUCCEEDED&&actionState!==INFRA_STATES.FAILED&&actionState!==INFRA_STATES.TIMEOUT) return ['apply','stop','start','terminate'];
-    if (!lifecycle) return [];
-    const allowed=ALLOWED_ACTIONS[lifecycle]||[];
-    return ['apply','stop','start','terminate'].filter(a=>!allowed.includes(a));
-  };
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
@@ -1520,7 +1640,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     </div>
   );
 
-  // CHANGE 4: Terminated — red dot, auto-hides after 45s
+  // ── Terminated ──
   if (lifecycle === 'terminated') {
     if (hidden) return null;
     return (
@@ -1542,7 +1662,14 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           <div className="project-row__detail">
             <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
             <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-            <GhostStateBanner project={project} />
+            {/* Show TF resource names when terminated */}
+            {project.resources && project.resources.length > 0 && (
+              <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
+                {project.resources.map((r,i)=>(
+                  <ExpandableResourceRow key={i} resource={{...r, status:'unknown', row:null}} project={project} lifecycle={lifecycle} tfResources={tfResources} />
+                ))}
+              </div>
+            )}
             <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
               All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
             </div>
@@ -1552,9 +1679,13 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   }
 
-  // CHANGE 1: lifecycle-aware status — stopped forces yellow
+  // ── Normal project ──
   const rawStatus = loading ? 'unknown' : worstStatus(resourceStatuses.map(r => r.status));
-  const status    = lifecycle === 'stopped' ? 'yellow' : rawStatus;
+  const status    = lifecycle === 'stopped'
+    ? 'yellow'
+    : lifecycle === 'provisioned' && rawStatus === 'unknown'
+      ? 'green'
+      : rawStatus;
 
   const hasResources = project.resources&&project.resources.length>0;
   const hasDashboard = !!(project.dashboardGuid||project.dashboardLink);
@@ -1599,8 +1730,9 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
     return (
       <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
-        {/* CHANGE 7: pass lifecycle to ExpandableResourceRow */}
-        {resourceStatuses.map((r,i)=><ExpandableResourceRow key={i} resource={r} project={project} lifecycle={lifecycle} />)}
+        {resourceStatuses.map((r,i)=>(
+          <ExpandableResourceRow key={i} resource={r} project={project} lifecycle={lifecycle} tfResources={tfResources} />
+        ))}
       </div>
     );
   };
@@ -1613,8 +1745,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__left">
           <StatusDot status={effectiveStatus} />
           <span className="project-row__name">{project.name}</span>
-          {/* CHANGE 5: Waiting for metrics badge when provisioned + no data */}
-          {!isBusy && lifecycle === 'provisioned' && status === 'unknown' && !loading && (
+          {!isBusy && lifecycle === 'provisioned' && status === 'green' && rawStatus === 'unknown' && !loading && (
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700,
               color:'#7a8aaa', background:'rgba(122,138,170,0.12)', border:'1px solid rgba(122,138,170,0.3)',
               borderRadius:100, padding:'2px 9px', letterSpacing:'0.4px', flexShrink:0 }}>
