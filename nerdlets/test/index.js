@@ -1843,16 +1843,7 @@ const EagleEye = () => {
   const [lifecycles,   setLifecycles]   = useState({});
 
   useEffect(()=>{
-    // Load providers — debug log shows exactly what NerdStorage returns
-
-    AccountStorageMutation.mutate({
-      accountId:  ACCOUNT_ID,
-      actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-      collection: STORAGE_COLLECTION,
-      documentId: STORAGE_LIFECYCLE_ID,
-      document:   { lifecycles: {} },
-    });
-    
+    // Load providers — debug log shows exactly what NerdStorage returns  
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
         console.log('[Eagle Eye] RAW NerdStorage response:', JSON.stringify({ data, error }));
