@@ -27,16 +27,13 @@ const mergeAutoDiscovered = (providers) => {
     );
 
     if (existingProject) {
-      // If project exists but is explicitly empty/deleted/billingOnly — leave it alone
       if (existingProject.empty || existingProject.deleted || existingProject.billingOnly) continue;
-      // If project exists but has NO resources — inject auto-discovered resources
       if (!existingProject.resources || existingProject.resources.length === 0) {
         existingProject.resources = Array.isArray(discovered.resources) ? discovered.resources : [];
       }
       continue;
     }
 
-    // Project doesn't exist at all — add it
     providerEntry.projects.push({
       name,
       projectDirName: dirName,
@@ -144,9 +141,6 @@ const ec2ProjectFilter = (project) => {
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
 };
 
-// FIX: Save exactly what was configured — do NOT merge before saving.
-// mergeAutoDiscovered runs on load, not on save. This way user changes
-// (like empty:true) are stored faithfully and not overwritten by auto-discovery.
 const persistProviders = async (newProviders) => {
   console.log('[Eagle Eye] SAVING to NerdStorage:', JSON.stringify(
     newProviders.map(p => ({
@@ -795,15 +789,28 @@ const Ec2CountLoader = ({ project, onCounts, loaded }) => {
   );
 };
 
-const ExpandableResourceRow = ({ resource:r, project }) => {
+// ─── CHANGE 6: ExpandableResourceRow — accepts lifecycle, overrides display status ───
+const ExpandableResourceRow = ({ resource:r, project, lifecycle }) => {
   const [open, setOpen] = React.useState(false);
   const [ec2Counts, setEc2Counts] = React.useState(null);
-  const hasSubList  = !!(SERVICE_QUERIES[r.type]);
-  const dotCls      = r.status==='green'?'green':r.status==='yellow'?'yellow':r.status==='red'?'red':'grey';
-  const statusColor = r.status==='green'?'#00d4aa':r.status==='yellow'?'#f5a623':r.status==='red'?'#ff4d6d':'#7a8aaa';
+  const hasSubList = !!(SERVICE_QUERIES[r.type]);
+
+  // Lifecycle-aware display: stopped forces yellow, provisioned keeps unknown (grey + waiting label)
+  const displayStatus = (() => {
+    if (lifecycle === 'stopped')  return 'yellow';
+    return r.status;
+  })();
+
+  const dotCls      = displayStatus==='green'?'green':displayStatus==='yellow'?'yellow':displayStatus==='red'?'red':'grey';
+  const statusColor = displayStatus==='green'?'#00d4aa':displayStatus==='yellow'?'#f5a623':displayStatus==='red'?'#ff4d6d':'#7a8aaa';
   const isPaused    = canBePaused(r.type, r.row);
-  const statusLabel = r.status==='green'?'✓ Running':r.status==='yellow'?(isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped'):r.status==='red'?(r.alwaysOn?'✗ Errors':'✗ Stopped'):'— No Data';
-  const query       = hasSubList?(typeof SERVICE_QUERIES[r.type]==='function'?SERVICE_QUERIES[r.type](project):null):null;
+  const statusLabel = displayStatus==='green'  ? '✓ Running'
+    : displayStatus==='yellow' ? (isPaused?'⊘ Paused':r.alwaysOn?'⚠ Warning':'✗ Stopped')
+    : displayStatus==='red'    ? (r.alwaysOn?'✗ Errors':'✗ Stopped')
+    : lifecycle==='provisioned' ? '◌ Waiting for metrics'
+    : '— No Data';
+
+  const query = hasSubList?(typeof SERVICE_QUERIES[r.type]==='function'?SERVICE_QUERIES[r.type](project):null):null;
 
   return (
     <div style={{ borderRadius:6, overflow:'hidden', background:'rgba(255,255,255,0.03)' }}>
@@ -1390,6 +1397,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [expanded,     setExpanded]     = useState(false);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
+  // CHANGE 2: hidden state for terminated auto-hide
+  const [hidden,       setHidden]       = useState(false);
   const pollCancelRef = useRef({ cancelled: false });
 
   const ghToken = React.useContext(GhTokenContext);
@@ -1405,15 +1414,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
-  const infraDisabledReason = (() => {
-    if (!project.projectDirName)       return 'No project directory configured';
-    if (!ghToken)                      return 'Set GitHub token (⚙ Config) to enable';
-    if (tfLoading||hasTf===null)       return 'Checking repo for Terraform files…';
-    if (hasTf===false)                 return 'No .tf files found — add infra first';
-    return '';
-  })();
-
   useEffect(()=>{ return ()=>{ pollCancelRef.current.cancelled=true; }; },[]);
+
+  // CHANGE 3: auto-hide terminated row after 45s
+  useEffect(()=>{
+    if (lifecycle === 'terminated') {
+      const t = setTimeout(()=>setHidden(true), 45000);
+      return ()=>clearTimeout(t);
+    }
+  }, [lifecycle]);
 
   const getDisabledActions = () => {
     if (!infraReady) return ['apply','stop','start','terminate'];
@@ -1451,7 +1460,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     onInfraAction(proj,action,handleActionDispatched);
   },[onInfraAction,handleActionDispatched]);
 
-  const disabledActions = getDisabledActions();
   const isBusy = actionState===INFRA_STATES.DISPATCHING||actionState===INFRA_STATES.RUNNING;
 
   // ── Deleted ──
@@ -1512,35 +1520,42 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     </div>
   );
 
-  // ── Terminated ──
-  if (lifecycle==='terminated') return (
-    <div className={`project-row project-row--deleted${expanded?' project-row--expanded':''}`} style={{ animationDelay:`${index*80}ms`, borderColor:'rgba(255,77,109,0.35)' }}>
-      <div className="project-row__main" onClick={()=>setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
-        <div className="project-row__left">
-          <span className="status-dot status-dot--grey" />
-          <span className="project-row__name">{project.name}</span>
-          <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
-            <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
-          </span>
-        </div>
-        <div className="project-row__right">
-          <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
-        </div>
-      </div>
-      {expanded&&(
-        <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
-          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-          <GhostStateBanner project={project} />
-          <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
-            All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
+  // CHANGE 4: Terminated — red dot, auto-hides after 45s
+  if (lifecycle === 'terminated') {
+    if (hidden) return null;
+    return (
+      <div className={`project-row project-row--red${expanded?' project-row--expanded':''}`}
+        style={{ animationDelay:`${index*80}ms` }}>
+        <div className="project-row__main" onClick={()=>setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
+          <div className="project-row__left">
+            <span className="status-dot status-dot--red" />
+            <span className="project-row__name">{project.name}</span>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#ff4d6d', background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase' }}>
+              <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
+            </span>
+          </div>
+          <div className="project-row__right">
+            <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
           </div>
         </div>
-      )}
-    </div>
-  );
+        {expanded&&(
+          <div className="project-row__detail">
+            <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
+            <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
+            <GhostStateBanner project={project} />
+            <div style={{ padding:'8px 0 4px', color:'#7a8aaa', fontSize:12 }}>
+              All resources destroyed via <code style={{ color:'#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color:'#4285f4' }}>Apply</strong> to re-provision.
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
-  const status       = loading?'unknown':worstStatus(resourceStatuses.map(r=>r.status));
+  // CHANGE 1: lifecycle-aware status — stopped forces yellow
+  const rawStatus = loading ? 'unknown' : worstStatus(resourceStatuses.map(r => r.status));
+  const status    = lifecycle === 'stopped' ? 'yellow' : rawStatus;
+
   const hasResources = project.resources&&project.resources.length>0;
   const hasDashboard = !!(project.dashboardGuid||project.dashboardLink);
   const handleRowClick = useCallback(()=>setExpanded(p=>!p),[]);
@@ -1584,7 +1599,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
     return (
       <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
-        {resourceStatuses.map((r,i)=><ExpandableResourceRow key={i} resource={r} project={project} />)}
+        {/* CHANGE 7: pass lifecycle to ExpandableResourceRow */}
+        {resourceStatuses.map((r,i)=><ExpandableResourceRow key={i} resource={r} project={project} lifecycle={lifecycle} />)}
       </div>
     );
   };
@@ -1597,6 +1613,14 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__left">
           <StatusDot status={effectiveStatus} />
           <span className="project-row__name">{project.name}</span>
+          {/* CHANGE 5: Waiting for metrics badge when provisioned + no data */}
+          {!isBusy && lifecycle === 'provisioned' && status === 'unknown' && !loading && (
+            <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700,
+              color:'#7a8aaa', background:'rgba(122,138,170,0.12)', border:'1px solid rgba(122,138,170,0.3)',
+              borderRadius:100, padding:'2px 9px', letterSpacing:'0.4px', flexShrink:0 }}>
+              <SpinnerIcon size={9} color="#7a8aaa" /> Waiting for metrics
+            </span>
+          )}
           {!isBusy&&(tfLoading
             ? <NoInfraBadge checking />
             : showGhostState
@@ -1763,7 +1787,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.deleted) return 'deleted';
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
-    if (p.billingOnly) return 'billing'; // neutral sentinel — excluded from cloudStatus
+    if (p.billingOnly) return 'billing';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
@@ -1777,7 +1801,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
 
-  // FIX: exclude billing sentinel and unknown from resource health — billing has its own pill
   const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
 
@@ -1854,7 +1877,6 @@ const EagleEye = () => {
   const [lifecycles,   setLifecycles]   = useState({});
 
   useEffect(()=>{
-    // Load providers — debug log shows exactly what NerdStorage returns  
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
         console.log('[Eagle Eye] RAW NerdStorage response:', JSON.stringify({ data, error }));
@@ -1890,7 +1912,6 @@ const EagleEye = () => {
         setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
       });
 
-    // Load GitHub token
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data })=>{
         const token = data?.document?.accessToken ?? data?.accessToken ?? null;
@@ -1898,7 +1919,6 @@ const EagleEye = () => {
       })
       .catch(()=>{});
 
-    // Load persisted lifecycle states
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_LIFECYCLE_ID })
       .then(({ data })=>{
         const loaded = data?.document?.lifecycles ?? data?.lifecycles ?? null;
@@ -1910,7 +1930,6 @@ const EagleEye = () => {
       .catch(()=>{});
   },[]);
 
-  // FIX: NerdStorage write moved OUTSIDE setState callback to guarantee execution
   const handleLifecycleChange = useCallback((projectKey, newLifecycle) => {
     let updatedForSave = null;
     setLifecycles(prev => {
@@ -1918,7 +1937,6 @@ const EagleEye = () => {
       updatedForSave = updated;
       return updated;
     });
-    // Write outside setState — setState callbacks must be pure
     setTimeout(() => {
       if (!updatedForSave) return;
       console.log('[Eagle Eye] Saving lifecycle:', JSON.stringify(updatedForSave));
@@ -1935,8 +1953,6 @@ const EagleEye = () => {
     }, 0);
   }, []);
 
-  // FIX: Save raw newProviders (no pre-merge). mergeAutoDiscovered runs on load only.
-  // This ensures user changes like empty:true are never lost by a merge overwrite.
   const handleSave = async (newProviders) => {
     const saved = await persistProviders(newProviders);
     setProviders(mergeAutoDiscovered(saved));
