@@ -1831,7 +1831,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.deleted) return 'deleted';
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
-    if (p.billingOnly) return billingCostToStatus(billingCost);
+    if (p.billingOnly) return 'billing';          // ← use neutral sentinel, not a health color
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
@@ -1842,9 +1842,10 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     return worstStatus(r.resourceStatuses.map(rs => rs.status));
   });
 
+
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
-  const live        = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
+  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown')):cloudStatus;
