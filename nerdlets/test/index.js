@@ -19,13 +19,24 @@ const mergeAutoDiscovered = (providers) => {
     if (!provider || !name) continue;
     const providerEntry = merged.find(p => p.id === provider);
     if (!providerEntry) continue;
-    // FIX: match case-insensitively and prefer dirName match to avoid duplicates
-    const alreadyExists = providerEntry.projects.some(
+
+    const existingProject = providerEntry.projects.find(
       p => p.projectDirName === dirName ||
            p.name === name ||
            p.name?.toLowerCase() === name?.toLowerCase()
     );
-    if (alreadyExists) continue;
+
+    if (existingProject) {
+      // If project exists but is explicitly empty/deleted/billingOnly — leave it alone
+      if (existingProject.empty || existingProject.deleted || existingProject.billingOnly) continue;
+      // If project exists but has NO resources — inject auto-discovered resources
+      if (!existingProject.resources || existingProject.resources.length === 0) {
+        existingProject.resources = Array.isArray(discovered.resources) ? discovered.resources : [];
+      }
+      continue;
+    }
+
+    // Project doesn't exist at all — add it
     providerEntry.projects.push({
       name,
       projectDirName: dirName,
