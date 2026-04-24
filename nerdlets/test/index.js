@@ -4,7 +4,6 @@ import { NrqlQuery, navigation, AccountStorageMutation, AccountStorageQuery } fr
 import './styles.scss';
 
 const GhTokenContext = React.createContext('');
-// ── NEW: context that holds persisted lifecycle map and its setter ──────────────
 const LifecycleContext = React.createContext({ lifecycles: {}, setLifecycle: () => {} });
 
 let AUTO_DISCOVERED = {};
@@ -20,8 +19,11 @@ const mergeAutoDiscovered = (providers) => {
     if (!provider || !name) continue;
     const providerEntry = merged.find(p => p.id === provider);
     if (!providerEntry) continue;
+    // FIX: match case-insensitively and prefer dirName match to avoid duplicates
     const alreadyExists = providerEntry.projects.some(
-      p => p.name === name || p.projectDirName === dirName
+      p => p.projectDirName === dirName ||
+           p.name === name ||
+           p.name?.toLowerCase() === name?.toLowerCase()
     );
     if (alreadyExists) continue;
     providerEntry.projects.push({
@@ -41,7 +43,6 @@ const ACCOUNT_ID         = 7782479;
 const STORAGE_COLLECTION = 'eagle-eye';
 const STORAGE_DOC_ID     = 'providers';
 const STORAGE_CONFIG_ID  = 'config';
-// ── NEW: document id for persisted lifecycle states ────────────────────────────
 const STORAGE_LIFECYCLE_ID = 'lifecycles';
 
 const GH_OWNER          = 'PavanTibil';
@@ -132,17 +133,19 @@ const ec2ProjectFilter = (project) => {
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
 };
 
+// FIX: Save exactly what was configured — do NOT merge before saving.
+// mergeAutoDiscovered runs on load, not on save. This way user changes
+// (like empty:true) are stored faithfully and not overwritten by auto-discovery.
 const persistProviders = async (newProviders) => {
-  const merged = mergeAutoDiscovered(newProviders);
   const { error } = await AccountStorageMutation.mutate({
     accountId:  ACCOUNT_ID,
     actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
     collection: STORAGE_COLLECTION,
     documentId: STORAGE_DOC_ID,
-    document:   { providers: merged },
+    document:   { providers: newProviders },
   });
   if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
-  return merged;
+  return newProviders;
 };
 
 const useGithubTfFiles = (projectDirName, token) => {
@@ -1456,7 +1459,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const ghToken = React.useContext(GhTokenContext);
 
-  // ── NEW: read & write lifecycle from NerdStorage-backed context ───────────────
   const { lifecycles, setLifecycle: persistLifecycle } = React.useContext(LifecycleContext);
   const projectKey = project.projectDirName || project.name;
   const lifecycle  = lifecycles[projectKey] ?? null;
@@ -1464,7 +1466,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     (val) => persistLifecycle(projectKey, val),
     [persistLifecycle, projectKey]
   );
-  // ─────────────────────────────────────────────────────────────────────────────
 
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
@@ -1498,9 +1499,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       if(conclusion==='success'){
         setActionState(INFRA_STATES.SUCCEEDED);
         const next=NEXT_LIFECYCLE[action];
-        // ── NEW: persist the new lifecycle state to NerdStorage ────────────────
         if(next) setLifecycle(next);
-        // ──────────────────────────────────────────────────────────────────────
       }
       else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
       else setActionState(INFRA_STATES.FAILED);
@@ -1832,7 +1831,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.deleted) return 'deleted';
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
-    if (p.billingOnly) return 'billing';          // ← use neutral sentinel, not a health color
+    if (p.billingOnly) return 'billing'; // neutral sentinel — excluded from cloudStatus
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
@@ -1843,14 +1842,16 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     return worstStatus(r.resourceStatuses.map(rs => rs.status));
   });
 
-
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
+
+  // FIX: exclude billing sentinel and unknown from resource health — billing has its own pill
   const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
+
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown')):cloudStatus;
-  const cardMeta    = STATUS_META[overall]??STATUS_META.green;
+  const cardMeta    = STATUS_META[overall]??STATUS_META.unknown;
   const meta        = PROVIDER_META[provider.id], accentColor=meta.accent;
   const gcpBillingProject       = provider.id==='gcp'?provider.projects.find(p=>p.billingOnly):null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured??false;
@@ -1910,7 +1911,7 @@ const CloudCard = ({ provider, onManage, onInfraAction }) => {
   );
 };
 
-// ─── EagleEye root — owns lifecycle persistence ────────────────────────────────
+// ─── EagleEye root ────────────────────────────────────────────────────────────
 const EagleEye = () => {
   const [providers,    setProviders]    = useState(null);
   const [ghToken,      setGhToken]      = useState('');
@@ -1918,30 +1919,57 @@ const EagleEye = () => {
   const [showConfig,   setShowConfig]   = useState(false);
   const [loadError,    setLoadError]    = useState(false);
   const [infraConfirm, setInfraConfirm] = useState(null);
-  // ── NEW: persisted lifecycle map { [projectKey]: 'provisioned'|'stopped'|'terminated' }
   const [lifecycles,   setLifecycles]   = useState({});
 
   useEffect(()=>{
-    // Load providers
+    // Load providers — debug log shows exactly what NerdStorage returns
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
-        if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
-        else if (data?.document?.providers&&Array.isArray(data.document.providers)&&data.document.providers.length>0) { setProviders(mergeAutoDiscovered(data.document.providers)); }
-        else { setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
-      }).catch(()=>{ setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
+        console.log('[Eagle Eye] NerdStorage providers loaded:', JSON.stringify(
+          data?.document?.providers?.map(p => ({
+            id: p.id,
+            projects: p.projects?.map(j => ({
+              name: j.name,
+              dirName: j.projectDirName,
+              empty: j.empty,
+              deleted: j.deleted,
+              billingOnly: j.billingOnly,
+            }))
+          }))
+        ));
+        if (error) {
+          console.error('[Eagle Eye] NerdStorage load error:', error);
+          setLoadError(true);
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        } else if (data?.document?.providers&&Array.isArray(data.document.providers)&&data.document.providers.length>0) {
+          setProviders(mergeAutoDiscovered(data.document.providers));
+        } else {
+          console.log('[Eagle Eye] No saved providers found, using defaults');
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        }
+      }).catch((e)=>{
+        console.error('[Eagle Eye] NerdStorage load exception:', e);
+        setLoadError(true);
+        setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+      });
 
     // Load GitHub token
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data })=>{ if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
       .catch(()=>{});
 
-    // ── NEW: Load persisted lifecycle states ───────────────────────────────────
+    // Load persisted lifecycle states
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_LIFECYCLE_ID })
-      .then(({ data })=>{ if (data?.document?.lifecycles) setLifecycles(data.document.lifecycles); })
+      .then(({ data })=>{
+        if (data?.document?.lifecycles) {
+          console.log('[Eagle Eye] Lifecycles loaded:', JSON.stringify(data.document.lifecycles));
+          setLifecycles(data.document.lifecycles);
+        }
+      })
       .catch(()=>{});
   },[]);
 
-  // ── NEW: persist a single project's lifecycle to NerdStorage ──────────────────
+  // FIX: NerdStorage write moved OUTSIDE setState callback to guarantee execution
   const handleLifecycleChange = useCallback((projectKey, newLifecycle) => {
     let updatedForSave = null;
     setLifecycles(prev => {
@@ -1949,22 +1977,28 @@ const EagleEye = () => {
       updatedForSave = updated;
       return updated;
     });
-
+    // Write outside setState — setState callbacks must be pure
     setTimeout(() => {
       if (!updatedForSave) return;
+      console.log('[Eagle Eye] Saving lifecycle:', JSON.stringify(updatedForSave));
       AccountStorageMutation.mutate({
         accountId:  ACCOUNT_ID,
         actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
         collection: STORAGE_COLLECTION,
         documentId: STORAGE_LIFECYCLE_ID,
         document:   { lifecycles: updatedForSave },
-      }).catch(err => console.error('[Eagle Eye] lifecycle save failed:', err));
+      }).then(({ error }) => {
+        if (error) console.error('[Eagle Eye] lifecycle save failed:', error);
+        else console.log('[Eagle Eye] lifecycle saved OK');
+      }).catch(err => console.error('[Eagle Eye] lifecycle save exception:', err));
     }, 0);
   }, []);
 
+  // FIX: Save raw newProviders (no pre-merge). mergeAutoDiscovered runs on load only.
+  // This ensures user changes like empty:true are never lost by a merge overwrite.
   const handleSave = async (newProviders) => {
-    await persistProviders(newProviders);
-    setProviders(mergeAutoDiscovered(newProviders));
+    const saved = await persistProviders(newProviders);
+    setProviders(mergeAutoDiscovered(saved));
   };
 
   const handleSaveToken = async (token) => {
@@ -1978,7 +2012,6 @@ const EagleEye = () => {
   const handleInfraAction=(project,action,onDispatched)=>{ setInfraConfirm({ project, action, onDispatched }); };
 
   return (
-    // ── NEW: wrap both contexts so every ProjectRow can read/write lifecycles ──
     <LifecycleContext.Provider value={{ lifecycles, setLifecycle: handleLifecycleChange }}>
       <GhTokenContext.Provider value={ghToken}>
         <div className="eagle-eye">
