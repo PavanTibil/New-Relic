@@ -133,15 +133,16 @@ const ec2ProjectFilter = (project) => {
 };
 
 const persistProviders = async (newProviders) => {
+  const merged = mergeAutoDiscovered(newProviders);
   const { error } = await AccountStorageMutation.mutate({
     accountId:  ACCOUNT_ID,
     actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
     collection: STORAGE_COLLECTION,
     documentId: STORAGE_DOC_ID,
-    document:   { providers: newProviders },
+    document:   { providers: merged },
   });
   if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
-  return newProviders;
+  return merged;
 };
 
 const useGithubTfFiles = (projectDirName, token) => {
@@ -1963,7 +1964,7 @@ const EagleEye = () => {
 
   const handleSave = async (newProviders) => {
     await persistProviders(newProviders);
-    setProviders(newProviders);
+    setProviders(mergeAutoDiscovered(newProviders));
   };
 
   const handleSaveToken = async (token) => {
