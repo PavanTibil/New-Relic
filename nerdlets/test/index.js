@@ -1845,7 +1845,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
   const live        = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
-  const cloudStatus = live.length>0?worstStatus(live):'green';
+  const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown')):cloudStatus;
   const cardMeta    = STATUS_META[overall]??STATUS_META.green;
@@ -1940,19 +1940,24 @@ const EagleEye = () => {
   },[]);
 
   // ── NEW: persist a single project's lifecycle to NerdStorage ──────────────────
-  const handleLifecycleChange = useCallback(async (projectKey, newLifecycle) => {
+  const handleLifecycleChange = useCallback((projectKey, newLifecycle) => {
+    let updatedForSave = null;
     setLifecycles(prev => {
       const updated = { ...prev, [projectKey]: newLifecycle };
-      // fire-and-forget write to NerdStorage
+      updatedForSave = updated;
+      return updated;
+    });
+
+    setTimeout(() => {
+      if (!updatedForSave) return;
       AccountStorageMutation.mutate({
         accountId:  ACCOUNT_ID,
         actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
         collection: STORAGE_COLLECTION,
         documentId: STORAGE_LIFECYCLE_ID,
-        document:   { lifecycles: updated },
+        document:   { lifecycles: updatedForSave },
       }).catch(err => console.error('[Eagle Eye] lifecycle save failed:', err));
-      return updated;
-    });
+    }, 0);
   }, []);
 
   const handleSave = async (newProviders) => {
