@@ -1949,11 +1949,15 @@ const EagleEye = () => {
           console.error('[Eagle Eye] NerdStorage load error:', error);
           setLoadError(true);
           setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-        } else if (data?.document?.providers&&Array.isArray(data.document.providers)&&data.document.providers.length>0) {
-          setProviders(mergeAutoDiscovered(data.document.providers));
         } else {
-          console.log('[Eagle Eye] No saved providers found, using defaults');
-          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+          const loaded = data?.document?.providers ?? data?.providers ?? null;
+          if (loaded && Array.isArray(loaded) && loaded.length > 0) {
+            console.log('[Eagle Eye] Providers loaded successfully, count:', loaded.length);
+            setProviders(mergeAutoDiscovered(loaded));
+          } else {
+            console.log('[Eagle Eye] No saved providers found, using defaults');
+            setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+          }
         }
       }).catch((e)=>{
         console.error('[Eagle Eye] NerdStorage load exception:', e);
