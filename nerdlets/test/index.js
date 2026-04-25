@@ -2138,4 +2138,3 @@ const EagleEye = () => {
   );
 };
 
-export default EagleEye;
