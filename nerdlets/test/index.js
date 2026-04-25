@@ -780,90 +780,6 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   );
 };
 
-// ─── Dots dropdown ────────────────────────────────────────────────────────────
-const ProjectDotsDropdown = ({ project, onAction, disabledActions=[], activeAction=null, infraReason='' }) => {
-  const [open, setOpen] = useState(false);
-  const [pos,  setPos]  = useState({ top:0, left:0 });
-  const btnRef = useRef(null), rafRef = useRef(null);
-
-  const updatePos = () => {
-    if (!btnRef.current) return;
-    const r = btnRef.current.getBoundingClientRect();
-    const w = 260; let left = r.right-w;
-    if (left<8) left=r.left;
-    if (left+w>window.innerWidth-8) left=window.innerWidth-w-8;
-    setPos({ top:r.bottom+6, left });
-  };
-  const startTracking = () => { const tick=()=>{updatePos();rafRef.current=requestAnimationFrame(tick);}; rafRef.current=requestAnimationFrame(tick); };
-  const stopTracking  = () => { if (rafRef.current){cancelAnimationFrame(rafRef.current);rafRef.current=null;} };
-  const handleOpen = (e) => { e.stopPropagation(); if (open){setOpen(false);stopTracking();return;} updatePos(); setOpen(true); startTracking(); };
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown=(e)=>{if(btnRef.current&&!btnRef.current.contains(e.target)){setOpen(false);stopTracking();}};
-    document.addEventListener('mousedown', onDown);
-    return ()=>document.removeEventListener('mousedown', onDown);
-  }, [open]);
-  useEffect(()=>()=>stopTracking(),[]);
-
-  const isBusy = activeAction!==null;
-  const allDisabled = ['apply','stop','start','terminate'].every(a=>disabledActions.includes(a));
-
-  const menuBtn = (onClick,color,label,desc,disabled,icon) => {
-    const isRunning = isBusy&&activeAction===label.toLowerCase();
-    const actualDisabled = disabled||isBusy;
-    const disabledReason = allDisabled&&infraReason?infraReason:isBusy?`Locked — ${activeAction} in progress`:desc;
-    return (
-      <button onClick={onClick} disabled={actualDisabled}
-        style={{ display:'flex', alignItems:'center', gap:10, width:'100%', padding:'10px 14px', background:'transparent', border:'none', cursor:actualDisabled?'not-allowed':'pointer', textAlign:'left', outline:'none', opacity:actualDisabled?0.35:1 }}
-        onMouseEnter={e=>{if(!actualDisabled)e.currentTarget.style.background=`${color}18`;}}
-        onMouseLeave={e=>{e.currentTarget.style.background='transparent';}}>
-        {isRunning?<span style={{ width:16,height:16,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}><SpinnerIcon size={12} color={color} /></span>
-          :icon?<span style={{ width:16,height:16,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>{icon}</span>
-          :<span style={{ width:8,height:8,borderRadius:'50%',background:actualDisabled?'#8899aa':color,flexShrink:0 }} />}
-        <div style={{ flex:1 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:actualDisabled?'#6a7a8a':color }}>{label}</div>
-          <div style={{ fontSize:10, color:'#5a6888', marginTop:1 }}>{isRunning?'Running on GitHub Actions…':actualDisabled?disabledReason:desc}</div>
-        </div>
-        {isRunning&&<span style={{ fontSize:10, color, fontWeight:700 }}>●</span>}
-      </button>
-    );
-  };
-
-  const dropdown = open ? ReactDOM.createPortal(
-    <div style={{ position:'fixed', top:pos.top, left:pos.left, zIndex:99999, background:'#0f1629', border:'1px solid rgba(255,255,255,0.13)', borderRadius:10, boxShadow:'0 12px 40px rgba(0,0,0,0.75)', width:260, overflow:'hidden', animation:'eeDropIn 0.12s ease' }}>
-      <style>{`@keyframes eeDropIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      <div style={{ padding:'8px 14px 6px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
-        <div style={{ fontSize:11, fontWeight:700, color:'#c8d4f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{project.name}</div>
-        {project.projectDirName&&<div style={{ fontSize:10, color:'#3d5070', marginTop:1, fontFamily:'monospace' }}>projects/{project.projectDirName}</div>}
-        <div style={{ fontSize:10, color:'#4a6080', marginTop:1 }}>Infrastructure actions → GitHub Actions</div>
-        {allDisabled&&infraReason&&(<div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#7a8aaa', background:'rgba(122,138,170,0.08)', border:'1px solid rgba(122,138,170,0.2)', borderRadius:5, padding:'4px 8px' }}><span style={{ fontSize:12 }}>📂</span><span>{infraReason}</span></div>)}
-        {isBusy&&!allDisabled&&<div style={{ marginTop:4, display:'flex', alignItems:'center', gap:5, fontSize:10, color:'#f5a623' }}><SpinnerIcon size={10} color="#f5a623" /><span>Action in progress — buttons locked</span></div>}
-      </div>
-      {menuBtn((e)=>{e.stopPropagation();setOpen(false);stopTracking();onAction(project,'apply');},'#4285f4','Apply','Deploy / update infrastructure',disabledActions.includes('apply'))}
-      {menuBtn((e)=>{e.stopPropagation();setOpen(false);stopTracking();onAction(project,'stop');},'#f5a623','Stop','Pause all services via CLI',disabledActions.includes('stop'))}
-      {menuBtn((e)=>{e.stopPropagation();setOpen(false);stopTracking();onAction(project,'start');},'#00d4aa','Start','Resume all services via CLI',disabledActions.includes('start'))}
-      {menuBtn((e)=>{e.stopPropagation();setOpen(false);stopTracking();onAction(project,'terminate');},'#ff4d6d','Terminate','Destroy all resources (terraform destroy)',disabledActions.includes('terminate'),<PowerOffIcon size={13} color="#ff4d6d" />)}
-    </div>,
-    document.body
-  ) : null;
-
-  return (
-    <>
-      <button ref={btnRef} onClick={handleOpen} title="Infrastructure actions"
-        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', gap:3, width:26, height:26, borderRadius:7, flexShrink:0, border:'none', outline:'none', boxShadow:'none', background:open?'rgba(255,255,255,0.08)':'transparent', cursor:'pointer', padding:0, transition:'background 0.15s', position:'relative' }}
-        onMouseEnter={e=>{if(!open)e.currentTarget.style.background='rgba(255,255,255,0.08)';}}
-        onMouseLeave={e=>{if(!open)e.currentTarget.style.background='transparent';}}>
-        {activeAction!==null&&<span style={{ position:'absolute', top:-2, right:-2, width:7, height:7, borderRadius:'50%', background:'#f5a623', border:'1.5px solid #0f1629', animation:'eePulse 1s ease-in-out infinite' }} />}
-        <style>{`@keyframes eePulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
-        <span style={{ width:3,height:3,borderRadius:'50%',background:'#7a8aaa',flexShrink:0 }} />
-        <span style={{ width:3,height:3,borderRadius:'50%',background:'#7a8aaa',flexShrink:0 }} />
-        <span style={{ width:3,height:3,borderRadius:'50%',background:'#7a8aaa',flexShrink:0 }} />
-      </button>
-      {dropdown}
-    </>
-  );
-};
 
 // ─── EC2 helpers ───────────────────────────────────────────────────────────────
 const extractFacetName = (series) => {
@@ -1486,14 +1402,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
-  const infraDisabledReason = (() => {
-    if (!project.projectDirName)       return 'No project directory configured';
-    if (!ghToken)                      return 'Set GitHub token (⚙ Config) to enable';
-    if (tfLoading||hasTf===null)       return 'Checking repo for Terraform files…';
-    if (hasTf===false)                 return 'No .tf files found — add infra first';
-    return '';
-  })();
-
   useEffect(()=>{ return ()=>{ pollCancelRef.current.cancelled=true; }; },[]);
 
   const getDisabledActions = () => {
@@ -1503,6 +1411,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const allowed=ALLOWED_ACTIONS[lifecycle]||[];
     return ['apply','stop','start','terminate'].filter(a=>!allowed.includes(a));
   };
+  const disabledActions = getDisabledActions();
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
@@ -1582,7 +1491,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {tfLoading?<NoInfraBadge checking />:!infraReady?<NoInfraBadge />:null}
         </div>
         <div className="project-row__right">
-          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
           <span style={{ fontSize:10,fontWeight:600,color:'#8899bb',background:'rgba(100,120,170,0.18)',border:'1px solid rgba(100,120,170,0.4)',borderRadius:100,padding:'2px 10px',textTransform:'uppercase' }}>No Monitoring</span>
           {project.dashboardGuid&&<DashboardIcon onClick={e=>{e.stopPropagation();openDashboard(project);}} />}
           <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{e.stopPropagation();setExpanded(p=>!p);}}>›</span>
@@ -1609,7 +1517,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           </span>
         </div>
         <div className="project-row__right">
-          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
           <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`}>›</span>
         </div>
       </div>
@@ -1702,7 +1609,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           )}
         </div>
         <div className="project-row__right">
-          <ProjectDotsDropdown project={project} onAction={handleInfraAction} disabledActions={disabledActions} activeAction={activeAction} infraReason={infraDisabledReason} />
           <span className={`project-row__chevron${expanded?' project-row__chevron--open':''}`} onClick={e=>{e.stopPropagation();setExpanded(p=>!p);}}>›</span>
           {hasDashboard&&<DashboardIcon onClick={e=>{e.stopPropagation();openDashboard(project);}} />}
         </div>
@@ -1782,25 +1688,23 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.billingOnly) return 'billing_only';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
-    // No resources configured / not yet provisioned → unknown (grey)
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
-    // Filter out 'unknown' statuses — only count resources with real data
     const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
-    // If every resource came back with no data (all unknown), treat project as unknown
     if (nonUnknown.length === 0) return 'unknown';
     const stateKey = p.projectDirName || p.name;
     const lifecycle = infraStates?.[stateKey] || null;
-    if (!lifecycle) {
-      const hasRealSamples = r.resourceStatuses.some(rs => rs.row && (rs.row.samples ?? 0) > 0);
-      if (!hasRealSamples) return 'unknown';
-    }
+    if (!lifecycle) return 'unknown';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
   const projectHealthMap = {};
   provider.projects.forEach((p, i) => {
     const s = projectStatuses[i];
-    projectHealthMap[p.name] = s === 'billing_only' ? 'unknown' : (s ?? 'unknown');
+    if (s === 'billing_only') {
+      projectHealthMap[p.name] = billingCostToStatus(billingCost);
+    } else {
+      projectHealthMap[p.name] = s ?? 'unknown';
+    }
   });
 
   // Only count non-billing, non-deleted, non-empty projects that have real health data
