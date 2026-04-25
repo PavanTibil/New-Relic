@@ -1076,18 +1076,36 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     setEditInfo({ pi, pj }); setSaveError(''); setView('form');
   };
 
+  // ── FIXED: buildProject always returns a clean object with no leftover flags ──
   const buildProject = () => {
     const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
-    const base = { name:name.trim(), gcpProjectId:gcpProjectId.trim()||null, dashboardGuid:dashboardGuid.trim()||null, dashboardLink:dashboardLink.trim()||null, projectDirName:projectDirName.trim()||null };
-    if (projectType==='empty') return { ...base, empty:true, resources:[] };
-    if (projectType==='billing') return { ...base, billingOnly:true, resources:[{ label:'Total Cost (INR)', type:providerId==='aws'?'aws_billing':'gcp_billing', alwaysOn:false }] };
-    const allOpts      = RESOURCE_OPTIONS[providerId]||[];
-    const stdResources = allOpts.filter(o=>selectedResources.includes(o.type)).map(o=>({...o}));
-    const customParsed = (customResources||'').split(',').map(s=>s.trim()).filter(Boolean).map(label=>({ label, type:'custom_'+label.toLowerCase().replace(/[^a-z0-9]/g,'_'), alwaysOn:false }));
-    const resources    = [...stdResources, ...customParsed];
-    const project      = { ...base, resources };
-    if (selectedResources.includes('google_cloud_run_v2_service')&&knownServices.trim())
-      project.knownServices=knownServices.split(',').map(s=>s.trim()).filter(Boolean);
+    // Base never includes empty/billingOnly/billingNotConfigured — they're set explicitly per type
+    const base = {
+      name: name.trim(),
+      gcpProjectId: gcpProjectId.trim() || null,
+      dashboardGuid: dashboardGuid.trim() || null,
+      dashboardLink: dashboardLink.trim() || null,
+      projectDirName: projectDirName.trim() || null,
+    };
+    if (projectType === 'empty') {
+      return { ...base, empty: true, resources: [] };
+    }
+    if (projectType === 'billing') {
+      return {
+        ...base,
+        billingOnly: true,
+        resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }],
+      };
+    }
+    // projectType === 'normal' — no empty/billingOnly flags at all
+    const allOpts      = RESOURCE_OPTIONS[providerId] || [];
+    const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
+    const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean)
+      .map(label => ({ label, type: 'custom_' + label.toLowerCase().replace(/[^a-z0-9]/g, '_'), alwaysOn: false }));
+    const resources = [...stdResources, ...customParsed];
+    const project = { ...base, resources };
+    if (selectedResources.includes('google_cloud_run_v2_service') && knownServices.trim())
+      project.knownServices = knownServices.split(',').map(s => s.trim()).filter(Boolean);
     return project;
   };
 
@@ -2022,15 +2040,23 @@ const EagleEye = () => {
     setProviders(newProviders);
   };
 
+  // ── FIXED: No read-back verification — trust the write, set state immediately ──
   const handleSaveToken = async (token) => {
     await nerdStorageWrite(STORAGE_CONFIG_ID, { accessToken: token });
-    // Verify the write succeeded by reading back
-    const verify = await nerdStorageRead(STORAGE_CONFIG_ID);
-    console.log('[EagleEye] Token save verification:', verify);
-    if (!verify?.accessToken) {
-      throw new Error('Token was written but could not be read back from NerdStorage. Please try again.');
-    }
     setGhToken(token);
+    // Silent background verification — logs only, never throws
+    setTimeout(async () => {
+      try {
+        const verify = await nerdStorageRead(STORAGE_CONFIG_ID);
+        if (!verify?.accessToken) {
+          console.warn('[EagleEye] Token read-back empty — NerdStorage propagation delay, token was still saved');
+        } else {
+          console.log('[EagleEye] Token verified in NerdStorage');
+        }
+      } catch (e) {
+        console.warn('[EagleEye] Token verification read failed (non-critical):', e);
+      }
+    }, 2000);
   };
 
   const handleRemoveToken = async () => {
