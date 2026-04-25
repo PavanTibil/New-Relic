@@ -1411,7 +1411,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const allowed=ALLOWED_ACTIONS[lifecycle]||[];
     return ['apply','stop','start','terminate'].filter(a=>!allowed.includes(a));
   };
-  const disabledActions = getDisabledActions();
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
