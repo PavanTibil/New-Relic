@@ -1,6 +1,7 @@
 name: Auto-discover & Redeploy
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
