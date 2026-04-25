@@ -129,27 +129,39 @@ const ec2ProjectFilter = (project) => {
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
 };
 
-const persistProviders = async (newProviders) => {
+// ─── NerdStorage helpers ───────────────────────────────────────────────────────
+const nerdStorageWrite = async (documentId, document) => {
   const { error } = await AccountStorageMutation.mutate({
     accountId:  ACCOUNT_ID,
     actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
     collection: STORAGE_COLLECTION,
-    documentId: STORAGE_DOC_ID,
-    document:   { providers: newProviders },
+    documentId,
+    document,
   });
-  if (error) throw new Error('NerdStorage save failed: ' + (error.message || JSON.stringify(error)));
+  if (error) throw new Error('NerdStorage write failed: ' + (error.message || JSON.stringify(error)));
+};
+
+const nerdStorageRead = async (documentId) => {
+  const { data, error } = await AccountStorageQuery.query({
+    accountId:  ACCOUNT_ID,
+    collection: STORAGE_COLLECTION,
+    documentId,
+  });
+  if (error) throw new Error('NerdStorage read failed: ' + (error.message || JSON.stringify(error)));
+  return data?.document ?? null;
+};
+
+const persistProviders = async (newProviders) => {
+  await nerdStorageWrite(STORAGE_DOC_ID, { providers: newProviders });
   return newProviders;
 };
 
 const persistInfraStates = async (infraStates) => {
-  const { error } = await AccountStorageMutation.mutate({
-    accountId:  ACCOUNT_ID,
-    actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-    collection: STORAGE_COLLECTION,
-    documentId: STORAGE_INFRA_STATE_ID,
-    document:   { infraStates },
-  });
-  if (error) console.error('Failed to persist infra states:', error);
+  try {
+    await nerdStorageWrite(STORAGE_INFRA_STATE_ID, { infraStates });
+  } catch (e) {
+    console.error('[EagleEye] Failed to persist infra states:', e);
+  }
 };
 
 const useGithubTfFiles = (projectDirName, token) => {
@@ -506,29 +518,9 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
       )}
     </div>
     {hasToken ? (
-      <span style={{
-        fontSize:11, fontWeight:700,
-        color:'#5a9aee',
-        background:'rgba(66,133,244,0.12)',
-        border:'1px solid rgba(66,133,244,0.30)',
-        borderRadius:100,
-        padding:'1px 8px',
-        letterSpacing:'0.3px',
-        whiteSpace:'nowrap',
-        flexShrink:0,
-      }}>not provisioned</span>
+      <span style={{ fontSize:11, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.30)', borderRadius:100, padding:'1px 8px', letterSpacing:'0.3px', whiteSpace:'nowrap', flexShrink:0 }}>not provisioned</span>
     ) : (
-      <span style={{
-        fontSize:11, fontWeight:700,
-        color:'#5a6888',
-        background:'rgba(90,104,136,0.15)',
-        border:'1px solid rgba(90,104,136,0.3)',
-        borderRadius:100,
-        padding:'1px 8px',
-        letterSpacing:'0.3px',
-        whiteSpace:'nowrap',
-        flexShrink:0,
-      }}>no infra yet</span>
+      <span style={{ fontSize:11, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px solid rgba(90,104,136,0.3)', borderRadius:100, padding:'1px 8px', letterSpacing:'0.3px', whiteSpace:'nowrap', flexShrink:0 }}>no infra yet</span>
     )}
   </div>
 );
@@ -588,9 +580,15 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   const handleSave = async () => {
     if (!tokenInput.trim()) { setError('Token cannot be empty.'); return; }
     setSaving(true); setError('');
-    try { await onSave(tokenInput.trim()); setSaved(true); setTimeout(() => onClose(), 800); }
-    catch (e) { setError(e?.message || 'Save failed.'); }
-    finally { setSaving(false); }
+    try {
+      await onSave(tokenInput.trim());
+      setSaved(true);
+      setTimeout(() => onClose(), 800);
+    } catch (e) {
+      setError(e?.message || 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleRemove = async () => {
@@ -780,7 +778,6 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   );
 };
 
-
 // ─── EC2 helpers ───────────────────────────────────────────────────────────────
 const extractFacetName = (series) => {
   const groups = series?.metadata?.groups;
@@ -919,7 +916,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                   {({ data:ad, loading:al }) => (
                     <NrqlQuery accountIds={[ACCOUNT_ID]} query={mq} pollInterval={60000}>
                       {({ data:md, loading:ml }) => {
-                        if (al||ml) return <div style={{ padding:'4px 12px 6pb', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
+                        if (al||ml) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>Loading…</div>;
                         const activeI=new Set(), impairedI=new Set();
                         (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
                         const seen=new Set(), visibleInstances=[];
@@ -1358,11 +1355,7 @@ const GhostStateBanner = ({ project }) => {
   const hasResources = project.resources && project.resources.length > 0;
   if (!hasResources) return null;
   return (
-    <div style={{
-      marginTop:6, padding:'10px 14px', borderRadius:8,
-      background:'rgba(90,104,136,0.10)',
-      border:'1px dashed rgba(90,104,136,0.40)',
-    }}>
+    <div style={{ marginTop:6, padding:'10px 14px', borderRadius:8, background:'rgba(90,104,136,0.10)', border:'1px dashed rgba(90,104,136,0.40)' }}>
       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
         <span style={{ fontSize:10, fontWeight:800, letterSpacing:'0.8px', textTransform:'uppercase', color:'#6a7a9a' }}>
           Resources · Not Yet Provisioned
@@ -1443,7 +1436,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     onInfraAction(proj,action,handleActionDispatched);
   },[onInfraAction,handleActionDispatched]);
 
-  const disabledActions = getDisabledActions();
+  const disabledActions = getDisabledActions(); // eslint-disable-line no-unused-vars
   const isBusy = actionState===INFRA_STATES.DISPATCHING||actionState===INFRA_STATES.RUNNING;
 
   // ── Deleted ──
@@ -1558,7 +1551,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
-
     if (resourceStatuses.length === 0) {
       if (project.gcpProjectId) {
         return (
@@ -1570,11 +1562,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       }
       return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
     }
-
-    if (showGhostState) {
-      return <GhostStateBanner project={project} />;
-    }
-
+    if (showGhostState) return <GhostStateBanner project={project} />;
     return (
       <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
         {resourceStatuses.map((r,i)=><ExpandableResourceRow key={i} resource={r} project={project} />)}
@@ -1612,7 +1600,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {hasDashboard&&<DashboardIcon onClick={e=>{e.stopPropagation();openDashboard(project);}} />}
         </div>
       </div>
-
       {expanded&&(
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
@@ -1677,13 +1664,12 @@ const SingleResourceQuery = ({ resource, project, children }) => {
   );
 };
 
-// ─── *** KEY FIX: ProjectsRendered with corrected resource badge logic *** ──────
+// ─── ProjectsRendered ─────────────────────────────────────────────────────────
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const projectStatuses = provider.projects.map((p, i) => {
     if (p.deleted) return 'deleted';
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
-    // Billing-only projects do NOT contribute to the Resources badge
     if (p.billingOnly) return 'billing_only';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
@@ -1706,10 +1692,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     }
   });
 
-  // Only count non-billing, non-deleted, non-empty projects that have real health data
   const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only');
-
-  // cloudStatus is grey/unknown if no projects have real provisioned resource health
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id === 'aws'
@@ -1722,10 +1705,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
 
   const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
-
-  // *** THE FIX: Resources badge is grey when no projects have real provisioned health ***
-  // live.length > 0 means at least one project has green/yellow/red resource data
-  const resourceBadgeStatus = live.length > 0 ? cloudStatus : 'unknown';
+  const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
 
   return (
     <>
@@ -1735,7 +1715,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
           <div className="cloud-card__icon" style={{ color:accentColor }}>{provider.icon}</div>
           <div><h2 className="cloud-card__name">{provider.name}</h2><span className="cloud-card__label">{provider.label}</span></div>
           <div className="cloud-card__header-pills">
-            {/* Resources pill: grey when nothing is provisioned, colored when real data exists */}
             <StatusBadge status={resourceBadgeStatus} label="Resources" />
             {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} />}
             {provider.id==='gcp'&&gcpBillingNotConfigured&&(
@@ -1769,7 +1748,6 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   const activeProjects   = provider.projects.filter(p=>!p.deleted);
   const archivedProjects = provider.projects.filter(p=>p.deleted);
   const indexOf          = (project) => provider.projects.indexOf(project);
-
   const getProjectStateKey = (project) => project.projectDirName || project.name;
 
   return (
@@ -1823,7 +1801,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   );
 };
 
-// ─── Stateful loaders (thread infraStates through) ────────────────────────────
+// ─── Stateful loaders ─────────────────────────────────────────────────────────
 const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   if (projectIndex >= provider.projects.length) {
     if (provider.id === 'aws') {
@@ -1995,22 +1973,48 @@ const EagleEye = () => {
 
   useEffect(() => {
     // Load providers
-    AccountStorageQuery.query({ accountId: ACCOUNT_ID, collection: STORAGE_COLLECTION, documentId: STORAGE_DOC_ID })
-      .then(({ data, error }) => {
-        if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
-        else if (data?.document?.providers && Array.isArray(data.document.providers) && data.document.providers.length > 0) { setProviders(mergeAutoDiscovered(data.document.providers)); }
-        else { setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
-      }).catch(() => { setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
+    nerdStorageRead(STORAGE_DOC_ID)
+      .then((doc) => {
+        if (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0) {
+          console.log('[EagleEye] Loaded providers from NerdStorage:', doc.providers.length);
+          setProviders(mergeAutoDiscovered(doc.providers));
+        } else {
+          console.log('[EagleEye] No providers in NerdStorage, using defaults');
+          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+        }
+      })
+      .catch((err) => {
+        console.error('[EagleEye] Failed to load providers:', err);
+        setLoadError(true);
+        setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+      });
 
     // Load config (token)
-    AccountStorageQuery.query({ accountId: ACCOUNT_ID, collection: STORAGE_COLLECTION, documentId: STORAGE_CONFIG_ID })
-      .then(({ data }) => { if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
-      .catch(() => {});
+    nerdStorageRead(STORAGE_CONFIG_ID)
+      .then((doc) => {
+        console.log('[EagleEye] Config doc from NerdStorage:', doc);
+        if (doc?.accessToken) {
+          console.log('[EagleEye] Token loaded, length:', doc.accessToken.length);
+          setGhToken(doc.accessToken);
+        } else {
+          console.warn('[EagleEye] No accessToken found in config document');
+        }
+      })
+      .catch((err) => {
+        console.error('[EagleEye] Failed to load config:', err);
+      });
 
     // Load persisted infra lifecycle states
-    AccountStorageQuery.query({ accountId: ACCOUNT_ID, collection: STORAGE_COLLECTION, documentId: STORAGE_INFRA_STATE_ID })
-      .then(({ data }) => { if (data?.document?.infraStates) setInfraStates(data.document.infraStates); })
-      .catch(() => {});
+    nerdStorageRead(STORAGE_INFRA_STATE_ID)
+      .then((doc) => {
+        if (doc?.infraStates) {
+          console.log('[EagleEye] Loaded infra states:', doc.infraStates);
+          setInfraStates(doc.infraStates);
+        }
+      })
+      .catch((err) => {
+        console.error('[EagleEye] Failed to load infra states:', err);
+      });
   }, []);
 
   const handleSave = async (newProviders) => {
@@ -2019,14 +2023,18 @@ const EagleEye = () => {
   };
 
   const handleSaveToken = async (token) => {
-    const { error } = await AccountStorageMutation.mutate({ accountId: ACCOUNT_ID, actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection: STORAGE_COLLECTION, documentId: STORAGE_CONFIG_ID, document: { accessToken: token } });
-    if (error) throw new Error('Failed to save token: ' + (error.message || JSON.stringify(error)));
+    await nerdStorageWrite(STORAGE_CONFIG_ID, { accessToken: token });
+    // Verify the write succeeded by reading back
+    const verify = await nerdStorageRead(STORAGE_CONFIG_ID);
+    console.log('[EagleEye] Token save verification:', verify);
+    if (!verify?.accessToken) {
+      throw new Error('Token was written but could not be read back from NerdStorage. Please try again.');
+    }
     setGhToken(token);
   };
 
   const handleRemoveToken = async () => {
-    const { error } = await AccountStorageMutation.mutate({ accountId: ACCOUNT_ID, actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection: STORAGE_COLLECTION, documentId: STORAGE_CONFIG_ID, document: { accessToken: '' } });
-    if (error) throw new Error('Failed to remove token: ' + (error.message || JSON.stringify(error)));
+    await nerdStorageWrite(STORAGE_CONFIG_ID, { accessToken: '' });
     setGhToken('');
   };
 
