@@ -1564,6 +1564,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     }
   }, [lifecycle]);
 
+  useEffect(() => {
+    if (lifecycle === 'terminated') setExpanded(false);
+  }, [lifecycle]);
+
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
@@ -1573,14 +1577,21 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const onComplete=(conclusion)=>{
       if(cancelRef.cancelled) return;
       if(conclusion==='success'){
-        setActionState(INFRA_STATES.SUCCEEDED);
         const next=NEXT_LIFECYCLE[action];
         if(next) setLifecycle(next);
+        requestAnimationFrame(()=>{
+          if(cancelRef.cancelled) return;
+          setActionState(INFRA_STATES.SUCCEEDED);
+          setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
+        });
+      } else {
+        if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
+        else setActionState(INFRA_STATES.FAILED);
+        setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
       }
-      else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
-      else setActionState(INFRA_STATES.FAILED);
-      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
     };
+          
+
     if(token&&token.trim()!==''){
       pollWorkflowRun(token,effectiveDispatchTime,onStatusChange,onComplete,cancelRef);
     } else {
@@ -1997,6 +2008,9 @@ const EagleEye = () => {
   const [infraConfirm, setInfraConfirm] = useState(null);
   const [lifecycles,   setLifecycles]   = useState({});
 
+  const lifecyclesRef = useRef({});
+  useEffect(() => { lifecyclesRef.current = lifecycles; }, [lifecycles]);
+
   useEffect(()=>{
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
@@ -2038,27 +2052,22 @@ const EagleEye = () => {
   },[]);
 
   const handleLifecycleChange = useCallback((projectKey, newLifecycle) => {
-    let updatedForSave = null;
-    setLifecycles(prev => {
-      const updated = { ...prev, [projectKey]: newLifecycle };
-      updatedForSave = updated;
-      return updated;
-    });
-    setTimeout(() => {
-      if (!updatedForSave) return;
-      AccountStorageMutation.mutate({
-        accountId:  ACCOUNT_ID,
-        actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-        collection: STORAGE_COLLECTION,
-        documentId: STORAGE_LIFECYCLE_ID,
-        document:   { lifecycles: updatedForSave },
-      }).then(({ error }) => {
-        if (error) console.error('[Eagle Eye] lifecycle save failed:', error);
-        else console.log('[Eagle Eye] lifecycle saved OK');
-      }).catch(err => console.error('[Eagle Eye] lifecycle save exception:', err));
-    }, 0);
+    const updated = { ...lifecyclesRef.current, [projectKey]: newLifecycle };
+    lifecyclesRef.current = updated;
+    setLifecycles(updated);
+    console.log('[Eagle Eye] Saving lifecycle:', JSON.stringify(updated));
+    AccountStorageMutation.mutate({
+      accountId:  ACCOUNT_ID,
+      actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+      collection: STORAGE_COLLECTION,
+      documentId: STORAGE_LIFECYCLE_ID,
+      document:   { lifecycles: updated },
+    }).then(({ error }) => {
+      if (error) console.error('[Eagle Eye] lifecycle save failed:', error);
+      else       console.log('[Eagle Eye] lifecycle saved OK');
+    }).catch(err => console.error('[Eagle Eye] lifecycle save exception:', err));
   }, []);
-
+    
   const handleSave = async (newProviders) => {
     const saved = await persistProviders(newProviders);
     setProviders(mergeAutoDiscovered(saved));
