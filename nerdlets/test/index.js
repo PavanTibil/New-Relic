@@ -39,6 +39,8 @@ const ACCOUNT_ID         = 7782479;
 const STORAGE_COLLECTION = 'eagle-eye';
 const STORAGE_DOC_ID     = 'providers';
 const STORAGE_CONFIG_ID  = 'config';
+// FIX: Persist lifecycle/infra state per project
+const STORAGE_INFRA_STATE_ID = 'infra-states';
 
 const GH_OWNER          = 'PavanTibil';
 const GH_REPO           = 'New-Relic';
@@ -140,6 +142,18 @@ const persistProviders = async (newProviders) => {
   return newProviders;
 };
 
+// FIX: Persist infra lifecycle states to NerdStorage
+const persistInfraStates = async (infraStates) => {
+  const { error } = await AccountStorageMutation.mutate({
+    accountId:  ACCOUNT_ID,
+    actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+    collection: STORAGE_COLLECTION,
+    documentId: STORAGE_INFRA_STATE_ID,
+    document:   { infraStates },
+  });
+  if (error) console.error('Failed to persist infra states:', error);
+};
+
 const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
   React.useEffect(() => {
@@ -202,6 +216,11 @@ const GearIcon  = ({ size = 11, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+const TrashIcon = ({ size = 11, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" />
   </svg>
 );
 
@@ -467,8 +486,7 @@ const BILLING_BUDGET_INR = 4600;
 const billingCostToStatus   = (cost) => { if (cost === null) return 'unknown'; const pct = (cost/BILLING_BUDGET_INR)*100; return pct>=70?'red':pct>=50?'yellow':'green'; };
 const estimatedCostToStatus = (est)  => { if (est  === null) return 'unknown'; const pct = (est/BILLING_BUDGET_INR)*100;  return pct>=100?'red':pct>=85?'yellow':'green'; };
 
-// ─── FIX 1 & 2: GhostResourceRow — token-aware badge ─────────────────────────
-// Shows "not provisioned" (blue) when token is set, "no infra yet" (grey) when not.
+// ─── GhostResourceRow ─────────────────────────────────────────────────────────
 const GhostResourceRow = ({ resource, hasToken = false }) => (
   <div style={{
     display:'flex', alignItems:'center', gap:10, padding:'7px 12px',
@@ -489,7 +507,6 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
         </span>
       )}
     </div>
-    {/* FIX 2: badge depends on whether token is configured */}
     {hasToken ? (
       <span style={{
         fontSize:11, fontWeight:700,
@@ -559,13 +576,16 @@ const NoInfraBadge = ({ checking = false }) => {
   );
 };
 
-// ─── Config modal ─────────────────────────────────────────────────────────────
-const ConfigModal = ({ currentToken, onSave, onClose }) => {
-  const [tokenInput, setTokenInput] = useState(currentToken || '');
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const [saved,  setSaved]  = useState(false);
-  const [show,   setShow]   = useState(false);
+// ─── Config modal (FIX: persist token + remove/reset option) ──────────────────
+const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
+  const [tokenInput,    setTokenInput]    = useState(currentToken || '');
+  const [saving,        setSaving]        = useState(false);
+  const [removing,      setRemoving]      = useState(false);
+  const [error,         setError]         = useState('');
+  const [saved,         setSaved]         = useState(false);
+  const [removed,       setRemoved]       = useState(false);
+  const [show,          setShow]          = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const handleSave = async () => {
     if (!tokenInput.trim()) { setError('Token cannot be empty.'); return; }
@@ -575,6 +595,18 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
     finally { setSaving(false); }
   };
 
+  const handleRemove = async () => {
+    setRemoving(true); setError('');
+    try {
+      await onRemove();
+      setTokenInput('');
+      setRemoved(true);
+      setConfirmRemove(false);
+      setTimeout(() => onClose(), 800);
+    } catch (e) { setError(e?.message || 'Remove failed.'); }
+    finally { setRemoving(false); }
+  };
+
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(8,11,20,0.92)', backdropFilter:'blur(10px)', zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onClose}>
       <div style={{ background:'#0f1629', border:'1px solid rgba(255,255,255,0.15)', borderRadius:16, width:'90%', maxWidth:420, padding:'28px 28px 22px', boxShadow:'0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
@@ -582,7 +614,7 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
           <div style={{ width:38, height:38, borderRadius:10, background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.35)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>⚙</div>
           <div>
             <div style={{ fontSize:16, fontWeight:800, color:'#f0f4ff' }}>Configure GitHub Token</div>
-            <div style={{ fontSize:11, color:'#7a8aaa', marginTop:1 }}>Stored securely in NerdStorage</div>
+            <div style={{ fontSize:11, color:'#7a8aaa', marginTop:1 }}>Stored securely in NerdStorage · persists across sessions</div>
           </div>
         </div>
         <div style={{ marginBottom:16 }}>
@@ -603,9 +635,36 @@ const ConfigModal = ({ currentToken, onSave, onClose }) => {
         </div>
         {error && <div style={{ fontSize:12, color:'#ff4d6d', marginBottom:14, padding:'8px 12px', background:'rgba(255,77,109,0.08)', borderRadius:6, border:'1px solid rgba(255,77,109,0.2)' }}>⚠ {error}</div>}
         {saved  && <div style={{ fontSize:12, color:'#00d4aa', marginBottom:14, padding:'8px 12px', background:'rgba(0,212,170,0.08)', borderRadius:6, border:'1px solid rgba(0,212,170,0.2)' }}>✓ Token saved!</div>}
-        <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
-          <button onClick={onClose} disabled={saving} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={{ padding:'8px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer', outline:'none', opacity:saving?0.65:1 }}>{saving?'Saving…':'Save Token'}</button>
+        {removed && <div style={{ fontSize:12, color:'#f5a623', marginBottom:14, padding:'8px 12px', background:'rgba(245,166,35,0.08)', borderRadius:6, border:'1px solid rgba(245,166,35,0.2)' }}>Token removed.</div>}
+
+        {/* Confirm remove inline */}
+        {confirmRemove && (
+          <div style={{ marginBottom:14, padding:'10px 12px', background:'rgba(255,77,109,0.08)', border:'1px solid rgba(255,77,109,0.25)', borderRadius:8 }}>
+            <div style={{ fontSize:12, color:'#ff4d6d', fontWeight:700, marginBottom:6 }}>⚠ Remove token?</div>
+            <div style={{ fontSize:11, color:'#7a8aaa', marginBottom:10 }}>This will clear the stored GitHub token. Infrastructure actions will be disabled until you set a new one.</div>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={handleRemove} disabled={removing} style={{ padding:'6px 14px', borderRadius:7, border:'none', background:'#ff4d6d', color:'#fff', fontWeight:700, fontSize:12, cursor:'pointer', opacity:removing?0.6:1 }}>
+                {removing?'Removing…':'Yes, remove'}
+              </button>
+              <button onClick={()=>setConfirmRemove(false)} style={{ padding:'6px 14px', borderRadius:7, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:12, cursor:'pointer' }}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display:'flex', gap:10, justifyContent:'space-between', alignItems:'center' }}>
+          {/* Left: remove button (only if token exists) */}
+          <div>
+            {currentToken && !confirmRemove && (
+              <button onClick={()=>setConfirmRemove(true)} style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'7px 12px', borderRadius:7, border:'1px solid rgba(255,77,109,0.4)', background:'rgba(255,77,109,0.08)', color:'#ff4d6d', fontWeight:600, fontSize:12, cursor:'pointer', outline:'none' }}>
+                <TrashIcon size={11} color="#ff4d6d" /> Remove Token
+              </button>
+            )}
+          </div>
+          {/* Right: cancel + save */}
+          <div style={{ display:'flex', gap:10 }}>
+            <button onClick={onClose} disabled={saving} style={{ padding:'8px 18px', borderRadius:8, border:'1px solid rgba(255,255,255,0.15)', background:'transparent', color:'#7a8aaa', fontWeight:600, fontSize:13, cursor:'pointer', outline:'none', boxShadow:'none', WebkitAppearance:'none', appearance:'none' }}>Cancel</button>
+            <button onClick={handleSave} disabled={saving} style={{ padding:'8px 22px', borderRadius:8, border:'none', background:'#4285f4', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer', outline:'none', opacity:saving?0.65:1 }}>{saving?'Saving…':'Save Token'}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1414,9 +1473,8 @@ const GcpProjectAutoLoader = ({ project, projectIndex, provider, results, onMana
   );
 };
 
-// ─── FIX 2 & 3: GhostStateBanner — token-aware, visible hint text ─────────────
+// ─── GhostStateBanner ─────────────────────────────────────────────────────────
 const GhostStateBanner = ({ project }) => {
-  // FIX 2: Read token from context to drive badge and hint text
   const ghToken = React.useContext(GhTokenContext);
   const hasResources = project.resources && project.resources.length > 0;
   if (!hasResources) return null;
@@ -1433,11 +1491,9 @@ const GhostStateBanner = ({ project }) => {
       </div>
       <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
         {project.resources.map((r, i) => (
-          // FIX 2: pass hasToken so badge shows correctly
           <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
         ))}
       </div>
-      {/* FIX 3: visible white hint text; also token-aware message */}
       <div style={{ marginTop:10, display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#c8d4f0' }}>
         <GearIcon size={11} color="#7ab3ff" />
         {ghToken
@@ -1450,12 +1506,21 @@ const GhostStateBanner = ({ project }) => {
 };
 
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
-const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction }) => {
+// FIX: Accept persistedLifecycle from parent and onLifecycleChange callback
+const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction, persistedLifecycle, onLifecycleChange }) => {
   const [expanded,     setExpanded]     = useState(false);
-  const [lifecycle,    setLifecycle]    = useState(null);
+  // FIX: Initialize lifecycle from persisted state
+  const [lifecycle,    setLifecycle]    = useState(persistedLifecycle || null);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
+
+  // Sync if persisted lifecycle changes from outside (e.g. on load)
+  useEffect(() => {
+    if (persistedLifecycle && persistedLifecycle !== lifecycle) {
+      setLifecycle(persistedLifecycle);
+    }
+  }, [persistedLifecycle]); // eslint-disable-line
 
   const ghToken = React.useContext(GhTokenContext);
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
@@ -1487,7 +1552,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const onStatusChange=(newState)=>{ if(!cancelRef.cancelled) setActionState(newState); };
     const onComplete=(conclusion)=>{
       if(cancelRef.cancelled) return;
-      if(conclusion==='success'){setActionState(INFRA_STATES.SUCCEEDED);const next=NEXT_LIFECYCLE[action];if(next)setLifecycle(next);}
+      if(conclusion==='success'){
+        setActionState(INFRA_STATES.SUCCEEDED);
+        const next=NEXT_LIFECYCLE[action];
+        if(next){
+          setLifecycle(next);
+          // FIX: Persist the new lifecycle to NerdStorage
+          if (onLifecycleChange) onLifecycleChange(project, next);
+        }
+      }
       else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
       else setActionState(INFRA_STATES.FAILED);
       setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
@@ -1497,7 +1570,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     } else {
       setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.TIMEOUT);setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},6000);}},3000);
     }
-  },[]);
+  },[onLifecycleChange, project]);
 
   const handleInfraAction = useCallback((proj,action)=>{
     onInfraAction(proj,action,handleActionDispatched);
@@ -1643,7 +1716,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   };
 
-  // FIX 1: Ghost state always gets 'unknown' dot — never bleeds yellow into the card pill
+  // FIX: Ghost state → always grey dot; no resources → grey dot
   const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
 
   return (
@@ -1655,7 +1728,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {!isBusy&&(tfLoading
             ? <NoInfraBadge checking />
             : showGhostState
-              // FIX 2: token-aware badge on the project row header too
               ? ghToken
                 ? <span style={{ fontSize:10, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px dashed rgba(66,133,244,0.35)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>Not Provisioned</span>
                 : <span style={{ fontSize:10, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px dashed rgba(90,104,136,0.40)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>No Infra Yet</span>
@@ -1787,16 +1859,32 @@ const ProjectListInner = ({ provider, projectIndex, results, onManage, onInfraAc
   return <ProjectResourceLoader project={project} resourceIndex={0} collectedStatuses={[]} projectIndex={projectIndex} provider={provider} results={results} onManage={onManage} onInfraAction={onInfraAction} />;
 };
 
-const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAction }) => {
+const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAction, infraStates, onLifecycleChange }) => {
   const [archivedOpen, setArchivedOpen] = React.useState(false);
   const activeProjects   = provider.projects.filter(p=>!p.deleted);
   const archivedProjects = provider.projects.filter(p=>p.deleted);
   const indexOf          = (project) => provider.projects.indexOf(project);
+
+  // FIX: Build a stable key for a project's persisted lifecycle state
+  const getProjectStateKey = (project) => project.projectDirName || project.name;
+
   return (
     <>
       {activeProjects.map((project)=>{
         const i=indexOf(project), r=allResults.find(res=>res.projectIndex===i)??allResults[i];
-        return <ProjectRow key={project.projectDirName||project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={project.billingOnly?billingCost:null} onInfraAction={onInfraAction} />;
+        const stateKey = getProjectStateKey(project);
+        const persistedLifecycle = infraStates?.[stateKey] || null;
+        return <ProjectRow
+          key={project.projectDirName||project.name}
+          project={project}
+          resourceStatuses={r?.resourceStatuses??[]}
+          loading={r?.loading??false}
+          index={i}
+          billingCost={project.billingOnly?billingCost:null}
+          onInfraAction={onInfraAction}
+          persistedLifecycle={persistedLifecycle}
+          onLifecycleChange={onLifecycleChange}
+        />;
       })}
       {archivedProjects.length>0&&(
         <div style={{ marginTop:activeProjects.length>0?10:0 }}>
@@ -1807,7 +1895,23 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
           </button>
           {archivedOpen&&(
             <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:4 }}>
-              {archivedProjects.map((project)=>{const i=indexOf(project),r=allResults.find(res=>res.projectIndex===i)??allResults[i];return<ProjectRow key={project.projectDirName||project.name} project={project} resourceStatuses={r?.resourceStatuses??[]} loading={r?.loading??false} index={i} billingCost={null} onInfraAction={onInfraAction} />;})}</div>
+              {archivedProjects.map((project)=>{
+                const i=indexOf(project),r=allResults.find(res=>res.projectIndex===i)??allResults[i];
+                const stateKey = getProjectStateKey(project);
+                const persistedLifecycle = infraStates?.[stateKey] || null;
+                return <ProjectRow
+                  key={project.projectDirName||project.name}
+                  project={project}
+                  resourceStatuses={r?.resourceStatuses??[]}
+                  loading={r?.loading??false}
+                  index={i}
+                  billingCost={null}
+                  onInfraAction={onInfraAction}
+                  persistedLifecycle={persistedLifecycle}
+                  onLifecycleChange={onLifecycleChange}
+                />;
+              })}
+            </div>
           )}
         </div>
       )}
@@ -1815,8 +1919,8 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   );
 };
 
-// ─── FIX 1: ProjectsRendered — ghost-state projects don't colour the card pill ─
-const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction }) => {
+// FIX: Resource pill status logic — grey when no resources, real status when provisioned
+const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const projectStatuses = provider.projects.map((p, i) => {
     if (p.deleted) return 'deleted';
     if (p.empty) return 'empty';
@@ -1824,26 +1928,29 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.billingOnly) return billingCostToStatus(billingCost);
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
+    // FIX: If resourceStatuses is empty (no resources / not provisioned), report unknown (grey)
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
-    // FIX 1: If no resource has real data (green/red), the project is in ghost/no-data
-    // state — treat as unknown so it never makes the card pill yellow/red.
-    const hasAnyRealData = r.resourceStatuses.some(
-      rs => rs.status === 'green' || rs.status === 'red'
-    );
-    if (!hasAnyRealData) return 'unknown';
-    return worstStatus(r.resourceStatuses.map(rs => rs.status));
+    // FIX: If all resources returned 'unknown' (no data), treat as unknown/grey
+    const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
+    if (nonUnknown.length === 0) return 'unknown';
+    return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
   const projectHealthMap={};
   provider.projects.forEach((p,i)=>{projectHealthMap[p.name]=projectStatuses[i]??'unknown';});
   const live        = projectStatuses.filter(s=>s!=='deleted'&&s!=='empty'&&s!=='unknown');
-  const cloudStatus = live.length>0?worstStatus(live):'green';
+  // FIX: card overall status — if nothing is truly healthy/red, show grey (unknown)
+  const cloudStatus = live.length>0?worstStatus(live):'unknown';
   const billStatus  = billingCostToStatus(billingCost);
-  const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown')):cloudStatus;
-  const cardMeta    = STATUS_META[overall]??STATUS_META.green;
+  const overall     = provider.id==='aws'?worstStatus([cloudStatus,billStatus].filter(s=>s!=='unknown'))||'unknown':cloudStatus;
+  const cardMeta    = STATUS_META[overall]??STATUS_META.unknown;
   const meta        = PROVIDER_META[provider.id], accentColor=meta.accent;
   const gcpBillingProject       = provider.id==='gcp'?provider.projects.find(p=>p.billingOnly):null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured??false;
+
+  // FIX: Resources badge — grey (unknown) when no real data, green/red when provisioned
+  const resourceBadgeStatus = live.length > 0 ? cloudStatus : 'unknown';
+
   return (
     <>
       <style>{`.cloud-card--${provider.id}{border-color:${cardMeta.color}!important;box-shadow:0 8px 40px ${cardMeta.color}22,inset 0 1px 0 rgba(255,255,255,0.07)!important;}`}</style>
@@ -1852,7 +1959,8 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
           <div className="cloud-card__icon" style={{ color:accentColor }}>{provider.icon}</div>
           <div><h2 className="cloud-card__name">{provider.name}</h2><span className="cloud-card__label">{provider.label}</span></div>
           <div className="cloud-card__header-pills">
-            <StatusBadge status={cloudStatus} label="Resources" />
+            {/* FIX: Use resourceBadgeStatus so it's grey when no resources have real data */}
+            <StatusBadge status={resourceBadgeStatus} label="Resources" />
             {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} />}
             {provider.id==='gcp'&&gcpBillingNotConfigured&&(
               <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'3px 10px', borderRadius:100, fontSize:11, fontWeight:600, background:'rgba(66,133,244,0.10)', border:'1px solid rgba(66,133,244,0.25)', color:'#4285f4', flexShrink:0 }}>
@@ -1867,7 +1975,14 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
       </div>
       <div className="cloud-card__divider" />
       <div className="cloud-card__projects">
-        <ArchivedAwareProjectList provider={provider} allResults={allResults} billingCost={billingCost} onInfraAction={onInfraAction} />
+        <ArchivedAwareProjectList
+          provider={provider}
+          allResults={allResults}
+          billingCost={billingCost}
+          onInfraAction={onInfraAction}
+          infraStates={infraStates}
+          onLifecycleChange={onLifecycleChange}
+        />
       </div>
     </>
   );
@@ -1891,15 +2006,126 @@ const ConfigButton = ({ hasToken, onClick }) => (
   </button>
 );
 
-const CloudCard = ({ provider, onManage, onInfraAction }) => {
+// FIX: CloudCard passes infraStates and onLifecycleChange through
+const CloudCard = ({ provider, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const meta = PROVIDER_META[provider.id];
   return (
     <div className={`cloud-card cloud-card--${provider.id}`} style={{ background:meta.gradient }}>
-      <ProjectListInner provider={provider} projectIndex={0} results={[]} onManage={onManage} onInfraAction={onInfraAction} />
+      <ProjectListInnerWithStates
+        provider={provider}
+        onManage={onManage}
+        onInfraAction={onInfraAction}
+        infraStates={infraStates}
+        onLifecycleChange={onLifecycleChange}
+      />
     </div>
   );
 };
 
+// Wrapper that threads infraStates + onLifecycleChange into ProjectsRendered via context/props
+// We need to pass them down through ProjectListInner → ProjectsRendered
+const ProjectListInnerWithStates = ({ provider, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+  // Use a thin wrapper: override ProjectListInner to capture results and pass states down
+  return (
+    <ProjectListInnerStateful
+      provider={provider}
+      projectIndex={0}
+      results={[]}
+      onManage={onManage}
+      onInfraAction={onInfraAction}
+      infraStates={infraStates}
+      onLifecycleChange={onLifecycleChange}
+    />
+  );
+};
+
+// Stateful version of ProjectListInner that also threads infraStates
+const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+  if (projectIndex>=provider.projects.length) {
+    if (provider.id==='aws') {
+      const bQ=`SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
+      return <NrqlQuery accountIds={[ACCOUNT_ID]} query={bQ} pollInterval={300000}>
+        {({ data })=>{
+          const bc=data?.[0]?.data?.[0]?.y??data?.[0]?.data?.[0]?.totalCostINR??null;
+          return <ProjectsRendered provider={provider} allResults={results} billingCost={bc} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+        }}
+      </NrqlQuery>;
+    }
+    return <ProjectsRendered provider={provider} allResults={results} billingCost={null} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+  }
+  const project=provider.projects[projectIndex];
+  if (project.deleted||project.empty||project.billingNotConfigured||project.billingOnly||!project.resources||project.resources.length===0) {
+    if (provider.id === 'gcp' && !project.deleted && !project.empty && !project.billingNotConfigured && !project.billingOnly && project.gcpProjectId) {
+      return (
+        <GcpProjectAutoLoaderStateful
+          project={project} projectIndex={projectIndex} provider={provider}
+          results={results} onManage={onManage} onInfraAction={onInfraAction}
+          infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+        />
+      );
+    }
+    return <ProjectListInnerStateful provider={provider} projectIndex={projectIndex+1} results={[...results,{projectIndex,loading:false,resourceStatuses:[]}]} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+  }
+  if (provider.id === 'gcp' && project.gcpProjectId) {
+    return (
+      <GcpProjectAutoLoaderStateful
+        project={project} projectIndex={projectIndex} provider={provider}
+        results={results} onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+  return <ProjectResourceLoaderStateful project={project} resourceIndex={0} collectedStatuses={[]} projectIndex={projectIndex} provider={provider} results={results} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+};
+
+const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+  if (resourceIndex>=project.resources.length) {
+    const anyLoading=collectedStatuses.some(r=>r.loading);
+    return <ProjectListInnerStateful provider={provider} projectIndex={projectIndex+1} results={[...results,{projectIndex,loading:anyLoading,resourceStatuses:collectedStatuses}]} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+  }
+  const resource=project.resources[resourceIndex];
+  return (
+    <SingleResourceQuery resource={resource} project={project}>
+      {rs=><ProjectResourceLoaderStateful project={project} resourceIndex={resourceIndex+1} collectedStatuses={[...collectedStatuses,rs]} projectIndex={projectIndex} provider={provider} results={results} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />}
+    </SingleResourceQuery>
+  );
+};
+
+const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+  const [detectedResources, setDetectedResources] = React.useState(null);
+  if (!project.gcpProjectId) {
+    return (
+      <ProjectResourceLoaderStateful
+        project={project} resourceIndex={0} collectedStatuses={[]}
+        projectIndex={projectIndex} provider={provider} results={results}
+        onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+  if (detectedResources === null) {
+    return (
+      <GcpAutoDetectLoader
+        project={project} discoveryIndex={0} detectedResources={[]}
+        onComplete={(found) => {
+          const resources = found.length > 0 ? found : (project.resources ?? []);
+          setDetectedResources(resources);
+        }}
+      />
+    );
+  }
+  const enrichedProject = { ...project, resources: detectedResources };
+  return (
+    <ProjectResourceLoaderStateful
+      project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
+      projectIndex={projectIndex} provider={provider} results={results}
+      onManage={onManage} onInfraAction={onInfraAction}
+      infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+    />
+  );
+};
+
+// ─── Main EagleEye app ─────────────────────────────────────────────────────────
 const EagleEye = () => {
   const [providers,    setProviders]    = useState(null);
   const [ghToken,      setGhToken]      = useState('');
@@ -1907,8 +2133,12 @@ const EagleEye = () => {
   const [showConfig,   setShowConfig]   = useState(false);
   const [loadError,    setLoadError]    = useState(false);
   const [infraConfirm, setInfraConfirm] = useState(null);
+  // FIX: Persist infra lifecycle state across refreshes
+  // Shape: { [projectDirName|name]: 'provisioned' | 'stopped' | 'terminated' }
+  const [infraStates,  setInfraStates]  = useState({});
 
   useEffect(()=>{
+    // Load providers
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
         if (error) { console.error('NerdStorage load error:', error); setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
@@ -1916,8 +2146,14 @@ const EagleEye = () => {
         else { setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); }
       }).catch(()=>{ setLoadError(true); setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS)); });
 
+    // Load config (token)
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID })
       .then(({ data })=>{ if (data?.document?.accessToken) setGhToken(data.document.accessToken); })
+      .catch(()=>{});
+
+    // FIX: Load persisted infra lifecycle states
+    AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_INFRA_STATE_ID })
+      .then(({ data })=>{ if (data?.document?.infraStates) setInfraStates(data.document.infraStates); })
       .catch(()=>{});
   },[]);
 
@@ -1931,6 +2167,21 @@ const EagleEye = () => {
     if (error) throw new Error('Failed to save token: '+(error.message||JSON.stringify(error)));
     setGhToken(token);
   };
+
+  // FIX: Remove/reset token
+  const handleRemoveToken = async () => {
+    const { error } = await AccountStorageMutation.mutate({ accountId:ACCOUNT_ID, actionType:AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT, collection:STORAGE_COLLECTION, documentId:STORAGE_CONFIG_ID, document:{ accessToken:'' } });
+    if (error) throw new Error('Failed to remove token: '+(error.message||JSON.stringify(error)));
+    setGhToken('');
+  };
+
+  // FIX: Persist lifecycle change when an action succeeds
+  const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
+    const key = project.projectDirName || project.name;
+    const updated = { ...infraStates, [key]: newLifecycle };
+    setInfraStates(updated);
+    await persistInfraStates(updated);
+  }, [infraStates]);
 
   if (!providers) return <EagleEyeLoader />;
 
@@ -1961,9 +2212,13 @@ const EagleEye = () => {
 
         <div className="ee-grid">
           {providers.map(provider=>(
-            <CloudCard key={provider.id} provider={provider}
+            <CloudCard
+              key={provider.id}
+              provider={provider}
               onManage={(healthMap)=>setShowModal({ providerId:provider.id, projectHealthMap:healthMap })}
               onInfraAction={handleInfraAction}
+              infraStates={infraStates}
+              onLifecycleChange={handleLifecycleChange}
             />
           ))}
         </div>
@@ -1976,7 +2231,12 @@ const EagleEye = () => {
           <ProjectManagerModal providers={providers} providerId={showModal.providerId} projectHealthMap={showModal.projectHealthMap} onSave={handleSave} onClose={()=>setShowModal(null)} />
         )}
         {showConfig&&(
-          <ConfigModal currentToken={ghToken} onSave={handleSaveToken} onClose={()=>setShowConfig(false)} />
+          <ConfigModal
+            currentToken={ghToken}
+            onSave={handleSaveToken}
+            onRemove={handleRemoveToken}
+            onClose={()=>setShowConfig(false)}
+          />
         )}
         {infraConfirm&&(
           <InfraConfirmModal project={infraConfirm.project} action={infraConfirm.action} ghToken={ghToken}
