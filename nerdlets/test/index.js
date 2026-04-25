@@ -141,6 +141,23 @@ const ec2ProjectFilter = (project) => {
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
 };
 
+// ─── extractRow — defined here so all components below can use it ─────────────
+const extractRow = (data) => {
+  if (!Array.isArray(data)||data.length===0) return null;
+  const row={}, SKIP=new Set(['x','begin_time','end_time','beginTimeSeconds','endTimeSeconds','timestamp','inspect','facet']);
+  data.forEach(series=>{
+    if (!series?.data?.length) return;
+    const point=series.data[0]; if (!point||typeof point!=='object') return;
+    const alias=series?.metadata?.name||series?.metadata?.contents?.[0]?.alias||series?.presentation?.name||null;
+    if (alias){
+      if (point.y!==undefined&&point.y!==null&&typeof point.y==='number'){row[alias]=point.y;return;}
+      if (point[alias]!==undefined&&point[alias]!==null&&typeof point[alias]==='number'){row[alias]=point[alias];return;}
+    }
+    Object.entries(point).forEach(([k,v])=>{if(!SKIP.has(k)&&typeof v==='number'&&!(k in row))row[k]=v;});
+  });
+  return Object.keys(row).length>0?row:null;
+};
+
 const persistProviders = async (newProviders) => {
   console.log('[Eagle Eye] SAVING to NerdStorage:', JSON.stringify(
     newProviders.map(p => ({
@@ -197,7 +214,6 @@ const useGithubTfFiles = (projectDirName, token) => {
   return state;
 };
 
-// ─── Terraform resource name extractor ───────────────────────────────────────
 const useTerraformResources = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, resources: {} });
   React.useEffect(() => {
@@ -898,7 +914,6 @@ const ExpandableResourceRow = ({ resource:r, project, lifecycle, tfResources = {
   const [ec2Counts, setEc2Counts] = React.useState(null);
   const hasSubList = !!(SERVICE_QUERIES[r.type]);
 
-  // Lifecycle-aware display status
   const displayStatus = (() => {
     if (lifecycle === 'terminated')  return 'red';
     if (lifecycle === 'stopped')     return 'yellow';
@@ -926,8 +941,6 @@ const ExpandableResourceRow = ({ resource:r, project, lifecycle, tfResources = {
             : '— No Data';
 
   const query = hasSubList?(typeof SERVICE_QUERIES[r.type]==='function'?SERVICE_QUERIES[r.type](project):null):null;
-
-  // Whether to show TF names instead of live query
   const useTfNames = (lifecycle === 'stopped' || lifecycle === 'terminated') && tfResources[r.type]?.length > 0;
 
   return (
@@ -947,7 +960,6 @@ const ExpandableResourceRow = ({ resource:r, project, lifecycle, tfResources = {
                 {ec2Counts.imp>0&&<span style={{ color:'#ff4d6d' }}>{ec2Counts.imp} impaired</span>}
               </span>
             )}
-            {/* Show TF name count badge when stopped/terminated */}
             {useTfNames&&(
               <span style={{ fontSize:10, color:'#4a5a7a', fontWeight:600 }}>
                 {tfResources[r.type].length} resource{tfResources[r.type].length!==1?'s':''}
@@ -1582,7 +1594,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const isBusy = actionState===INFRA_STATES.DISPATCHING||actionState===INFRA_STATES.RUNNING;
 
-  // ── Deleted ──
   if (project.deleted) return (
     <div className="project-row project-row--deleted" style={{ animationDelay:index*80+'ms' }}>
       <div className="project-row__main">
@@ -1592,7 +1603,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     </div>
   );
 
-  // ── Billing ──
   if (project.billingOnly) {
     const totalCost=billingCost??null;
     if (project.billingNotConfigured) return (
@@ -1616,7 +1626,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   }
 
-  // ── Empty ──
   if (project.empty) return (
     <div className={'project-row project-row--clickable'+(expanded?' project-row--expanded':'')} style={{ animationDelay:index*80+'ms', cursor:'pointer', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, marginBottom:4 }} onClick={()=>setExpanded(p=>!p)}>
       <div className="project-row__main">
@@ -1640,7 +1649,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     </div>
   );
 
-  // ── Terminated ──
   if (lifecycle === 'terminated') {
     if (hidden) return null;
     return (
@@ -1662,7 +1670,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           <div className="project-row__detail">
             <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
             <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-            {/* Show TF resource names when terminated */}
             {project.resources && project.resources.length > 0 && (
               <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
                 {project.resources.map((r,i)=>(
@@ -1679,7 +1686,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     );
   }
 
-  // ── Normal project ──
   const rawStatus = loading ? 'unknown' : worstStatus(resourceStatuses.map(r => r.status));
   const status    = lifecycle === 'stopped'
     ? 'yellow'
@@ -1806,22 +1812,6 @@ const DotsButton = ({ onClick, accentColor }) => (
     <span style={{ width:4,height:4,borderRadius:'50%',background:accentColor,opacity:0.9,flexShrink:0 }} />
   </button>
 );
-
-const extractRow = (data) => {
-  if (!Array.isArray(data)||data.length===0) return null;
-  const row={}, SKIP=new Set(['x','begin_time','end_time','beginTimeSeconds','endTimeSeconds','timestamp','inspect','facet']);
-  data.forEach(series=>{
-    if (!series?.data?.length) return;
-    const point=series.data[0]; if (!point||typeof point!=='object') return;
-    const alias=series?.metadata?.name||series?.metadata?.contents?.[0]?.alias||series?.presentation?.name||null;
-    if (alias){
-      if (point.y!==undefined&&point.y!==null&&typeof point.y==='number'){row[alias]=point.y;return;}
-      if (point[alias]!==undefined&&point[alias]!==null&&typeof point[alias]==='number'){row[alias]=point[alias];return;}
-    }
-    Object.entries(point).forEach(([k,v])=>{if(!SKIP.has(k)&&typeof v==='number'&&!(k in row))row[k]=v;});
-  });
-  return Object.keys(row).length>0?row:null;
-};
 
 const SingleResourceQuery = ({ resource, project, children }) => {
   const query = buildResourceQuery(resource, project);
@@ -2011,18 +2001,6 @@ const EagleEye = () => {
     AccountStorageQuery.query({ accountId:ACCOUNT_ID, collection:STORAGE_COLLECTION, documentId:STORAGE_DOC_ID })
       .then(({ data, error })=>{
         console.log('[Eagle Eye] RAW NerdStorage response:', JSON.stringify({ data, error }));
-        console.log('[Eagle Eye] NerdStorage providers loaded:', JSON.stringify(
-          data?.document?.providers?.map(p => ({
-            id: p.id,
-            projects: p.projects?.map(j => ({
-              name: j.name,
-              dirName: j.projectDirName,
-              empty: j.empty,
-              deleted: j.deleted,
-              billingOnly: j.billingOnly,
-            }))
-          }))
-        ));
         if (error) {
           console.error('[Eagle Eye] NerdStorage load error:', error);
           setLoadError(true);
@@ -2030,10 +2008,8 @@ const EagleEye = () => {
         } else {
           const loaded = data?.document?.providers ?? data?.providers ?? null;
           if (loaded && Array.isArray(loaded) && loaded.length > 0) {
-            console.log('[Eagle Eye] Providers loaded successfully, count:', loaded.length);
             setProviders(mergeAutoDiscovered(loaded));
           } else {
-            console.log('[Eagle Eye] No saved providers found, using defaults');
             setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
           }
         }
@@ -2070,7 +2046,6 @@ const EagleEye = () => {
     });
     setTimeout(() => {
       if (!updatedForSave) return;
-      console.log('[Eagle Eye] Saving lifecycle:', JSON.stringify(updatedForSave));
       AccountStorageMutation.mutate({
         accountId:  ACCOUNT_ID,
         actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
