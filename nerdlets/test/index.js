@@ -1788,6 +1788,12 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
     // If every resource came back with no data (all unknown), treat project as unknown
     if (nonUnknown.length === 0) return 'unknown';
+    const stateKey = p.projectDirName || p.name;
+    const lifecycle = infraStates?.[stateKey] || null;
+    if (!lifecycle) {
+      const hasRealSamples = r.resourceStatuses.some(rs => rs.row && (rs.row.samples ?? 0) > 0);
+      if (!hasRealSamples) return 'unknown';
+    }
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
