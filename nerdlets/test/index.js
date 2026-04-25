@@ -148,7 +148,7 @@ const nerdStorageRead = async (documentId) => {
     documentId,
   });
   if (error) throw new Error('NerdStorage read failed: ' + (error.message || JSON.stringify(error)));
-  return data?.document ?? null;
+  return data ?? null;
 };
 
 const persistProviders = async (newProviders) => {
