@@ -1,7 +1,6 @@
 name: Auto-discover & Redeploy
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -13,6 +12,11 @@ permissions:
   contents: write
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Always runs on any trigger.
+  #          Diffs projects/*/modules/ against the registry, commits back.
+  #          Signals job 3 when the registry file actually changed.
+  # ─────────────────────────────────────────────────────────────────────────
   discover:
     name: Sync project registry (add + remove)
     runs-on: ubuntu-latest
@@ -51,6 +55,10 @@ jobs:
             git commit -m "chore(eagle-eye): sync project registry (add/remove) [skip ci]"
           git push
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Checks if index.js or styles.scss changed directly.
+  #          Signals job 3 so it knows to redeploy.
+  # ─────────────────────────────────────────────────────────────────────────
   check-files:
     name: Check if index.js or styles.scss changed
     runs-on: ubuntu-latest
@@ -74,6 +82,10 @@ jobs:
             echo "files_changed=false" >> $GITHUB_OUTPUT
           fi
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Publishes whenever job 1 found registry changes OR
+  #          job 2 detected an index.js / styles.scss edit.
+  # ─────────────────────────────────────────────────────────────────────────
   redeploy:
     name: Publish Nerdpack to New Relic
     runs-on: ubuntu-latest
@@ -136,8 +148,9 @@ jobs:
         env:
           NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
         run: |
-          nr1 nerdpack:unsubscribe --profile eagle-eye-ci || true
-          nr1 nerdpack:subscribe --profile eagle-eye-ci
+          nr1 nerdpack:subscribe \
+            --channel STABLE \
+            --profile eagle-eye-ci
         continue-on-error: true
 
       - name: Done
