@@ -153,24 +153,40 @@ const ec2ProjectFilter = (project) => {
 
 // ─── NerdStorage helpers ───────────────────────────────────────────────────────
 const nerdStorageWrite = async (documentId, document) => {
-  const { error } = await AccountStorageMutation.mutate({
-    accountId:  ACCOUNT_ID,
-    actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
-    collection: STORAGE_COLLECTION,
-    documentId,
-    document,
-  });
-  if (error) throw new Error('NerdStorage write failed: ' + (error.message || JSON.stringify(error)));
+  try {
+    const { error } = await AccountStorageMutation.mutate({
+      accountId:  ACCOUNT_ID,
+      actionType: AccountStorageMutation.ACTION_TYPE.WRITE_DOCUMENT,
+      collection: STORAGE_COLLECTION,
+      documentId,
+      document,
+    });
+    if (error) {
+      console.error('[EagleEye] NerdStorage write error:', error);
+      // Don't throw — let the UI continue working even if persist fails
+    }
+  } catch (e) {
+    console.error('[EagleEye] NerdStorage write exception:', e);
+  }
 };
 
 const nerdStorageRead = async (documentId) => {
-  const { data, error } = await AccountStorageQuery.query({
-    accountId:  ACCOUNT_ID,
-    collection: STORAGE_COLLECTION,
-    documentId,
-  });
-  if (error) throw new Error('NerdStorage read failed: ' + (error.message || JSON.stringify(error)));
-  return data ?? null;
+  try {
+    const { data, error } = await AccountStorageQuery.query({
+      accountId:  ACCOUNT_ID,
+      collection: STORAGE_COLLECTION,
+      documentId,
+    });
+    if (error) {
+      // NerdStorage returns error for missing docs — treat as null, don't throw
+      console.warn('[EagleEye] NerdStorage read returned error (may be missing doc):', documentId, error);
+      return null;
+    }
+    return data ?? null;
+  } catch (e) {
+    console.warn('[EagleEye] NerdStorage read exception:', documentId, e);
+    return null;
+  }
 };
 
 const persistProviders = async (newProviders) => {
@@ -373,7 +389,7 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 6000);
 };
 
-// ─── callInfraAPI — explicit action mapping, terminate→destroy ────────────────
+// ─── callInfraAPI ─────────────────────────────────────────────────────────────
 const callInfraAPI = async (project, action, token) => {
   if (!token || token === '') throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
   if (!project.projectDirName) throw new Error('No project directory name configured for this project.');
@@ -1617,7 +1633,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const pollCancelRef  = useRef({ cancelled: false });
   const isMountedRef   = useRef(true);
 
-  // ── FIX 2: keep a ref to lifecycle so handleActionDispatched never goes stale ──
   const lifecycleRef = useRef(lifecycle);
   useEffect(() => { lifecycleRef.current = lifecycle; }, [lifecycle]);
 
@@ -1643,12 +1658,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return ['apply','stop','start','terminate'].filter(a => !allowed.includes(a));
   };
 
-  // ── FIX 2: no lifecycle in deps — read via lifecycleRef instead ───────────────
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
     setActiveAction(action);
     setActionState(INFRA_STATES.DISPATCHING);
 
-    // Read current lifecycle from ref — never stale
     const currentLifecycle = lifecycleRef.current;
     if (!currentLifecycle && action !== 'apply') {
       const inferred =
@@ -1719,7 +1732,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         }
       }, 3000);
     }
-  }, [onLifecycleChange, project]); // lifecycle removed from deps — read via ref
+  }, [onLifecycleChange, project]);
 
   const handleInfraAction = useCallback((proj, action) => {
     onInfraAction(proj, action, handleActionDispatched);
@@ -2297,44 +2310,51 @@ const EagleEye = () => {
   const [infraConfirm, setInfraConfirm] = useState(null);
   const [infraStates,  setInfraStates]  = useState({});
 
-  // ── FIX 1: keep a ref so handleLifecycleChange never closes over stale infraStates ──
   const infraStatesRef = useRef(infraStates);
   useEffect(() => { infraStatesRef.current = infraStates; }, [infraStates]);
 
+  // ── FIXED: Safe parallel load — never throws, treats missing docs as null ──
   useEffect(() => {
-    nerdStorageRead(STORAGE_DOC_ID)
-      .then((doc) => {
-        if (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0) {
-          setProviders(mergeAutoDiscovered(doc.providers));
-        } else {
-          setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+    const safeRead = (documentId) =>
+      AccountStorageQuery.query({
+        accountId: ACCOUNT_ID,
+        collection: STORAGE_COLLECTION,
+        documentId,
+      }).then(({ data, error }) => {
+        if (error) {
+          console.warn('[EagleEye] NerdStorage read error (doc may not exist yet):', documentId, error);
+          return null;
         }
-      })
-      .catch((err) => {
-        console.error('[EagleEye] Failed to load providers:', err);
-        setLoadError(true);
+        return data ?? null;
+      }).catch((e) => {
+        console.warn('[EagleEye] NerdStorage read exception:', documentId, e);
+        return null;
+      });
+
+    Promise.all([
+      safeRead(STORAGE_DOC_ID),
+      safeRead(STORAGE_CONFIG_ID),
+      safeRead(STORAGE_INFRA_STATE_ID),
+    ]).then(([providerDoc, configDoc, infraDoc]) => {
+      // Providers
+      if (providerDoc?.providers && Array.isArray(providerDoc.providers) && providerDoc.providers.length > 0) {
+        setProviders(mergeAutoDiscovered(providerDoc.providers));
+      } else {
         setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-      });
-
-    nerdStorageRead(STORAGE_CONFIG_ID)
-      .then((doc) => {
-        if (doc?.accessToken) {
-          setGhToken(doc.accessToken);
-        }
-      })
-      .catch((err) => {
-        console.error('[EagleEye] Failed to load config:', err);
-      });
-
-    nerdStorageRead(STORAGE_INFRA_STATE_ID)
-      .then((doc) => {
-        if (doc?.infraStates) {
-          setInfraStates(doc.infraStates);
-        }
-      })
-      .catch((err) => {
-        console.error('[EagleEye] Failed to load infra states:', err);
-      });
+      }
+      // Token
+      if (configDoc?.accessToken) {
+        setGhToken(configDoc.accessToken);
+      }
+      // Infra states
+      if (infraDoc?.infraStates) {
+        setInfraStates(infraDoc.infraStates);
+      }
+    }).catch((err) => {
+      console.error('[EagleEye] Startup load failed:', err);
+      setLoadError(true);
+      setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
+    });
   }, []);
 
   const handleSave = async (newProviders) => {
@@ -2352,15 +2372,13 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  // ── FIX 1: read from ref — no stale closure, no corrupted NerdStorage writes ──
   const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    // Always read from the ref for the latest state — never from the closed-over variable
     const freshStates = { ...infraStatesRef.current, [key]: newLifecycle };
-    infraStatesRef.current = freshStates; // update ref immediately for any back-to-back calls
+    infraStatesRef.current = freshStates;
     await persistInfraStates(freshStates);
     setInfraStates(freshStates);
-  }, []); // no deps needed — all state accessed via ref
+  }, []);
 
   if (!providers) return <EagleEyeLoader />;
 
