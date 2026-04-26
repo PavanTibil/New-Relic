@@ -794,68 +794,7 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
 };
 
 // ─── FIX: InfraStatusBanner — correct labels: "Applying…", "Apply successful" ──
-const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
-  if (actionState === INFRA_STATES.IDLE) return null;
-
-  // Human-readable verb form for each action
-  const ACTION_LABELS = {
-    apply:     { present: 'Applying',     past: 'Apply successful' },
-    stop:      { present: 'Stopping',     past: 'Stop successful' },
-    start:     { present: 'Starting',     past: 'Start successful' },
-    terminate: { present: 'Terminating',  past: 'Terminate successful' },
-  };
-  const labels = ACTION_LABELS[lastAction] || { present: lastAction, past: lastAction + ' done' };
-
-  const configs = {
-    [INFRA_STATES.DISPATCHING]: {
-      color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)',
-      icon:<SpinnerIcon size={13} color="#4285f4" />,
-      text:`${labels.present}…`,
-      sub:'Sending workflow_dispatch to GitHub Actions',
-    },
-    [INFRA_STATES.RUNNING]: {
-      color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)',
-      icon:<SpinnerIcon size={13} color="#f5a623" />,
-      text:`${labels.present}…`,
-      sub:'GitHub Actions workflow is in progress',
-    },
-    [INFRA_STATES.SUCCEEDED]: {
-      color:'#00d4aa', bg:'rgba(0,212,170,0.10)', border:'rgba(0,212,170,0.3)',
-      icon:'✓',
-      text: labels.past,
-      sub:'Workflow finished successfully',
-      dismissable: true,
-    },
-    [INFRA_STATES.FAILED]: {
-      color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)',
-      icon:'✗',
-      text:`${labels.present.replace('ing','').trim()} failed`,
-      sub:'Check GitHub Actions for details',
-      dismissable: true,
-    },
-    [INFRA_STATES.TIMEOUT]: {
-      color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)',
-      icon:'⚠',
-      text:`${labels.present.replace('ing','').trim()} timed out`,
-      sub:'Check GitHub Actions manually',
-      dismissable: true,
-    },
-  };
-
-  const cfg = configs[actionState];
-  if (!cfg) return null;
-
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', background:cfg.bg, border:`1px solid ${cfg.border}`, borderRadius:8, margin:'4px 0 6px' }}>
-      <span style={{ color:cfg.color, fontSize:13, flexShrink:0, display:'flex', alignItems:'center' }}>{cfg.icon}</span>
-      <div style={{ flex:1 }}>
-        <div style={{ fontSize:12, fontWeight:700, color:cfg.color }}>{cfg.text}</div>
-        <div style={{ fontSize:10, color:'#7a8aaa', marginTop:1 }}>{cfg.sub}</div>
-      </div>
-      {cfg.dismissable && <button onClick={onDismiss} style={{ background:'none', border:'none', outline:'none', boxShadow:'none', color:'#4a6080', cursor:'pointer', fontSize:14, padding:'0 2px', lineHeight:1 }}>✕</button>}
-    </div>
-  );
-};
+const InfraStatusBanner = () => null;
 
 // ─── FIX: InfraConfirmModal — passes original action to callInfraAPI (which maps it) ──
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
@@ -1662,6 +1601,8 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
+  const isMountedRef = useRef(true);
+  useEffect(() => { return () => { isMountedRef.current = false; }; }, []);
 
   useEffect(() => {
     if (persistedLifecycle && persistedLifecycle !== lifecycle) {
@@ -1705,11 +1646,11 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     const cancelRef = pollCancelRef.current;
 
     const onStatusChange = (newState) => {
-      if (!cancelRef.cancelled) setActionState(newState);
+      if (!cancelRef.cancelled && isMountedRef.current) setActionState(newState);
     };
 
     const onComplete = (conclusion) => {
-      if (cancelRef.cancelled) return;
+      if (cancelRef.cancelled || !isMountedRef.current) return;
       if (conclusion === 'success') {
         setActionState(INFRA_STATES.SUCCEEDED);
         const next = NEXT_LIFECYCLE[action];
@@ -1738,7 +1679,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         if (!cancelRef.cancelled) {
           setActionState(INFRA_STATES.FAILED);
           setTimeout(() => {
-            if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
+            if (!cancelRef.cancelled && isMountedRef.current) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
           }, 6000);
         }
       }
@@ -2008,6 +1949,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     const stateKey = p.projectDirName || p.name;
     const lifecycle = infraStates?.[stateKey] || null;
     if (!lifecycle) return 'not_provisioned';
+    if (lifecycle === 'terminated') return 'terminated';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
@@ -2025,7 +1967,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const nonBillingLive = projectStatuses.filter((s, i) => {
     const p = provider.projects[i];
     return !p.billingOnly && !p.billingNotConfigured && !p.deleted && !p.empty
-      && s !== 'unknown' && s !== 'not_provisioned' && s !== 'billing_only';
+      && s !== 'not_provisioned' && s !== 'billing_only' && s !== 'terminated';
   });
   const resourceBadgeStatus = nonBillingLive.length > 0 ? worstStatus(nonBillingLive) : 'unknown';
 
