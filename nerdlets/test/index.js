@@ -373,15 +373,13 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 6000);
 };
 
-// ─── FIX: callInfraAPI — explicit action mapping, terminate→destroy ───────────
+// ─── callInfraAPI — explicit action mapping, terminate→destroy ────────────────
 const callInfraAPI = async (project, action, token) => {
   if (!token || token === '') throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
   if (!project.projectDirName) throw new Error('No project directory name configured for this project.');
 
   const projectPath = `projects/${project.projectDirName}`;
 
-  // Map UI action → GitHub workflow action input
-  // 'terminate' in the UI means 'destroy' in Terraform/workflow
   const workflowAction = {
     apply:     'apply',
     stop:      'stop',
@@ -599,7 +597,6 @@ const PROVIDER_META = {
 
 const canBePaused = (t, row) => t === 'aws_apprunner' && row && (row.activeInstances ?? null) === 0 && (row.samples ?? 0) > 0;
 
-// ─── FIX: extractEc2FacetPair — reads instanceName from data point ────────────
 const extractEc2FacetPair = (series) => {
   let name = null;
   const groups = series?.metadata?.groups;
@@ -609,7 +606,6 @@ const extractEc2FacetPair = (series) => {
   if (!name) return null;
   const pt=series?.data?.[0];
   const sf=pt?.statusFailed??null;
-  // Read instanceName directly from data point (query selects it as alias)
   const instanceName = pt?.instanceName ?? null;
   return { name, instanceName, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
 };
@@ -793,10 +789,9 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   );
 };
 
-// ─── FIX: InfraStatusBanner — correct labels: "Applying…", "Apply successful" ──
 const InfraStatusBanner = () => null;
 
-// ─── FIX: InfraConfirmModal — passes original action to callInfraAPI (which maps it) ──
+// ─── InfraConfirmModal ────────────────────────────────────────────────────────
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
@@ -806,7 +801,6 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     setBusy(true); setErr('');
     try {
       const preDispatch = Date.now();
-      // Pass the original UI action — callInfraAPI handles the terminate→destroy mapping
       await callInfraAPI(project, action, ghToken);
       onConfirm(preDispatch);
     } catch (e) {
@@ -868,7 +862,6 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
     { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={12} color="currentColor" />, colors:{bg:'#2e0010',border:'#ff4d6d',text:'#ff7a96',disabledBg:'#1a000a',disabledBorder:'#3d0015',disabledText:'#581030'} },
   ];
 
-  // Map action → in-progress label shown on the button while running
   const ACTION_PROGRESS_LABEL = {
     apply:     'Applying',
     stop:      'Stopping',
@@ -900,7 +893,7 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   );
 };
 
-// ─── FIX: Ec2CountLoader — include instanceName in queries ────────────────────
+// ─── Ec2CountLoader ───────────────────────────────────────────────────────────
 const Ec2CountLoader = ({ project, onCounts, loaded }) => {
   const pf = ec2ProjectFilter(project);
   const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
@@ -1009,7 +1002,6 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
 
             if (r.type==='aws_ec2') {
               const pf=ec2ProjectFilter(project);
-              // FIX: include instanceName in both EC2 detail queries
               const aq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
               const mq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
               return (
@@ -1600,8 +1592,13 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [lifecycle,    setLifecycle]    = useState(persistedLifecycle || null);
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
-  const pollCancelRef = useRef({ cancelled: false });
-  const isMountedRef = useRef(true);
+  const pollCancelRef  = useRef({ cancelled: false });
+  const isMountedRef   = useRef(true);
+
+  // ── FIX 2: keep a ref to lifecycle so handleActionDispatched never goes stale ──
+  const lifecycleRef = useRef(lifecycle);
+  useEffect(() => { lifecycleRef.current = lifecycle; }, [lifecycle]);
+
   useEffect(() => { return () => { isMountedRef.current = false; }; }, []);
 
   useEffect(() => {
@@ -1614,23 +1611,24 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
 
-  useEffect(()=>{ return ()=>{ pollCancelRef.current.cancelled=true; }; },[]);
+  useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
   const getDisabledActions = () => {
     if (!infraReady) return ['apply','stop','start','terminate'];
     if (actionState!==INFRA_STATES.IDLE&&actionState!==INFRA_STATES.SUCCEEDED&&actionState!==INFRA_STATES.FAILED&&actionState!==INFRA_STATES.TIMEOUT) return ['apply','stop','start','terminate'];
     if (!lifecycle) return [];
-    const allowed=ALLOWED_ACTIONS[lifecycle]||[];
-    return ['apply','stop','start','terminate'].filter(a=>!allowed.includes(a));
+    const allowed = ALLOWED_ACTIONS[lifecycle] || [];
+    return ['apply','stop','start','terminate'].filter(a => !allowed.includes(a));
   };
 
-  // ─── FIX: handleActionDispatched — sets DISPATCHING immediately, wrapped in try/catch ──
+  // ── FIX 2: no lifecycle in deps — read via lifecycleRef instead ───────────────
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
-    // Set state immediately so spinner shows right away
     setActiveAction(action);
     setActionState(INFRA_STATES.DISPATCHING);
 
-    if (!lifecycle && action !== 'apply') {
+    // Read current lifecycle from ref — never stale
+    const currentLifecycle = lifecycleRef.current;
+    if (!currentLifecycle && action !== 'apply') {
       const inferred =
         action === 'stop' || action === 'terminate' ? 'provisioned'
         : action === 'start' ? 'stopped'
@@ -1679,7 +1677,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         if (!cancelRef.cancelled) {
           setActionState(INFRA_STATES.FAILED);
           setTimeout(() => {
-            if (!cancelRef.cancelled && isMountedRef.current) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
+            if (!cancelRef.cancelled && isMountedRef.current) {
+              setActionState(INFRA_STATES.IDLE);
+              setActiveAction(null);
+            }
           }, 6000);
         }
       }
@@ -1688,12 +1689,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         if (!cancelRef.cancelled) {
           setActionState(INFRA_STATES.TIMEOUT);
           setTimeout(() => {
-            if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
+            if (!cancelRef.cancelled) {
+              setActionState(INFRA_STATES.IDLE);
+              setActiveAction(null);
+            }
           }, 6000);
         }
       }, 3000);
     }
-  }, [onLifecycleChange, project, lifecycle]);
+  }, [onLifecycleChange, project]); // lifecycle removed from deps — read via ref
 
   const handleInfraAction = useCallback((proj, action) => {
     onInfraAction(proj, action, handleActionDispatched);
@@ -1714,7 +1718,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   // ── Billing ──
   if (project.billingOnly) {
-    const totalCost=billingCost??null;
+    const totalCost = billingCost ?? null;
     if (project.billingNotConfigured) return (
       <div className={'project-row project-row--billing'+(expanded?' project-row--expanded':'')} style={{ animationDelay:index*80+'ms' }}>
         <div className="project-row__main" onClick={()=>setExpanded(p=>!p)} style={{ cursor:'pointer' }}>
@@ -1934,7 +1938,7 @@ const SingleResourceQuery = ({ resource, project, children }) => {
   );
 };
 
-// ─── FIX: ProjectsRendered — resourceBadgeStatus excludes billing projects ────
+// ─── ProjectsRendered ─────────────────────────────────────────────────────────
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const projectStatuses = provider.projects.map((p, i) => {
     if (p.deleted) return 'deleted';
@@ -1963,7 +1967,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     }
   });
 
-  // FIX: only count non-billing, non-deleted, non-empty projects for the Resources pill
   const nonBillingLive = projectStatuses.filter((s, i) => {
     const p = provider.projects[i];
     return !p.billingOnly && !p.billingNotConfigured && !p.deleted && !p.empty
@@ -1971,7 +1974,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   });
   const resourceBadgeStatus = nonBillingLive.length > 0 ? worstStatus(nonBillingLive) : 'unknown';
 
-  // Overall card status still uses all non-billing live for the card border
   const live = projectStatuses.filter(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
     s !== 'billing_only' && s !== 'not_provisioned'
@@ -2273,6 +2275,10 @@ const EagleEye = () => {
   const [infraConfirm, setInfraConfirm] = useState(null);
   const [infraStates,  setInfraStates]  = useState({});
 
+  // ── FIX 1: keep a ref so handleLifecycleChange never closes over stale infraStates ──
+  const infraStatesRef = useRef(infraStates);
+  useEffect(() => { infraStatesRef.current = infraStates; }, [infraStates]);
+
   useEffect(() => {
     nerdStorageRead(STORAGE_DOC_ID)
       .then((doc) => {
@@ -2324,14 +2330,15 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  const pendingInfraRef = useRef({});
+  // ── FIX 1: read from ref — no stale closure, no corrupted NerdStorage writes ──
   const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    pendingInfraRef.current = { ...infraStates, ...pendingInfraRef.current, [key]: newLifecycle };
-    const snapshot = pendingInfraRef.current;
-    await persistInfraStates(snapshot);
-    setInfraStates(snapshot);
-  }, [infraStates]);
+    // Always read from the ref for the latest state — never from the closed-over variable
+    const freshStates = { ...infraStatesRef.current, [key]: newLifecycle };
+    infraStatesRef.current = freshStates; // update ref immediately for any back-to-back calls
+    await persistInfraStates(freshStates);
+    setInfraStates(freshStates);
+  }, []); // no deps needed — all state accessed via ref
 
   if (!providers) return <EagleEyeLoader />;
 
