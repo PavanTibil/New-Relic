@@ -124,6 +124,32 @@ const GCP_DISCOVERY_MAP = [
   { type:'google_redis_instance',           label:'Memorystore Redis',nrTable:'GcpRedisInstanceSample',     desc:'Managed Redis instances',                            alwaysOn:true  },
 ];
 
+// ─── TF resource type → Eagle Eye type mapping ────────────────────────────────
+const TF_TO_EE_TYPE = {
+  // EC2 family
+  aws_instance:                     'aws_ec2',
+  aws_launch_template:              'aws_ec2',
+  aws_autoscaling_group:            'aws_ec2',
+  aws_launch_configuration:         'aws_ec2',
+  // App Runner
+  aws_apprunner_service:            'aws_apprunner',
+  // RDS
+  aws_db_instance:                  'aws_rds',
+  aws_rds_cluster:                  'aws_rds',
+  aws_rds_cluster_instance:         'aws_rds',
+  // CloudFront
+  aws_cloudfront_distribution:      'aws_cloudfront',
+  // ECS
+  aws_ecs_cluster:                  'aws_ecs',
+  aws_ecs_service:                  'aws_ecs',
+  aws_ecs_task_definition:          'aws_ecs',
+  // Lambda
+  aws_lambda_function:              'aws_lambda',
+  // S3
+  aws_s3_bucket:                    'aws_s3',
+  aws_s3_bucket_object:             'aws_s3',
+};
+
 const ec2ProjectFilter = (project) => {
   const tag = project.projectDirName || project.gcpProjectId || project.name;
   return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
@@ -164,6 +190,7 @@ const persistInfraStates = async (infraStates) => {
   }
 };
 
+// ─── GitHub TF file checker (hasTf) ──────────────────────────────────────────
 const useGithubTfFiles = (projectDirName, token) => {
   const [state, setState] = React.useState({ loading: false, hasTf: null });
   React.useEffect(() => {
@@ -198,6 +225,87 @@ const useGithubTfFiles = (projectDirName, token) => {
       .catch(()    => { if (!cancelled) setState({ loading: false, hasTf: false }); });
     return () => { cancelled = true; };
   }, [projectDirName, token]);
+  return state;
+};
+
+// ─── GitHub TF resource auto-detector ────────────────────────────────────────
+const useGithubTfResources = (projectDirName, token, providerId) => {
+  const [state, setState] = React.useState({ loading: false, resources: null });
+
+  React.useEffect(() => {
+    if (!projectDirName || !token || !providerId) {
+      setState({ loading: false, resources: null });
+      return;
+    }
+    setState({ loading: true, resources: null });
+    let cancelled = false;
+
+    const ghHeaders = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+
+    const listTfFiles = async (path, depth = 0) => {
+      if (depth > 4) return [];
+      const r = await fetch(
+        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`,
+        { headers: ghHeaders }
+      );
+      if (!r.ok) return [];
+      const items = await r.json();
+      if (!Array.isArray(items)) return [];
+      let files = [];
+      for (const item of items) {
+        if (item.type === 'file' && item.name.endsWith('.tf')) files.push(item);
+        else if (item.type === 'dir' && !item.name.startsWith('.')) {
+          const nested = await listTfFiles(item.path, depth + 1);
+          files = [...files, ...nested];
+        }
+      }
+      return files;
+    };
+
+    const run = async () => {
+      const files = await listTfFiles(`projects/${projectDirName}`);
+      console.log('[TF-detect] files found for', projectDirName, files.map(f => f.path));
+
+      const foundEeTypes = new Set();
+
+      for (const file of files) {
+        try {
+          const r = await fetch(file.download_url);
+          if (!r.ok) continue;
+          const content = await r.text();
+          const regex = /resource\s+"([a-z][a-z0-9_]*)"\s+"/g;
+          let m;
+          while ((m = regex.exec(content)) !== null) {
+            console.log('[TF-detect] found resource type:', m[1], '→', TF_TO_EE_TYPE[m[1]] || 'NOT MAPPED');
+            const eeType = TF_TO_EE_TYPE[m[1]];
+            if (eeType) foundEeTypes.add(eeType);
+          }
+        } catch (e) {
+          console.log('[TF-detect] failed to read file', file.path, e);
+        }
+      }
+
+      console.log('[TF-detect] final detected EE types for', projectDirName, [...foundEeTypes]);
+
+      if (cancelled) return;
+
+      const allOpts = RESOURCE_OPTIONS[providerId] || [];
+      const resources = allOpts.filter(o => foundEeTypes.has(o.type));
+      setState({ loading: false, resources });
+    };
+
+    run().catch((e) => {
+      console.error('[TF-detect] run failed:', e);
+      if (!cancelled) setState({ loading: false, resources: [] });
+    });
+
+    return () => { cancelled = true; };
+  }, [projectDirName, token, providerId]);
+
   return state;
 };
 
@@ -1076,10 +1184,8 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
     setEditInfo({ pi, pj }); setSaveError(''); setView('form');
   };
 
-  // ── FIXED: buildProject always returns a clean object with no leftover flags ──
   const buildProject = () => {
     const { name, gcpProjectId, dashboardGuid, dashboardLink, projectDirName, projectType, selectedResources, knownServices, customResources } = form;
-    // Base never includes empty/billingOnly/billingNotConfigured — they're set explicitly per type
     const base = {
       name: name.trim(),
       gcpProjectId: gcpProjectId.trim() || null,
@@ -1097,7 +1203,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
         resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }],
       };
     }
-    // projectType === 'normal' — no empty/billingOnly flags at all
+    // normal — no empty/billingOnly flags
     const allOpts      = RESOURCE_OPTIONS[providerId] || [];
     const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
     const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1195,6 +1301,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                     {project.projectDirName&&<span style={{ fontSize:10, color:'#3d5070', fontFamily:'monospace', flexShrink:0 }}>{project.projectDirName}</span>}
                     {typeTag&&<span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
                     {!typeTag&&project.resources?.length>0&&<span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
+                    {!typeTag&&(!project.resources||project.resources.length===0)&&project.projectDirName&&<span style={{ fontSize:10, color:'#FF9900', background:'rgba(255,153,0,0.10)', border:'1px solid rgba(255,153,0,0.25)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0 }}>TF Auto-detect</span>}
                     <button onClick={()=>startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
                     {project.deleted
                       ?<button onClick={()=>handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
@@ -1283,6 +1390,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <label style={s.label}>Dashboard Short Link</label>
             <input value={form.dashboardLink} onChange={e=>setField('dashboardLink',e.target.value)} placeholder="e.g. https://onenr.io/..." style={s.input} />
           </div>
+          {/* GCP auto-detect notice */}
           {form.projectType==='normal'&&form.providerId==='gcp'&&(
             <div style={{ padding:'10px 14px', background:'rgba(66,133,244,0.06)', border:'1px solid rgba(66,133,244,0.2)', borderRadius:8, marginBottom:18 }}>
               <div style={{ fontSize:12, fontWeight:700, color:'#4285f4', marginBottom:4 }}>✦ Auto-detection enabled</div>
@@ -1291,9 +1399,18 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               </div>
             </div>
           )}
+          {/* AWS TF auto-detect notice */}
+          {form.projectType==='normal'&&form.providerId==='aws'&&(
+            <div style={{ padding:'10px 14px', background:'rgba(255,153,0,0.06)', border:'1px solid rgba(255,153,0,0.2)', borderRadius:8, marginBottom:18 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:'#FF9900', marginBottom:4 }}>✦ TF Auto-detection enabled</div>
+              <div style={{ fontSize:11, color:'#7a8aaa', lineHeight:1.5 }}>
+                If <strong style={{ color:'#c8d4f0' }}>Project Dir Name</strong> is set and no resources are selected below, Eagle Eye will automatically scan <code style={{ color:'#FF9900' }}>projects/{form.projectDirName||'<dir>'}/</code> in GitHub for Terraform files and detect resources (EC2, RDS, App Runner, etc.) automatically. You can still manually select resources to override this.
+              </div>
+            </div>
+          )}
           {form.projectType==='normal'&&form.providerId==='aws'&&(
             <div style={s.field}>
-              <label style={s.label}>Resources to Monitor</label>
+              <label style={s.label}>Resources to Monitor <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(leave empty for TF auto-detect)</span></label>
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {providerOptions.map(opt=>{
                   const checked=form.selectedResources.includes(opt.type);
@@ -1565,6 +1682,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   })();
 
   const showGhostState = !lifecycle && hasResources;
+  // ── FIXED: badge shows whenever infraReady and no lifecycle, regardless of hasResources ──
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
   const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
 
@@ -1579,7 +1697,13 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           </div>
         );
       }
-      return <div style={{ fontSize:12, color:'#4a6080', fontStyle:'italic', padding:'6px 0' }}>No resources configured for monitoring.</div>;
+      // AWS with no resources yet — TF detection may still be loading
+      return (
+        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+          <SpinnerIcon size={11} color="#4a6080" />
+          <span>Scanning Terraform files for resources…</span>
+        </div>
+      );
     }
     if (showGhostState) return <GhostStateBanner project={project} />;
     return (
@@ -1849,6 +1973,16 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
         />
       );
     }
+    // ── AWS: no resources set + has projectDirName → auto-detect from TF files ──
+    if (provider.id === 'aws' && !project.deleted && !project.empty && !project.billingOnly && project.projectDirName) {
+      return (
+        <AwsTfAutoLoaderStateful
+          project={project} projectIndex={projectIndex} provider={provider}
+          results={results} onManage={onManage} onInfraAction={onInfraAction}
+          infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+        />
+      );
+    }
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
@@ -1944,6 +2078,52 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
   );
 };
 
+// ─── AWS TF auto-loader ───────────────────────────────────────────────────────
+const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+  const ghToken = React.useContext(GhTokenContext);
+  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
+
+  if (loading) {
+    // Render project list so UI isn't blocked — pass empty statuses while loading
+    return (
+      <ProjectListInnerStateful
+        provider={provider} projectIndex={projectIndex + 1}
+        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
+        onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+
+  // resources null means token not available — fall through gracefully
+  const detectedResources = (resources && resources.length > 0)
+    ? resources
+    : (project.resources || []);
+
+  const enrichedProject = { ...project, resources: detectedResources, _tfAutoDetected: true };
+
+  if (detectedResources.length === 0) {
+    // Nothing detected — still render the row (will show "NOT PROVISIONED" badge via infraReady)
+    return (
+      <ProjectListInnerStateful
+        provider={provider} projectIndex={projectIndex + 1}
+        results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
+        onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+
+  return (
+    <ProjectResourceLoaderStateful
+      project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
+      projectIndex={projectIndex} provider={provider} results={results}
+      onManage={onManage} onInfraAction={onInfraAction}
+      infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+    />
+  );
+};
+
 // ─── CloudCard ────────────────────────────────────────────────────────────────
 const CloudCard = ({ provider, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const meta = PROVIDER_META[provider.id];
@@ -1991,7 +2171,6 @@ const EagleEye = () => {
   const [infraStates,  setInfraStates]  = useState({});
 
   useEffect(() => {
-    // Load providers
     nerdStorageRead(STORAGE_DOC_ID)
       .then((doc) => {
         if (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0) {
@@ -2008,7 +2187,6 @@ const EagleEye = () => {
         setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
       });
 
-    // Load config (token)
     nerdStorageRead(STORAGE_CONFIG_ID)
       .then((doc) => {
         console.log('[EagleEye] Config doc from NerdStorage:', doc);
@@ -2023,7 +2201,6 @@ const EagleEye = () => {
         console.error('[EagleEye] Failed to load config:', err);
       });
 
-    // Load persisted infra lifecycle states
     nerdStorageRead(STORAGE_INFRA_STATE_ID)
       .then((doc) => {
         if (doc?.infraStates) {
@@ -2041,11 +2218,9 @@ const EagleEye = () => {
     setProviders(newProviders);
   };
 
-  // ── FIXED: No read-back verification — trust the write, set state immediately ──
   const handleSaveToken = async (token) => {
     await nerdStorageWrite(STORAGE_CONFIG_ID, { accessToken: token });
     setGhToken(token);
-    // Silent background verification — logs only, never throws
     setTimeout(async () => {
       try {
         const verify = await nerdStorageRead(STORAGE_CONFIG_ID);
@@ -2104,7 +2279,9 @@ const EagleEye = () => {
         <div className="ee-grid">
           {providers.map(provider => (
             <CloudCard
-              key={provider.id}
+              key={provider.id + '::' + provider.projects.map(p =>
+                `${p.name}~${p.empty ? 'e' : p.billingOnly ? 'b' : 'n'}~${(p.resources || []).length}`
+              ).join('|')}
               provider={provider}
               onManage={(healthMap) => setShowModal({ providerId: provider.id, projectHealthMap: healthMap })}
               onInfraAction={handleInfraAction}
