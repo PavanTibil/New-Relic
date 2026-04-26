@@ -1779,7 +1779,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-          {hasResources&&renderResourceDetail()}
+          {(hasResources || project.projectDirName) && renderResourceDetail()}
         </div>
       )}
     </div>
