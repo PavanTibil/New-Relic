@@ -2070,17 +2070,36 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
 const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const ghToken = React.useContext(GhTokenContext);
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
+  const [resolvedResources, setResolvedResources] = React.useState(null);
 
-  if (loading) {
-    return null;
+  React.useEffect(() => {
+    if (!loading && resources !== null) {
+      const detected = (resources && resources.length > 0)
+        ? resources
+        : (project.resources && project.resources.length > 0 ? project.resources : []);
+      setResolvedResources(detected);
+    }
+  }, [loading, resources]);
+
+  // Always advance the chain immediately with a placeholder,
+  // but use resolvedResources once available to trigger re-render
+  const slotResources = resolvedResources;
+  const slotLoading = slotResources === null;
+
+  if (slotLoading) {
+    // Render rest of list with loading:true for this slot
+    // so AWS card isn't blank while GitHub is being scanned
+    return (
+      <ProjectListInnerStateful
+        provider={provider} projectIndex={projectIndex + 1}
+        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
+        onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
   }
 
-  // resources null means token not available — fall through gracefully
-  const detectedResources = (resources && resources.length > 0)
-    ? resources
-    : (project.resources && project.resources.length > 0 ? project.resources : []);
-
-  if (detectedResources.length === 0) {
+  if (slotResources.length === 0) {
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
@@ -2091,7 +2110,7 @@ const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onM
     );
   }
 
-  const enrichedProject = { ...project, resources: detectedResources, _tfAutoDetected: true };
+  const enrichedProject = { ...project, resources: slotResources, _tfAutoDetected: true };
 
   return (
     <ProjectResourceLoaderStateful
