@@ -1301,7 +1301,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                     {project.projectDirName&&<span style={{ fontSize:10, color:'#3d5070', fontFamily:'monospace', flexShrink:0 }}>{project.projectDirName}</span>}
                     {typeTag&&<span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
                     {!typeTag&&project.resources?.length>0&&<span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
-                    {!typeTag&&(!project.resources||project.resources.length===0)&&project.projectDirName&&<span style={{ fontSize:10, color:'#FF9900', background:'rgba(255,153,0,0.10)', border:'1px solid rgba(255,153,0,0.25)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0 }}>TF Auto-detect</span>}
                     <button onClick={()=>startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
                     {project.deleted
                       ?<button onClick={()=>handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
@@ -1369,9 +1368,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
           <div style={s.field}>
             <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
             <input value={form.projectDirName} onChange={e=>setField('projectDirName',e.target.value)} placeholder="e.g. my-service-uat  →  projects/my-service-uat/" style={s.input} />
-            <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
-              Required for infra actions. EC2 instances must be tagged <code style={{ color:'#6a8aaa' }}>Project=&lt;this value&gt;</code> to be scoped correctly.
-            </div>
           </div>
           {form.providerId==='gcp'&&form.projectType==='normal'&&(
             <div style={s.field}>
@@ -2075,19 +2071,23 @@ const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onM
   const ghToken = React.useContext(GhTokenContext);
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
 
-  if (loading || resources === null) {
-    return null;
+  if (loading) {
+    return (
+      <ProjectListInnerStateful
+        provider={provider} projectIndex={projectIndex + 1}
+        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
+        onManage={onManage} onInfraAction={onInfraAction}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
   }
 
   // resources null means token not available — fall through gracefully
   const detectedResources = (resources && resources.length > 0)
     ? resources
-    : (project.resources || []);
-
-  const enrichedProject = { ...project, resources: detectedResources, _tfAutoDetected: true };
+    : (project.resources && project.resources.length > 0 ? project.resources : []);
 
   if (detectedResources.length === 0) {
-    // Nothing detected — still render the row (will show "NOT PROVISIONED" badge via infraReady)
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
@@ -2097,6 +2097,8 @@ const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onM
       />
     );
   }
+
+  const enrichedProject = { ...project, resources: detectedResources, _tfAutoDetected: true };
 
   return (
     <ProjectResourceLoaderStateful
