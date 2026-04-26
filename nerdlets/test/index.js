@@ -1565,6 +1565,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   })();
 
   const showGhostState = !lifecycle && hasResources;
+  const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
   const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
 
   const renderResourceDetail = () => {
@@ -1596,7 +1597,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           <span className="project-row__name">{project.name}</span>
           {!isBusy&&(tfLoading
             ? <NoInfraBadge checking />
-            : showGhostState
+            : showNotProvisionedBadge
               ? ghToken
                 ? <span style={{ fontSize:10, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px dashed rgba(66,133,244,0.35)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>Not Provisioned</span>
                 : <span style={{ fontSize:10, fontWeight:700, color:'#5a6888', background:'rgba(90,104,136,0.15)', border:'1px dashed rgba(90,104,136,0.40)', borderRadius:100, padding:'2px 9px', textTransform:'uppercase', letterSpacing:'0.5px', flexShrink:0 }}>No Infra Yet</span>
