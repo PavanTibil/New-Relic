@@ -1500,7 +1500,7 @@ const GhostStateBanner = ({ project }) => {
   );
 };
 
-const AwsTfInlineLoader = ({ project }) => {
+const AwsTfInlineLoader = ({ project, lifecycle }) => {
   const ghToken = React.useContext(GhTokenContext);
   const providerId = 'aws';
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, providerId);
@@ -1518,6 +1518,21 @@ const AwsTfInlineLoader = ({ project }) => {
     return (
       <div style={{ padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
         No Terraform resources detected.
+      </div>
+    );
+  }
+
+  if (!lifecycle) {
+    return (
+      <div style={{ marginTop:6, padding:'10px 14px', borderRadius:8, background:'rgba(90,104,136,0.10)', border:'1px dashed rgba(90,104,136,0.40)' }}>
+        <div style={{ fontSize:10, fontWeight:800, letterSpacing:'0.8px', textTransform:'uppercase', color:'#6a7a9a', marginBottom:8 }}>
+          Resources · Not Yet Provisioned
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+          {resources.map((r, i) => (
+            <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -1733,7 +1748,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         );
       }
       if (project.projectDirName) {
-        return <AwsTfInlineLoader project={project} />;
+        return <AwsTfInlineLoader project={project} lifecycle={lifecycle} />;
       }
       return null;
     }
@@ -2112,54 +2127,10 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
 
 // ─── AWS TF auto-loader ───────────────────────────────────────────────────────
 const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
-  const ghToken = React.useContext(GhTokenContext);
-  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
-  const [resolvedResources, setResolvedResources] = React.useState(null);
-
-  React.useEffect(() => {
-    if (!loading && resources !== null) {
-      const detected = (resources && resources.length > 0)
-        ? resources
-        : (project.resources && project.resources.length > 0 ? project.resources : []);
-      setResolvedResources(detected);
-    }
-  }, [loading, resources]);
-
-  // Always advance the chain immediately with a placeholder,
-  // but use resolvedResources once available to trigger re-render
-  const slotResources = resolvedResources;
-  const slotLoading = slotResources === null;
-
-  if (slotLoading) {
-    // Render rest of list with loading:true for this slot
-    // so AWS card isn't blank while GitHub is being scanned
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
-  }
-
-  if (slotResources.length === 0) {
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
-  }
-
-  const enrichedProject = { ...project, resources: slotResources, _tfAutoDetected: true };
-
   return (
-    <ProjectResourceLoaderStateful
-      project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
-      projectIndex={projectIndex} provider={provider} results={results}
+    <ProjectListInnerStateful
+      provider={provider} projectIndex={projectIndex + 1}
+      results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
       onManage={onManage} onInfraAction={onInfraAction}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
     />
