@@ -2072,14 +2072,7 @@ const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onM
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
 
   if (loading) {
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
+    return null;
   }
 
   // resources null means token not available — fall through gracefully
