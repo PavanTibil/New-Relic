@@ -151,8 +151,12 @@ const TF_TO_EE_TYPE = {
 };
 
 const ec2ProjectFilter = (project) => {
-  const tag = project.projectDirName || project.gcpProjectId || project.name;
-  return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
+  const dirName = project.projectDirName || '';
+  const projName = project.name || '';
+  const gcpId = project.gcpProjectId || '';
+  const tag = dirName || gcpId || projName;
+  const tagCap = projName || tag;
+  return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.Project\` = '${tagCap}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tagCap}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%' OR \`aws.ec2.tag.Name\` LIKE '${tagCap}%')`;
 };
 
 // ─── NerdStorage helpers ───────────────────────────────────────────────────────
@@ -444,7 +448,7 @@ const SERVICE_QUERIES = {
   google_redis_instance:         (p) => `SELECT count(*) AS val FROM GcpRedisInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
   aws_apprunner:  ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_rds:        ()  => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
-  aws_ec2:        (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
+  aws_ec2: (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
   aws_cloudfront: ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' FACET aws.cloudfront.DistributionId SINCE 24 hours ago LIMIT 20",
   aws_ecs:        ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/ECS' FACET aws.ecs.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_lambda:     ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/Lambda' FACET aws.lambda.FunctionName SINCE 5 minutes ago LIMIT 30",
@@ -619,11 +623,6 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
     }} />
     <div style={{ flex:1, minWidth:0 }}>
       <span style={{ fontWeight:600, fontSize:'0.82rem', color:'#8899bb', display:'block' }}>{resource.label}</span>
-      {resource.desc && (
-        <span style={{ fontSize:'0.72rem', color:'#5a6888', marginTop:2, lineHeight:1.4, display:'block' }}>
-          {resource.desc}
-        </span>
-      )}
     </div>
     {hasToken ? (
       <span style={{ fontSize:11, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.30)', borderRadius:100, padding:'1px 8px', letterSpacing:'0.3px', whiteSpace:'nowrap', flexShrink:0 }}>not provisioned</span>
@@ -905,8 +904,10 @@ const extractEc2FacetPair = (series) => {
   if (!name) { const pt=series?.data?.[0]; if (pt?.facet) name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet); }
   if (!name) { const n=series?.metadata?.name; const SKIP=new Set(['val','Other','unknown','count','statusFailed','cpu']); if (n&&!SKIP.has(n)) name=n; }
   if (!name) return null;
-  const pt=series?.data?.[0]; const sf=pt?.statusFailed??null;
-  return { name, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
+  const pt=series?.data?.[0];
+  const sf=pt?.statusFailed??null;
+  const instanceName=pt?.instanceName??null;
+  return { name, instanceName, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
 };
 
 const Ec2CountLoader = ({ project, onCounts, loaded }) => {
@@ -1028,7 +1029,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                         const activeI=new Set(), impairedI=new Set();
                         (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
                         const seen=new Set(), visibleInstances=[];
-                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
+                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,instanceName:p.instanceName,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
                         if (visibleInstances.length===0) return (
                           <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
                             No instances tagged <code style={{ color:'#4285f4', fontSize:10 }}>Project={project.projectDirName||project.name}</code> found
@@ -1041,7 +1042,9 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                             {visibleInstances.map((inst,i)=>{const d=ec2StateDisplay(inst.state);return(
                               <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<visibleInstances.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
                                 <span className={'status-dot status-dot--'+d.dot} style={{ width:6,height:6,flexShrink:0 }} />
-                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{inst.name}</span>
+                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                  {inst.instanceName ? `${inst.instanceName} (${inst.name})` : inst.name}
+                                </span>
                                 <span style={{ fontSize:10, color:d.color, fontWeight:600 }}>{d.label}</span>
                               </div>
                             );})}
@@ -1301,7 +1304,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                     {project.projectDirName&&<span style={{ fontSize:10, color:'#3d5070', fontFamily:'monospace', flexShrink:0 }}>{project.projectDirName}</span>}
                     {typeTag&&<span style={{ fontSize:10, fontWeight:700, color:tagColor, background:tagBg, borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0, border:`1px solid ${tagColor}44` }}>{typeTag}</span>}
                     {!typeTag&&project.resources?.length>0&&<span style={{ fontSize:11, color:'#4a5568', flexShrink:0 }}>{project.resources.length} resource{project.resources.length!==1?'s':''}</span>}
-                    {!typeTag&&(!project.resources||project.resources.length===0)&&project.projectDirName&&<span style={{ fontSize:10, color:'#FF9900', background:'rgba(255,153,0,0.10)', border:'1px solid rgba(255,153,0,0.25)', borderRadius:100, padding:'2px 8px', textTransform:'uppercase', letterSpacing:0.5, flexShrink:0 }}>TF Auto-detect</span>}
                     <button onClick={()=>startEdit(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(200,212,240,0.4)', background:'rgba(200,212,240,0.1)', color:'#c8d4f0', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Edit</button>
                     {project.deleted
                       ?<button onClick={()=>handleUnarchive(pj)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid rgba(66,133,244,0.55)', background:'rgba(66,133,244,0.12)', color:'#4285f4', fontWeight:600, fontSize:12, cursor:'pointer', flexShrink:0, outline:'none' }}>Unarchive</button>
@@ -1369,9 +1371,6 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
           <div style={s.field}>
             <label style={s.label}>Project Dir Name <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(folder under projects/ in repo)</span></label>
             <input value={form.projectDirName} onChange={e=>setField('projectDirName',e.target.value)} placeholder="e.g. my-service-uat  →  projects/my-service-uat/" style={s.input} />
-            <div style={{ marginTop:5, fontSize:11, color:'#4a6080' }}>
-              Required for infra actions. EC2 instances must be tagged <code style={{ color:'#6a8aaa' }}>Project=&lt;this value&gt;</code> to be scoped correctly.
-            </div>
           </div>
           {form.providerId==='gcp'&&form.projectType==='normal'&&(
             <div style={s.field}>
@@ -1399,15 +1398,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               </div>
             </div>
           )}
-          {/* AWS TF auto-detect notice */}
-          {form.projectType==='normal'&&form.providerId==='aws'&&(
-            <div style={{ padding:'10px 14px', background:'rgba(255,153,0,0.06)', border:'1px solid rgba(255,153,0,0.2)', borderRadius:8, marginBottom:18 }}>
-              <div style={{ fontSize:12, fontWeight:700, color:'#FF9900', marginBottom:4 }}>✦ TF Auto-detection enabled</div>
-              <div style={{ fontSize:11, color:'#7a8aaa', lineHeight:1.5 }}>
-                If <strong style={{ color:'#c8d4f0' }}>Project Dir Name</strong> is set and no resources are selected below, Eagle Eye will automatically scan <code style={{ color:'#FF9900' }}>projects/{form.projectDirName||'<dir>'}/</code> in GitHub for Terraform files and detect resources (EC2, RDS, App Runner, etc.) automatically. You can still manually select resources to override this.
-              </div>
-            </div>
-          )}
+          
           {form.projectType==='normal'&&form.providerId==='aws'&&(
             <div style={s.field}>
               <label style={s.label}>Resources to Monitor <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(leave empty for TF auto-detect)</span></label>
@@ -1454,14 +1445,17 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
 };
 
 // ─── GCP auto-detector ────────────────────────────────────────────────────────
+// ─── GCP auto-detector ────────────────────────────────────────────────────────
 const GcpAutoDetectLoader = ({ project, discoveryIndex, detectedResources, onComplete }) => {
   const doneRef = React.useRef(false);
-  if (discoveryIndex >= GCP_DISCOVERY_MAP.length) {
-    React.useEffect(() => {
-      if (!doneRef.current) { doneRef.current = true; onComplete(detectedResources); }
-    }, []); // eslint-disable-line
-    return null;
-  }
+  const isDone = discoveryIndex >= GCP_DISCOVERY_MAP.length;
+  React.useEffect(() => {
+    if (isDone && !doneRef.current) {
+      doneRef.current = true;
+      onComplete(detectedResources);
+    }
+  }, [isDone]); // eslint-disable-line
+  if (isDone) return null;
   const candidate = GCP_DISCOVERY_MAP[discoveryIndex];
   const query = `SELECT count(*) AS samples FROM ${candidate.nrTable} WHERE projectId = '${project.gcpProjectId}' SINCE 1 hour ago LIMIT 1`;
   return (
@@ -1512,6 +1506,87 @@ const GhostStateBanner = ({ project }) => {
   );
 };
 
+const AwsTfInlineLoader = ({ project, lifecycle }) => {
+  const ghToken = React.useContext(GhTokenContext);
+  const providerId = 'aws';
+  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, providerId);
+
+  const savedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!loading && resources && resources.length > 0 && !savedRef.current) {
+      savedRef.current = true;
+      nerdStorageRead(STORAGE_DOC_ID).then((doc) => {
+        if (!doc?.providers) return;
+        const newProviders = doc.providers.map(p => ({
+          ...p,
+          projects: p.projects.map(proj => {
+            if (proj.projectDirName !== project.projectDirName) return proj;
+            if (proj.resources && proj.resources.length > 0) return proj; // already has resources
+            return { ...proj, resources };
+          }),
+        }));
+        persistProviders(newProviders);
+      }).catch(() => {});
+    }
+  }, [loading, resources]);
+
+  if (loading) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+        <SpinnerIcon size={11} color="#4a6080" />
+        <span>Scanning Terraform files for resources…</span>
+      </div>
+    );
+  }
+
+  if (!resources || resources.length === 0) {
+    return (
+      <div style={{ padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+        No Terraform resources detected.
+      </div>
+    );
+  }
+
+  if (!lifecycle) {
+    return (
+      <div style={{ marginTop:6, padding:'10px 14px', borderRadius:8, background:'rgba(90,104,136,0.10)', border:'1px dashed rgba(90,104,136,0.40)' }}>
+        <div style={{ fontSize:10, fontWeight:800, letterSpacing:'0.8px', textTransform:'uppercase', color:'#6a7a9a', marginBottom:8 }}>
+          Resources · Not Yet Provisioned
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+          {resources.map((r, i) => (
+            <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
+      {resources.map((r, i) => {
+        const query = buildResourceQuery(r, project);
+        return (
+          <NrqlQuery key={i} accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
+            {({ data, loading: qLoading }) => {
+              let rs;
+              if (qLoading) {
+                rs = { ...r, status: 'unknown', row: null, loading: true };
+              } else {
+                const row = extractRow(data);
+                const status = row === null ? noData(r) : deriveResourceStatus(r, row);
+                const reason = deriveResourceReason(r, row, status);
+                rs = { ...r, status, reason, row, loading: false };
+              }
+              return <ExpandableResourceRow resource={rs} project={project} />;
+            }}
+          </NrqlQuery>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction, persistedLifecycle, onLifecycleChange }) => {
   const [expanded,     setExpanded]     = useState(false);
@@ -1542,6 +1617,14 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
+    if (!lifecycle && action !== 'apply') {
+      const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
+        : action === 'start' ? 'stopped' : null;
+      if (inferred) {
+        setLifecycle(inferred);
+        if (onLifecycleChange) onLifecycleChange(project, inferred);
+      }
+    }
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
     pollCancelRef.current={cancelled:false};
     const cancelRef=pollCancelRef.current;
@@ -1684,7 +1767,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const showGhostState = !lifecycle && hasResources;
   // ── FIXED: badge shows whenever infraReady and no lifecycle, regardless of hasResources ──
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
-  const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
+  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
@@ -1697,13 +1780,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           </div>
         );
       }
-      // AWS with no resources yet — TF detection may still be loading
-      return (
-        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
-          <SpinnerIcon size={11} color="#4a6080" />
-          <span>Scanning Terraform files for resources…</span>
-        </div>
-      );
+      if (project.projectDirName) {
+        return <AwsTfInlineLoader project={project} lifecycle={lifecycle} />;
+      }
+      return null;
     }
     if (showGhostState) return <GhostStateBanner project={project} />;
     return (
@@ -1747,7 +1827,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
         <div className="project-row__detail">
           <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
-          {hasResources&&renderResourceDetail()}
+          {(hasResources || project.projectDirName) && renderResourceDetail()}
         </div>
       )}
     </div>
@@ -1821,7 +1901,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (nonUnknown.length === 0) return 'unknown';
     const stateKey = p.projectDirName || p.name;
     const lifecycle = infraStates?.[stateKey] || null;
-    if (!lifecycle) return 'unknown';
+    if (!lifecycle) return 'not_provisioned';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
@@ -1835,7 +1915,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     }
   });
 
-  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only');
+  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only' && s !== 'not_provisioned');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id === 'aws'
@@ -2080,44 +2160,10 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
 
 // ─── AWS TF auto-loader ───────────────────────────────────────────────────────
 const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
-  const ghToken = React.useContext(GhTokenContext);
-  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
-
-  if (loading) {
-    // Render project list so UI isn't blocked — pass empty statuses while loading
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
-  }
-
-  // resources null means token not available — fall through gracefully
-  const detectedResources = (resources && resources.length > 0)
-    ? resources
-    : (project.resources || []);
-
-  const enrichedProject = { ...project, resources: detectedResources, _tfAutoDetected: true };
-
-  if (detectedResources.length === 0) {
-    // Nothing detected — still render the row (will show "NOT PROVISIONED" badge via infraReady)
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
-  }
-
   return (
-    <ProjectResourceLoaderStateful
-      project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
-      projectIndex={projectIndex} provider={provider} results={results}
+    <ProjectListInnerStateful
+      provider={provider} projectIndex={projectIndex + 1}
+      results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
       onManage={onManage} onInfraAction={onInfraAction}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
     />
@@ -2321,3 +2367,4 @@ const EagleEye = () => {
 };
 
 export default EagleEye;
+
