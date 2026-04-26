@@ -1399,15 +1399,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               </div>
             </div>
           )}
-          {/* AWS TF auto-detect notice */}
-          {form.projectType==='normal'&&form.providerId==='aws'&&(
-            <div style={{ padding:'10px 14px', background:'rgba(255,153,0,0.06)', border:'1px solid rgba(255,153,0,0.2)', borderRadius:8, marginBottom:18 }}>
-              <div style={{ fontSize:12, fontWeight:700, color:'#FF9900', marginBottom:4 }}>✦ TF Auto-detection enabled</div>
-              <div style={{ fontSize:11, color:'#7a8aaa', lineHeight:1.5 }}>
-                If <strong style={{ color:'#c8d4f0' }}>Project Dir Name</strong> is set and no resources are selected below, Eagle Eye will automatically scan <code style={{ color:'#FF9900' }}>projects/{form.projectDirName||'<dir>'}/</code> in GitHub for Terraform files and detect resources (EC2, RDS, App Runner, etc.) automatically. You can still manually select resources to override this.
-              </div>
-            </div>
-          )}
+          
           {form.projectType==='normal'&&form.providerId==='aws'&&(
             <div style={s.field}>
               <label style={s.label}>Resources to Monitor <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(leave empty for TF auto-detect)</span></label>
@@ -1684,7 +1676,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const showGhostState = !lifecycle && hasResources;
   // ── FIXED: badge shows whenever infraReady and no lifecycle, regardless of hasResources ──
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
-  const effectiveStatus = showGhostState ? 'unknown' : (isBusy ? 'yellow' : status);
+  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
@@ -1821,7 +1813,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (nonUnknown.length === 0) return 'unknown';
     const stateKey = p.projectDirName || p.name;
     const lifecycle = infraStates?.[stateKey] || null;
-    if (!lifecycle) return 'unknown';
+    if (!lifecycle) return 'not_provisioned';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
@@ -1835,7 +1827,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     }
   });
 
-  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only');
+  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only' && s !== 'not_provisioned');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id === 'aws'
@@ -2083,16 +2075,8 @@ const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onM
   const ghToken = React.useContext(GhTokenContext);
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, provider.id);
 
-  if (loading) {
-    // Render project list so UI isn't blocked — pass empty statuses while loading
-    return (
-      <ProjectListInnerStateful
-        provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: true, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
-        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      />
-    );
+  if (loading || resources === null) {
+    return null;
   }
 
   // resources null means token not available — fall through gracefully
