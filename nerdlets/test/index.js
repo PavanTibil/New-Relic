@@ -789,7 +789,28 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   );
 };
 
-const InfraStatusBanner = () => null;
+const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
+  if (actionState === INFRA_STATES.IDLE) return null;
+  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction;
+  const configs = {
+    [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
+    [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
+    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed`, sub:'Workflow finished successfully', dismissable:true },
+    [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Check GitHub Actions for details', dismissable:true },
+    [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Check GitHub Actions manually', dismissable:true },
+  };
+  const cfg = configs[actionState]; if (!cfg) return null;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', background:cfg.bg, border:`1px solid ${cfg.border}`, borderRadius:8, margin:'4px 0 6px' }}>
+      <span style={{ color:cfg.color, fontSize:13, flexShrink:0, display:'flex', alignItems:'center' }}>{cfg.icon}</span>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:cfg.color }}>{cfg.text}</div>
+        <div style={{ fontSize:10, color:'#7a8aaa', marginTop:1 }}>{cfg.sub}</div>
+      </div>
+      {cfg.dismissable && <button onClick={onDismiss} style={{ background:'none', border:'none', outline:'none', boxShadow:'none', color:'#4a6080', cursor:'pointer', fontSize:14, padding:'0 2px', lineHeight:1 }}>✕</button>}
+    </div>
+  );
+};
 
 // ─── InfraConfirmModal ────────────────────────────────────────────────────────
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
@@ -800,8 +821,9 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
   const handleConfirm = async () => {
     setBusy(true); setErr('');
     try {
+      const ghAction = action === 'terminate' ? 'destroy' : action;
       const preDispatch = Date.now();
-      await callInfraAPI(project, action, ghToken);
+      await callInfraAPI(project, ghAction, ghToken);
       onConfirm(preDispatch);
     } catch (e) {
       setErr(e?.message || 'GitHub Actions dispatch failed.');
