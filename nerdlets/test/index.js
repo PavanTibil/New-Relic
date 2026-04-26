@@ -2324,11 +2324,13 @@ const EagleEye = () => {
     setGhToken('');
   };
 
+  const pendingInfraRef = useRef({});
   const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    const updated = { ...infraStates, [key]: newLifecycle };
-    setInfraStates(updated);
-    await persistInfraStates(updated);
+    pendingInfraRef.current = { ...infraStates, ...pendingInfraRef.current, [key]: newLifecycle };
+    const snapshot = pendingInfraRef.current;
+    await persistInfraStates(snapshot);
+    setInfraStates(snapshot);
   }, [infraStates]);
 
   if (!providers) return <EagleEyeLoader />;
@@ -2396,8 +2398,8 @@ const EagleEye = () => {
             action={infraConfirm.action}
             ghToken={ghToken}
             onConfirm={(dispatchTime) => {
-              infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime);
               setInfraConfirm(null);
+              infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime);
             }}
             onCancel={() => setInfraConfirm(null)}
           />
