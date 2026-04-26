@@ -619,11 +619,6 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
     }} />
     <div style={{ flex:1, minWidth:0 }}>
       <span style={{ fontWeight:600, fontSize:'0.82rem', color:'#8899bb', display:'block' }}>{resource.label}</span>
-      {resource.desc && (
-        <span style={{ fontSize:'0.72rem', color:'#5a6888', marginTop:2, lineHeight:1.4, display:'block' }}>
-          {resource.desc}
-        </span>
-      )}
     </div>
     {hasToken ? (
       <span style={{ fontSize:11, fontWeight:700, color:'#5a9aee', background:'rgba(66,133,244,0.12)', border:'1px solid rgba(66,133,244,0.30)', borderRadius:100, padding:'1px 8px', letterSpacing:'0.3px', whiteSpace:'nowrap', flexShrink:0 }}>not provisioned</span>
@@ -1504,6 +1499,25 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
   const ghToken = React.useContext(GhTokenContext);
   const providerId = 'aws';
   const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, providerId);
+
+  const savedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!loading && resources && resources.length > 0 && !savedRef.current) {
+      savedRef.current = true;
+      nerdStorageRead(STORAGE_DOC_ID).then((doc) => {
+        if (!doc?.providers) return;
+        const newProviders = doc.providers.map(p => ({
+          ...p,
+          projects: p.projects.map(proj => {
+            if (proj.projectDirName !== project.projectDirName) return proj;
+            if (proj.resources && proj.resources.length > 0) return proj; // already has resources
+            return { ...proj, resources };
+          }),
+        }));
+        persistProviders(newProviders);
+      }).catch(() => {});
+    }
+  }, [loading, resources]);
 
   if (loading) {
     return (
