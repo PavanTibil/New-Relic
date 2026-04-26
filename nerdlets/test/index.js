@@ -1500,6 +1500,53 @@ const GhostStateBanner = ({ project }) => {
   );
 };
 
+const AwsTfInlineLoader = ({ project }) => {
+  const ghToken = React.useContext(GhTokenContext);
+  const providerId = 'aws';
+  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, providerId);
+
+  if (loading) {
+    return (
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+        <SpinnerIcon size={11} color="#4a6080" />
+        <span>Scanning Terraform files for resources…</span>
+      </div>
+    );
+  }
+
+  if (!resources || resources.length === 0) {
+    return (
+      <div style={{ padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
+        No Terraform resources detected.
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-row__resource-list" style={{ display:'flex', flexDirection:'column', gap:'2px', padding:'8px 0' }}>
+      {resources.map((r, i) => {
+        const query = buildResourceQuery(r, project);
+        return (
+          <NrqlQuery key={i} accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
+            {({ data, loading: qLoading }) => {
+              let rs;
+              if (qLoading) {
+                rs = { ...r, status: 'unknown', row: null, loading: true };
+              } else {
+                const row = extractRow(data);
+                const status = row === null ? noData(r) : deriveResourceStatus(r, row);
+                const reason = deriveResourceReason(r, row, status);
+                rs = { ...r, status, reason, row, loading: false };
+              }
+              return <ExpandableResourceRow resource={rs} project={project} />;
+            }}
+          </NrqlQuery>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
 const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, onInfraAction, persistedLifecycle, onLifecycleChange }) => {
   const [expanded,     setExpanded]     = useState(false);
@@ -1685,13 +1732,10 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           </div>
         );
       }
-      // AWS with no resources yet — TF detection may still be loading
-      return (
-        <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 4px', fontSize:12, color:'#4a6080' }}>
-          <SpinnerIcon size={11} color="#4a6080" />
-          <span>Scanning Terraform files for resources…</span>
-        </div>
-      );
+      if (project.projectDirName) {
+        return <AwsTfInlineLoader project={project} />;
+      }
+      return null;
     }
     if (showGhostState) return <GhostStateBanner project={project} />;
     return (
