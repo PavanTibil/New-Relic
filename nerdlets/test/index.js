@@ -151,8 +151,12 @@ const TF_TO_EE_TYPE = {
 };
 
 const ec2ProjectFilter = (project) => {
-  const tag = project.projectDirName || project.gcpProjectId || project.name;
-  return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%')`;
+  const dirName = project.projectDirName || '';
+  const projName = project.name || '';
+  const gcpId = project.gcpProjectId || '';
+  const tag = dirName || gcpId || projName;
+  const tagCap = projName || tag;
+  return `(\`aws.ec2.tag.Project\` = '${tag}' OR \`aws.ec2.tag.Project\` = '${tagCap}' OR \`aws.ec2.tag.project\` = '${tag}' OR \`aws.ec2.tag.project\` = '${tagCap}' OR \`aws.ec2.tag.Name\` LIKE '${tag}%' OR \`aws.ec2.tag.Name\` LIKE '${tagCap}%')`;
 };
 
 // ─── NerdStorage helpers ───────────────────────────────────────────────────────
@@ -444,7 +448,7 @@ const SERVICE_QUERIES = {
   google_redis_instance:         (p) => `SELECT count(*) AS val FROM GcpRedisInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
   aws_apprunner:  ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/AppRunner' FACET aws.apprunner.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_rds:        ()  => "SELECT latest(provider.dbInstanceIdentifier) AS val FROM DatastoreSample WHERE provider = 'RdsDbInstance' FACET provider.dbInstanceIdentifier SINCE 7 days ago LIMIT 20",
-  aws_ec2:        (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
+  aws_ec2: (p) => { const pf = ec2ProjectFilter(p); return `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.CPUUtilization\`) AS cpu, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 30 days ago LIMIT 50`; },
   aws_cloudfront: ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/CloudFront' FACET aws.cloudfront.DistributionId SINCE 24 hours ago LIMIT 20",
   aws_ecs:        ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/ECS' FACET aws.ecs.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_lambda:     ()  => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/Lambda' FACET aws.lambda.FunctionName SINCE 5 minutes ago LIMIT 30",
@@ -900,8 +904,10 @@ const extractEc2FacetPair = (series) => {
   if (!name) { const pt=series?.data?.[0]; if (pt?.facet) name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet); }
   if (!name) { const n=series?.metadata?.name; const SKIP=new Set(['val','Other','unknown','count','statusFailed','cpu']); if (n&&!SKIP.has(n)) name=n; }
   if (!name) return null;
-  const pt=series?.data?.[0]; const sf=pt?.statusFailed??null;
-  return { name, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
+  const pt=series?.data?.[0];
+  const sf=pt?.statusFailed??null;
+  const instanceName=pt?.instanceName??null;
+  return { name, instanceName, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
 };
 
 const Ec2CountLoader = ({ project, onCounts, loaded }) => {
@@ -1023,7 +1029,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                         const activeI=new Set(), impairedI=new Set();
                         (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
                         const seen=new Set(), visibleInstances=[];
-                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
+                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,instanceName:p.instanceName,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
                         if (visibleInstances.length===0) return (
                           <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
                             No instances tagged <code style={{ color:'#4285f4', fontSize:10 }}>Project={project.projectDirName||project.name}</code> found
@@ -1036,7 +1042,9 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                             {visibleInstances.map((inst,i)=>{const d=ec2StateDisplay(inst.state);return(
                               <div key={i} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', borderBottom:i<visibleInstances.length-1?'1px solid rgba(255,255,255,0.04)':'none' }}>
                                 <span className={'status-dot status-dot--'+d.dot} style={{ width:6,height:6,flexShrink:0 }} />
-                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{inst.name}</span>
+                                <span style={{ fontSize:11, color:'#c8d4f0', fontFamily:'monospace', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                  {inst.instanceName ? `${inst.instanceName} (${inst.name})` : inst.name}
+                                </span>
                                 <span style={{ fontSize:10, color:d.color, fontWeight:600 }}>{d.label}</span>
                               </div>
                             );})}
@@ -1437,14 +1445,17 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
 };
 
 // ─── GCP auto-detector ────────────────────────────────────────────────────────
+// ─── GCP auto-detector ────────────────────────────────────────────────────────
 const GcpAutoDetectLoader = ({ project, discoveryIndex, detectedResources, onComplete }) => {
   const doneRef = React.useRef(false);
-  if (discoveryIndex >= GCP_DISCOVERY_MAP.length) {
-    React.useEffect(() => {
-      if (!doneRef.current) { doneRef.current = true; onComplete(detectedResources); }
-    }, []); // eslint-disable-line
-    return null;
-  }
+  const isDone = discoveryIndex >= GCP_DISCOVERY_MAP.length;
+  React.useEffect(() => {
+    if (isDone && !doneRef.current) {
+      doneRef.current = true;
+      onComplete(detectedResources);
+    }
+  }, [isDone]); // eslint-disable-line
+  if (isDone) return null;
   const candidate = GCP_DISCOVERY_MAP[discoveryIndex];
   const query = `SELECT count(*) AS samples FROM ${candidate.nrTable} WHERE projectId = '${project.gcpProjectId}' SINCE 1 hour ago LIMIT 1`;
   return (
@@ -1606,6 +1617,14 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
     setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
+    if (!lifecycle && action !== 'apply') {
+      const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
+        : action === 'start' ? 'stopped' : null;
+      if (inferred) {
+        setLifecycle(inferred);
+        if (onLifecycleChange) onLifecycleChange(project, inferred);
+      }
+    }
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
     pollCancelRef.current={cancelled:false};
     const cancelRef=pollCancelRef.current;
