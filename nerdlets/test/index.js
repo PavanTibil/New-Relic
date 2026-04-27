@@ -663,7 +663,7 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
       <span style={{ fontWeight: 600, fontSize: '0.82rem', color: '#8899bb', display: 'block' }}>{resource.label}</span>
     </div>
     {hasToken ? (
-      <span style={{ fontSize: 11, fontWeight: 700, color: '#5a9aee', background: 'rgba(66,133,244,0.12)', border: '1px solid rgba(66,133,244,0.30)', borderRadius: 100, padding: '1px 8px', letterSpacing: '0.3px', whiteSpace: 'nowrap', flexShrink: 0 }}>not provisioned</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#5a9aee', background: 'rgba(66,133,244,0.12)', border: '1px solid rgba(66,133,244,0.30)', borderRadius: 100, padding: '1px 8px', letterSpacing: '0.3px', whiteSpace: 'nowrap', flexShrink: 0 }}>Not Provisioned</span>
     ) : (
       <span style={{ fontSize: 11, fontWeight: 700, color: '#5a6888', background: 'rgba(90,104,136,0.15)', border: '1px solid rgba(90,104,136,0.3)', borderRadius: 100, padding: '1px 8px', letterSpacing: '0.3px', whiteSpace: 'nowrap', flexShrink: 0 }}>no infra yet</span>
     )}
