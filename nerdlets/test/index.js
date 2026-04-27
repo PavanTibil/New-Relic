@@ -1583,17 +1583,12 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
-  const lastActionRef = useRef(null);
 
   useEffect(() => {
-    const isIdle = actionState === INFRA_STATES.IDLE || 
-                 actionState === INFRA_STATES.SUCCEEDED || 
-                 actionState === INFRA_STATES.FAILED || 
-                 actionState === INFRA_STATES.TIMEOUT;
-    if (isIdle && persistedLifecycle && persistedLifecycle !== lifecycle) {
+    if (persistedLifecycle && persistedLifecycle !== lifecycle) {
       setLifecycle(persistedLifecycle);
     }
-  }, [persistedLifecycle, actionState]); // eslint-disable-line
+  }, [persistedLifecycle]); // eslint-disable-line
 
   const ghToken = React.useContext(GhTokenContext);
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
@@ -1610,15 +1605,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   };
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
-    setActiveAction(action); lastActionRef.current = action; setActionState(INFRA_STATES.DISPATCHING);
+    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
     if (!lifecycle && action !== 'apply') {
       const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
-      : action === 'start' ? 'stopped' : null;
-    if (inferred) {
-      setLifecycle(inferred);
-      setTimeout(() => { if (onLifecycleChange) onLifecycleChange(project, inferred); }, 0);
+        : action === 'start' ? 'stopped' : null;
+      if (inferred) {
+        setLifecycle(inferred);
+        if (onLifecycleChange) onLifecycleChange(project, inferred);
+      }
     }
-  }
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
     pollCancelRef.current={cancelled:false};
     const cancelRef=pollCancelRef.current;
@@ -1702,7 +1697,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       </div>
       {expanded&&(
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={lastActionRef.current} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
         </div>
       )}
@@ -1760,11 +1755,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const showGhostState = !lifecycle && hasResources;
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
-  const effectiveStatus = lifecycle === 'terminated'
-    ? 'unknown'
-    : (showGhostState || (!lifecycle && infraReady))
-      ? 'unknown'
-      : (isBusy ? 'yellow' : status);
+  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
@@ -1811,9 +1802,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {isBusy&&(
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
-              {actionState===INFRA_STATES.DISPATCHING
-                ? 'Dispatching…'
-                : `${activeAction.charAt(0).toUpperCase()+activeAction.slice(1)}ing…`}
+              {actionState===INFRA_STATES.DISPATCHING?'Dispatching…':`${activeAction} running…`}
             </span>
           )}
         </div>
@@ -1895,14 +1884,13 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
     if (p.billingOnly) return 'billing_only';
-    const stateKey = getProjectStateKey(p);
-    const lifecycle = infraStates?.[stateKey] || null;
-    if (lifecycle === 'terminated') return 'terminated';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
     const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
     if (nonUnknown.length === 0) return 'unknown';
+    const stateKey = getProjectStateKey(p);
+    const lifecycle = infraStates?.[stateKey] || null;
     if (!lifecycle) return 'not_provisioned';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
@@ -1920,7 +1908,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // Only count non-billing, non-special projects that have an active lifecycle
   const live = projectStatuses.filter(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
+    s !== 'billing_only' && s !== 'not_provisioned'
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
 
@@ -1928,7 +1916,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // non-billing project is actually provisioned (has a lifecycle).
   const anyProvisioned = projectStatuses.some(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
+    s !== 'billing_only' && s !== 'not_provisioned'
   );
   const billStatus = anyProvisioned ? billingCostToStatus(billingCost) : 'unknown';
 
@@ -1954,7 +1942,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
           <div className="cloud-card__header-pills">
             <StatusBadge status={resourceBadgeStatus} label="Resources" />
             {/* FIX: Pass provisioned flag so the billing pill shows grey when nothing is provisioned */}
-            {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} />}
+            {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} provisioned={anyProvisioned} />}
             {provider.id==='gcp'&&gcpBillingNotConfigured&&(
               <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'3px 10px', borderRadius:100, fontSize:11, fontWeight:600, background:'rgba(66,133,244,0.10)', border:'1px solid rgba(66,133,244,0.25)', color:'#4285f4', flexShrink:0 }}>
                 <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="3.5" stroke="#4285f4" strokeWidth="1" fill="none" /><line x1="4" y1="2" x2="4" y2="4.5" stroke="#4285f4" strokeWidth="1" strokeLinecap="round" /><circle cx="4" cy="6" r="0.6" fill="#4285f4" /></svg>
@@ -1962,7 +1950,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
               </span>
             )}
             {provider.id==='gcp'&&!gcpBillingNotConfigured&&gcpBillingProject&&(
-              <BillingHealthBadge cost={billingCost} />
+              <BillingHealthBadge cost={billingCost} provisioned={anyProvisioned} />
             )}
             <DotsButton onClick={()=>onManage(projectHealthMap)} accentColor={accentColor} />
           </div>
@@ -2274,14 +2262,12 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  const handleLifecycleChange = useCallback((project, newLifecycle) => {
+  const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    setInfraStates(prev => {
-      const updated = { ...prev, [key]: newLifecycle };
-      setTimeout(() => persistInfraStates(updated), 0);
-      return updated;
-    });
-  }, []);
+    const updated = { ...infraStates, [key]: newLifecycle };
+    setInfraStates(updated);
+    await persistInfraStates(updated);
+  }, [infraStates]);
 
   if (!providers) return <EagleEyeLoader />;
 
