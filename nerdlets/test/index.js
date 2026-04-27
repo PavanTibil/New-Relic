@@ -1557,7 +1557,7 @@ const GhostStateBanner = ({ project }) => {
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#c8d4f0' }}>
         <GearIcon size={11} color="#7ab3ff" />
         {ghToken
-          ? <span>Hit <strong style={{ color: '#7ab3ff', fontStyle: 'normal' }}>Apply</strong> above to provision via Terraform</span>
+          ? <span>Hit <strong style={{ color: '#7ab3ff', fontStyle: 'normal' }}>Apply</strong> above to provision </span>
           : <span>Set <strong style={{ color: '#f5a623', fontStyle: 'normal' }}>GitHub token</strong> via ⚙ Config, then hit <strong style={{ color: '#7ab3ff' }}>Apply</strong> to provision</span>
         }
       </div>
@@ -1611,7 +1611,7 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
     return (
       <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 8, background: 'rgba(90,104,136,0.10)', border: '1px dashed rgba(90,104,136,0.40)' }}>
         <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.8px', textTransform: 'uppercase', color: '#6a7a9a', marginBottom: 8 }}>
-          Resources · Not Yet Provisioned
+          Resources
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {resources.map((r, i) => (
@@ -1683,7 +1683,6 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction, infra
       </div>
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={onDismiss} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={onInfraAction} />
           <GhostStateBanner project={project} />
           <div style={{ padding: '8px 0 4px', color: '#7a8aaa', fontSize: 12 }}>
@@ -1848,7 +1847,6 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
       </div>
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
         </div>
       )}
@@ -1959,7 +1957,6 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
       </div>
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {(hasResources || project.projectDirName) && renderResourceDetail()}
         </div>
