@@ -1884,14 +1884,17 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
     if (p.billingOnly) return 'billing_only';
+    // Check lifecycle FIRST before touching resourceStatuses,
+    // so terminated/not-provisioned projects never bleed into live status
+    const stateKey = getProjectStateKey(p);
+    const lifecycle = infraStates?.[stateKey] || null;
+    if (lifecycle === 'terminated') return 'terminated';
+    if (!lifecycle) return 'not_provisioned';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
     const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
     if (nonUnknown.length === 0) return 'unknown';
-    const stateKey = getProjectStateKey(p);
-    const lifecycle = infraStates?.[stateKey] || null;
-    if (!lifecycle) return 'not_provisioned';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
@@ -1908,7 +1911,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // Only count non-billing, non-special projects that have an active lifecycle
   const live = projectStatuses.filter(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned'
+    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
 
@@ -1916,7 +1919,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // non-billing project is actually provisioned (has a lifecycle).
   const anyProvisioned = projectStatuses.some(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned'
+    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const billStatus = anyProvisioned ? billingCostToStatus(billingCost) : 'unknown';
 
