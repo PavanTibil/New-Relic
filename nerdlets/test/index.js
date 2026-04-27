@@ -1945,7 +1945,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
           <div className="cloud-card__header-pills">
             <StatusBadge status={resourceBadgeStatus} label="Resources" />
             {/* FIX: Pass provisioned flag so the billing pill shows grey when nothing is provisioned */}
-            {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} provisioned={anyProvisioned} />}
+            {provider.id==='aws'&&<BillingHealthBadge cost={billingCost} />}
             {provider.id==='gcp'&&gcpBillingNotConfigured&&(
               <span style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'3px 10px', borderRadius:100, fontSize:11, fontWeight:600, background:'rgba(66,133,244,0.10)', border:'1px solid rgba(66,133,244,0.25)', color:'#4285f4', flexShrink:0 }}>
                 <svg width="8" height="8" viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="3.5" stroke="#4285f4" strokeWidth="1" fill="none" /><line x1="4" y1="2" x2="4" y2="4.5" stroke="#4285f4" strokeWidth="1" strokeLinecap="round" /><circle cx="4" cy="6" r="0.6" fill="#4285f4" /></svg>
@@ -1953,7 +1953,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
               </span>
             )}
             {provider.id==='gcp'&&!gcpBillingNotConfigured&&gcpBillingProject&&(
-              <BillingHealthBadge cost={billingCost} provisioned={anyProvisioned} />
+              <BillingHealthBadge cost={billingCost} />
             )}
             <DotsButton onClick={()=>onManage(projectHealthMap)} accentColor={accentColor} />
           </div>
