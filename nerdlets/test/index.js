@@ -1546,7 +1546,7 @@ const GhostStateBanner = ({ project }) => {
     <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 8, background: 'rgba(90,104,136,0.10)', border: '1px dashed rgba(90,104,136,0.40)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.8px', textTransform: 'uppercase', color: '#6a7a9a' }}>
-          Resources · Not Yet Provisioned
+          Resources
         </span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
