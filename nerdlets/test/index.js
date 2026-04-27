@@ -1892,13 +1892,14 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     if (p.empty) return 'empty';
     if (p.billingNotConfigured) return 'unknown';
     if (p.billingOnly) return 'billing_only';
+    const stateKey = getProjectStateKey(p);
+    const lifecycle = infraStates?.[stateKey] || null;
+    if (lifecycle === 'terminated') return 'terminated';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
     if (!r.resourceStatuses || r.resourceStatuses.length === 0) return 'unknown';
     const nonUnknown = r.resourceStatuses.filter(rs => rs.status !== 'unknown');
     if (nonUnknown.length === 0) return 'unknown';
-    const stateKey = getProjectStateKey(p);
-    const lifecycle = infraStates?.[stateKey] || null;
     if (!lifecycle) return 'not_provisioned';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
@@ -1916,7 +1917,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // Only count non-billing, non-special projects that have an active lifecycle
   const live = projectStatuses.filter(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned'
+    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
 
@@ -1924,7 +1925,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   // non-billing project is actually provisioned (has a lifecycle).
   const anyProvisioned = projectStatuses.some(s =>
     s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned'
+    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const billStatus = anyProvisioned ? billingCostToStatus(billingCost) : 'unknown';
 
@@ -2270,14 +2271,15 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
+  const handleLifecycleChange = useCallback((project, newLifecycle) => {
     const key = project.projectDirName || project.name;
     setInfraStates(prev => {
       const updated = { ...prev, [key]: newLifecycle };
-      persistInfraStates(updated); // fire-and-forget, no await needed here
+      // Schedule persistence outside the updater to keep it pure
+      setTimeout(() => persistInfraStates(updated), 0);
       return updated;
     });
-  }, []); // no dependency on infraStates needed anymore
+  }, []);
 
   if (!providers) return <EagleEyeLoader />;
 
