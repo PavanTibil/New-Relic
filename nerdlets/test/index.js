@@ -1585,10 +1585,14 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const pollCancelRef = useRef({ cancelled: false });
 
   useEffect(() => {
-    if (persistedLifecycle && persistedLifecycle !== lifecycle) {
+    const isIdle = actionState === INFRA_STATES.IDLE || 
+                 actionState === INFRA_STATES.SUCCEEDED || 
+                 actionState === INFRA_STATES.FAILED || 
+                 actionState === INFRA_STATES.TIMEOUT;
+    if (isIdle && persistedLifecycle && persistedLifecycle !== lifecycle) {
       setLifecycle(persistedLifecycle);
     }
-  }, [persistedLifecycle]); // eslint-disable-line
+  }, [persistedLifecycle, actionState]); // eslint-disable-line
 
   const ghToken = React.useContext(GhTokenContext);
   const { loading:tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
@@ -1755,7 +1759,11 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
 
   const showGhostState = !lifecycle && hasResources;
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
-  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
+  const effectiveStatus = lifecycle === 'terminated'
+    ? 'unknown'
+    : (showGhostState || (!lifecycle && infraReady))
+      ? 'unknown'
+      : (isBusy ? 'yellow' : status);
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
@@ -2264,10 +2272,12 @@ const EagleEye = () => {
 
   const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    const updated = { ...infraStates, [key]: newLifecycle };
-    setInfraStates(updated);
-    await persistInfraStates(updated);
-  }, [infraStates]);
+    setInfraStates(prev => {
+      const updated = { ...prev, [key]: newLifecycle };
+      persistInfraStates(updated); // fire-and-forget, no await needed here
+      return updated;
+    });
+  }, []); // no dependency on infraStates needed anymore
 
   if (!providers) return <EagleEyeLoader />;
 
