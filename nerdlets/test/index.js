@@ -1583,6 +1583,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
+  const lastActionRef = useRef(null);
 
   useEffect(() => {
     const isIdle = actionState === INFRA_STATES.IDLE || 
@@ -1609,15 +1610,15 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   };
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
-    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
+    setActiveAction(action); lastActionRef.current = action; setActionState(INFRA_STATES.DISPATCHING);
     if (!lifecycle && action !== 'apply') {
       const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
-        : action === 'start' ? 'stopped' : null;
-      if (inferred) {
-        setLifecycle(inferred);
-        if (onLifecycleChange) onLifecycleChange(project, inferred);
-      }
+      : action === 'start' ? 'stopped' : null;
+    if (inferred) {
+      setLifecycle(inferred);
+      setTimeout(() => { if (onLifecycleChange) onLifecycleChange(project, inferred); }, 0);
     }
+  }
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
     pollCancelRef.current={cancelled:false};
     const cancelRef=pollCancelRef.current;
@@ -1701,7 +1702,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
       </div>
       {expanded&&(
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
+          <InfraStatusBanner actionState={actionState} lastAction={lastActionRef.current} onDismiss={()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
         </div>
       )}
@@ -1810,7 +1811,9 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {isBusy&&(
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
-              {actionState===INFRA_STATES.DISPATCHING?'Dispatching…':`${activeAction} running…`}
+              {actionState===INFRA_STATES.DISPATCHING
+                ? 'Dispatching…'
+                : `${activeAction.charAt(0).toUpperCase()+activeAction.slice(1)}ing…`}
             </span>
           )}
         </div>
