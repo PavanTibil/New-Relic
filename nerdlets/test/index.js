@@ -553,10 +553,27 @@ const deriveResourceReason = (resource, row, status) => {
 };
 
 const worstStatus = (statuses) => {
-  if (statuses.some(s => s === 'red'))    return 'red';
-  if (statuses.some(s => s === 'yellow')) return 'yellow';
-  if (statuses.some(s => s === 'green'))  return 'green';
-  return 'unknown';
+  const priority = {
+    'critical': 3,
+    'warning': 2,
+    'ok': 1
+  };
+
+  return statuses.reduce((worst, current) => {
+    return priority[current] > priority[worst] ? current : worst;
+  }, 'ok');
+};
+
+const getStatusColor = (status) => {
+  switch (status) {
+    case 'critical':
+      return 'red';
+    case 'warning':
+      return 'orange';
+    case 'ok':
+    default:
+      return 'green';
+  }
 };
 
 const STATUS_META = {
@@ -1930,16 +1947,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
-  const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
-  const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
-  const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
-  const billingBadgeStatus      = provider.id === 'aws' || (provider.id === 'gcp' && gcpBillingProject && !gcpBillingNotConfigured)
-    ? billingCostToStatus(billingCost)
-    : 'unknown';
-  const cardStatus              = worstStatus([resourceBadgeStatus, billingBadgeStatus]);
-  const cardMeta                = STATUS_META[cardStatus] ?? STATUS_META.unknown;
-  const meta                    = PROVIDER_META[provider.id];
-  const accentColor             = meta.accent;
+
   // FIX: Only factor billing into the card overall status if at least one
   // non-billing project is actually provisioned (has a lifecycle).
   const anyProvisioned = projectStatuses.some(s =>
@@ -1959,7 +1967,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
   const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
->>>>>>> 6f081ff544784d5c79f06deffa85c5794b033906
 
   return (
     <>
