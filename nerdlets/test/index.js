@@ -767,7 +767,7 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
 // ─── Infra UI components ───────────────────────────────────────────────────────
 const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   if (actionState === INFRA_STATES.IDLE) return null;
-  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction;
+  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction || 'Workflow';
   const configs = {
     [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
     [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
@@ -843,8 +843,8 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
 const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, infraReady, tfLoading, ghToken, onAction }) => {
   const isBusy = actionState===INFRA_STATES.DISPATCHING||actionState===INFRA_STATES.RUNNING;
   const getButtonState = (action) => {
-    if (!infraReady) return 'disabled';
     if (isBusy) return action===activeAction?'running':'locked';
+    if (!infraReady) return 'disabled';
     if (!lifecycle) return action==='apply'?'enabled':'disabled';
     const allowed = ALLOWED_ACTIONS[lifecycle]||[];
     return allowed.includes(action)?'enabled':'disabled';
@@ -1515,7 +1515,9 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
           return { ...proj, resources };
         }),
       }));
-      persistProviders(newProviders);
+      persistProviders(newProviders).catch(e =>
+        console.error('[EagleEye] AwsTfInlineLoader: failed to persist providers', e)
+      );
     }
   }, [loading, resources]);
 
@@ -1605,37 +1607,51 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   };
 
   const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
-    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
-    if (!lifecycle && action !== 'apply') {
-      const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
-        : action === 'start' ? 'stopped' : null;
-      if (inferred) {
-        setLifecycle(inferred);
-        if (onLifecycleChange) onLifecycleChange(project, inferred);
+    // React 17: state updates outside event handlers are NOT auto-batched.
+    // unstable_batchedUpdates forces a single render for all updates in the callback,
+    // preventing the "null running…" flash and the inconsistent-render "Oops" crash.
+    ReactDOM.unstable_batchedUpdates(() => {
+      setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
+      if (!lifecycle && action !== 'apply') {
+        const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
+          : action === 'start' ? 'stopped' : null;
+        if (inferred) {
+          setLifecycle(inferred);
+          if (onLifecycleChange) onLifecycleChange(project, inferred);
+        }
       }
-    }
+    });
     const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
     pollCancelRef.current={cancelled:false};
     const cancelRef=pollCancelRef.current;
     const onStatusChange=(newState)=>{ if(!cancelRef.cancelled) setActionState(newState); };
     const onComplete=(conclusion)=>{
       if(cancelRef.cancelled) return;
-      if(conclusion==='success'){
-        setActionState(INFRA_STATES.SUCCEEDED);
-        const next=NEXT_LIFECYCLE[action];
-        if(next){
-          setLifecycle(next);
-          if (onLifecycleChange) onLifecycleChange(project, next);
+      // Batch all completion state updates into a single render.
+      ReactDOM.unstable_batchedUpdates(() => {
+        if(conclusion==='success'){
+          setActionState(INFRA_STATES.SUCCEEDED);
+          const next=NEXT_LIFECYCLE[action];
+          if(next){
+            setLifecycle(next);
+            if (onLifecycleChange) onLifecycleChange(project, next);
+          }
         }
-      }
-      else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
-      else setActionState(INFRA_STATES.FAILED);
-      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
+        else if(conclusion==='timeout'||conclusion==='timed_out') setActionState(INFRA_STATES.TIMEOUT);
+        else setActionState(INFRA_STATES.FAILED);
+      });
+      setTimeout(()=>{
+        if(!cancelRef.cancelled){
+          ReactDOM.unstable_batchedUpdates(()=>{
+            setActionState(INFRA_STATES.IDLE); setActiveAction(null);
+          });
+        }
+      },8000);
     };
     if(token&&token.trim()!==''){
       pollWorkflowRun(token,effectiveDispatchTime,onStatusChange,onComplete,cancelRef);
     } else {
-      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.TIMEOUT);setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},6000);}},3000);
+      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.TIMEOUT);setTimeout(()=>{if(!cancelRef.cancelled){ReactDOM.unstable_batchedUpdates(()=>{setActionState(INFRA_STATES.IDLE);setActiveAction(null);});}},6000);}},3000);
     }
   },[onLifecycleChange, project]);
 
@@ -1802,7 +1818,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {isBusy&&(
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
-              {actionState===INFRA_STATES.DISPATCHING?'Dispatching…':`${activeAction} running…`}
+              {actionState===INFRA_STATES.DISPATCHING?'Dispatching…':`${activeAction||'Workflow'} running…`}
             </span>
           )}
         </div>
@@ -2265,12 +2281,15 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
+  const handleLifecycleChange = useCallback((project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    const updated = { ...infraStates, [key]: newLifecycle };
-    setInfraStates(updated);
-    await persistInfraStates(updated);
-  }, [infraStates]);
+    setInfraStates(prev => {
+      const updated = { ...prev, [key]: newLifecycle };
+      // Persist outside React's render phase to avoid side-effects inside state updater.
+      setTimeout(() => persistInfraStates(updated), 0);
+      return updated;
+    });
+  }, []);
 
   if (!providers) return <EagleEyeLoader />;
 
