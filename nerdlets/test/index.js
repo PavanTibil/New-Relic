@@ -124,20 +124,28 @@ const GCP_DISCOVERY_MAP = [
   { type:'google_redis_instance',           label:'Memorystore Redis',nrTable:'GcpRedisInstanceSample',     desc:'Managed Redis instances',                            alwaysOn:true  },
 ];
 
+// ─── TF resource type → Eagle Eye type mapping ────────────────────────────────
 const TF_TO_EE_TYPE = {
+  // EC2 family
   aws_instance:                     'aws_ec2',
   aws_launch_template:              'aws_ec2',
   aws_autoscaling_group:            'aws_ec2',
   aws_launch_configuration:         'aws_ec2',
+  // App Runner
   aws_apprunner_service:            'aws_apprunner',
+  // RDS
   aws_db_instance:                  'aws_rds',
   aws_rds_cluster:                  'aws_rds',
   aws_rds_cluster_instance:         'aws_rds',
+  // CloudFront
   aws_cloudfront_distribution:      'aws_cloudfront',
+  // ECS
   aws_ecs_cluster:                  'aws_ecs',
   aws_ecs_service:                  'aws_ecs',
   aws_ecs_task_definition:          'aws_ecs',
+  // Lambda
   aws_lambda_function:              'aws_lambda',
+  // S3
   aws_s3_bucket:                    'aws_s3',
   aws_s3_bucket_object:             'aws_s3',
 };
@@ -264,6 +272,8 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
 
     const run = async () => {
       const files = await listTfFiles(`projects/${projectDirName}`);
+      console.log('[TF-detect] files found for', projectDirName, files.map(f => f.path));
+
       const foundEeTypes = new Set();
 
       for (const file of files) {
@@ -274,6 +284,7 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
           const regex = /resource\s+"([a-z][a-z0-9_]*)"\s+"/g;
           let m;
           while ((m = regex.exec(content)) !== null) {
+            console.log('[TF-detect] found resource type:', m[1], '→', TF_TO_EE_TYPE[m[1]] || 'NOT MAPPED');
             const eeType = TF_TO_EE_TYPE[m[1]];
             if (eeType) foundEeTypes.add(eeType);
           }
@@ -281,6 +292,8 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
           console.log('[TF-detect] failed to read file', file.path, e);
         }
       }
+
+      console.log('[TF-detect] final detected EE types for', projectDirName, [...foundEeTypes]);
 
       if (cancelled) return;
 
@@ -355,7 +368,7 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
       const cutoff = dispatchTime - TIME_SLACK_MS;
       const candidates = runs.filter(r => new Date(r.created_at).getTime() >= cutoff);
       let run = candidates.length > 0 ? candidates[0] : null;
-      if (!run && attempts >= FALLBACK_ATTEMPTS) { run = runs[0] || null; }
+      if (!run && attempts >= FALLBACK_ATTEMPTS) { run = runs[0] || null; if (run) console.warn('[Eagle Eye] Falling back to newest run:', run.id); }
       if (!run) { scheduleNext(); return; }
       lockedRunId = run.id;
       handleRun(run);
@@ -373,39 +386,19 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 6000);
 };
 
-// ─── FIX: callInfraAPI — explicit action mapping, terminate→destroy ───────────
 const callInfraAPI = async (project, action, token) => {
   if (!token || token === '') throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
-  if (!project.projectDirName) throw new Error('No project directory name configured for this project.');
-
+  if (!project.projectDirName)   throw new Error('No project directory name configured for this project.');
   const projectPath = `projects/${project.projectDirName}`;
-
-  // Map UI action → GitHub workflow action input
-  // 'terminate' in the UI means 'destroy' in Terraform/workflow
-  const workflowAction = {
-    apply:     'apply',
-    stop:      'stop',
-    start:     'start',
-    terminate: 'destroy',
-  }[action] || action;
-
   const res = await fetch(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW_INFRA}/dispatches`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      body: JSON.stringify({ ref: 'main', inputs: { project: projectPath, action: workflowAction } }),
+      headers: { 'Content-Type':'application/json', Accept:'application/vnd.github+json', Authorization:`Bearer ${token}`, 'X-GitHub-Api-Version':'2022-11-28' },
+      body: JSON.stringify({ ref: 'main', inputs: { project: projectPath, action } }),
     }
   );
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`GitHub Actions dispatch failed (${res.status}): ${body}`);
-  }
+  if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`GitHub Actions dispatch failed (${res.status}): ${body}`); }
   return { success: true };
 };
 
@@ -599,21 +592,6 @@ const PROVIDER_META = {
 
 const canBePaused = (t, row) => t === 'aws_apprunner' && row && (row.activeInstances ?? null) === 0 && (row.samples ?? 0) > 0;
 
-// ─── FIX: extractEc2FacetPair — reads instanceName from data point ────────────
-const extractEc2FacetPair = (series) => {
-  let name = null;
-  const groups = series?.metadata?.groups;
-  if (Array.isArray(groups)) { const f=groups.filter(g=>g.type==='facet'); if (f.length>=1) name=f[0].value; }
-  if (!name) { const pt=series?.data?.[0]; if (pt?.facet) name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet); }
-  if (!name) { const n=series?.metadata?.name; const SKIP=new Set(['val','Other','unknown','count','statusFailed','cpu','instanceName']); if (n&&!SKIP.has(n)) name=n; }
-  if (!name) return null;
-  const pt=series?.data?.[0];
-  const sf=pt?.statusFailed??null;
-  // Read instanceName directly from data point (query selects it as alias)
-  const instanceName = pt?.instanceName ?? null;
-  return { name, instanceName, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
-};
-
 const ec2StateDisplay = (state) => {
   const s = (state ?? '').toString().toLowerCase().trim();
   switch (s) {
@@ -793,10 +771,30 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   );
 };
 
-// ─── FIX: InfraStatusBanner — correct labels: "Applying…", "Apply successful" ──
-const InfraStatusBanner = () => null;
+// ─── Infra UI components ───────────────────────────────────────────────────────
+const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
+  if (actionState === INFRA_STATES.IDLE) return null;
+  const actionLabel = { apply:'Apply', stop:'Stop', start:'Start', terminate:'Terminate' }[lastAction] || lastAction;
+  const configs = {
+    [INFRA_STATES.DISPATCHING]: { color:'#4285f4', bg:'rgba(66,133,244,0.10)', border:'rgba(66,133,244,0.3)', icon:<SpinnerIcon size={13} color="#4285f4" />, text:`Dispatching ${actionLabel}…`, sub:'Sending workflow_dispatch to GitHub Actions' },
+    [INFRA_STATES.RUNNING]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:<SpinnerIcon size={13} color="#f5a623" />, text:`${actionLabel} running…`, sub:'GitHub Actions workflow is in progress' },
+    [INFRA_STATES.SUCCEEDED]:   { color:'#00d4aa', bg:'rgba(0,212,170,0.10)',  border:'rgba(0,212,170,0.3)',  icon:'✓', text:`${actionLabel} completed`, sub:'Workflow finished successfully', dismissable:true },
+    [INFRA_STATES.FAILED]:      { color:'#ff4d6d', bg:'rgba(255,77,109,0.10)', border:'rgba(255,77,109,0.3)', icon:'✗', text:`${actionLabel} failed`, sub:'Check GitHub Actions for details', dismissable:true },
+    [INFRA_STATES.TIMEOUT]:     { color:'#f5a623', bg:'rgba(245,166,35,0.10)', border:'rgba(245,166,35,0.3)', icon:'⚠', text:`${actionLabel} timed out`, sub:'Check GitHub Actions manually', dismissable:true },
+  };
+  const cfg = configs[actionState]; if (!cfg) return null;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', background:cfg.bg, border:`1px solid ${cfg.border}`, borderRadius:8, margin:'4px 0 6px' }}>
+      <span style={{ color:cfg.color, fontSize:13, flexShrink:0, display:'flex', alignItems:'center' }}>{cfg.icon}</span>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:cfg.color }}>{cfg.text}</div>
+        <div style={{ fontSize:10, color:'#7a8aaa', marginTop:1 }}>{cfg.sub}</div>
+      </div>
+      {cfg.dismissable && <button onClick={onDismiss} style={{ background:'none', border:'none', outline:'none', boxShadow:'none', color:'#4a6080', cursor:'pointer', fontSize:14, padding:'0 2px', lineHeight:1 }}>✕</button>}
+    </div>
+  );
+};
 
-// ─── FIX: InfraConfirmModal — passes original action to callInfraAPI (which maps it) ──
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
@@ -805,14 +803,11 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
   const handleConfirm = async () => {
     setBusy(true); setErr('');
     try {
+      const ghAction = isApply?'apply':isStop?'stop':isStart?'start':'destroy';
       const preDispatch = Date.now();
-      // Pass the original UI action — callInfraAPI handles the terminate→destroy mapping
-      await callInfraAPI(project, action, ghToken);
+      await callInfraAPI(project, ghAction, ghToken);
       onConfirm(preDispatch);
-    } catch (e) {
-      setErr(e?.message || 'GitHub Actions dispatch failed.');
-      setBusy(false);
-    }
+    } catch (e) { setErr(e?.message||'GitHub Actions dispatch failed.'); setBusy(false); }
   };
 
   const colors = isApply?{bg:'rgba(66,133,244,0.12)',border:'rgba(66,133,244,0.4)',text:'#4285f4'}
@@ -867,15 +862,6 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
     { action:'start',     label:'Start',     icon:<PlayIcon size={12} color="currentColor" />,      colors:{bg:'#002e22',border:'#00d4aa',text:'#00ffcc',disabledBg:'#001a14',disabledBorder:'#003d2e',disabledText:'#105040'} },
     { action:'terminate', label:'Terminate', icon:<PowerOffIcon size={12} color="currentColor" />, colors:{bg:'#2e0010',border:'#ff4d6d',text:'#ff7a96',disabledBg:'#1a000a',disabledBorder:'#3d0015',disabledText:'#581030'} },
   ];
-
-  // Map action → in-progress label shown on the button while running
-  const ACTION_PROGRESS_LABEL = {
-    apply:     'Applying',
-    stop:      'Stopping',
-    start:     'Starting',
-    terminate: 'Terminating',
-  };
-
   return (
     <div style={{ margin:'8px 0 4px', padding:'10px 12px', background:'rgba(255,255,255,0.025)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8 }}>
       <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
@@ -883,7 +869,6 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
           const btnState = getButtonState(action);
           const isRunning  = btnState==='running';
           const isDisabled = btnState==='disabled'||btnState==='locked';
-          const progressLabel = ACTION_PROGRESS_LABEL[action] || label;
           return (
             <button key={action} onClick={() => !isDisabled&&!isRunning&&onAction(project,action)} disabled={isDisabled||isRunning}
               style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'6px 14px', borderRadius:7, border:`1px solid ${isDisabled?c.disabledBorder:c.border}`, background:isDisabled?c.disabledBg:c.bg, color:isDisabled?c.disabledText:c.text, fontWeight:700, fontSize:12, cursor:isDisabled||isRunning?'not-allowed':'pointer', outline:'none', transition:'all 0.15s', letterSpacing:'0.3px' }}
@@ -891,7 +876,7 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
               onMouseLeave={e=>{if(!isDisabled&&!isRunning){e.currentTarget.style.filter='brightness(1)';e.currentTarget.style.transform='translateY(0)';}}}
             >
               {isRunning?<SpinnerIcon size={12} color={c.text} />:<span style={{ display:'flex', alignItems:'center', color:isDisabled?c.disabledText:c.text }}>{icon}</span>}
-              <span>{isRunning ? `${progressLabel}…` : label}</span>
+              <span>{isRunning?`${label}ing…`:label}</span>
             </button>
           );
         })}
@@ -900,11 +885,35 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   );
 };
 
-// ─── FIX: Ec2CountLoader — include instanceName in queries ────────────────────
+// ─── EC2 helpers ───────────────────────────────────────────────────────────────
+const extractFacetName = (series) => {
+  const groups = series?.metadata?.groups;
+  if (Array.isArray(groups)) { const g=groups.find(g=>g.type==='facet'); if (g?.value&&g.value!=='Other') return g.value; }
+  const pt = series?.data?.[0];
+  if (pt?.facet) return Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);
+  const name = series?.metadata?.name;
+  const SKIP = new Set(['val','Other','unknown','count','latest','FreeableMemory','WriteIOPS','WriteLatency','ReadIOPS','CPUUtilization']);
+  if (name&&!SKIP.has(name)) return name;
+  return null;
+};
+
+const extractEc2FacetPair = (series) => {
+  let name = null;
+  const groups = series?.metadata?.groups;
+  if (Array.isArray(groups)) { const f=groups.filter(g=>g.type==='facet'); if (f.length>=1) name=f[0].value; }
+  if (!name) { const pt=series?.data?.[0]; if (pt?.facet) name=Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet); }
+  if (!name) { const n=series?.metadata?.name; const SKIP=new Set(['val','Other','unknown','count','statusFailed','cpu']); if (n&&!SKIP.has(n)) name=n; }
+  if (!name) return null;
+  const pt=series?.data?.[0];
+  const sf=pt?.statusFailed??null;
+  const instanceName=pt?.instanceName??null;
+  return { name, instanceName, state:(sf===null||sf===undefined)?'stopped':sf>0?'impaired':'running' };
+};
+
 const Ec2CountLoader = ({ project, onCounts, loaded }) => {
   const pf = ec2ProjectFilter(project);
-  const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
-  const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
+  const midQ   = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
+  const innerQ = `SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={midQ} pollInterval={60000}>
       {({ data:midData }) => (
@@ -1009,9 +1018,8 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
 
             if (r.type==='aws_ec2') {
               const pf=ec2ProjectFilter(project);
-              // FIX: include instanceName in both EC2 detail queries
-              const aq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
-              const mq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS instanceName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
+              const aq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`;
+              const mq=`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} FACET \`aws.ec2.InstanceId\` SINCE 7 days ago LIMIT 50`;
               return (
                 <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
                   {({ data:ad, loading:al }) => (
@@ -1021,16 +1029,7 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
                         const activeI=new Set(), impairedI=new Set();
                         (ad||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name)return;activeI.add(p.name);if(p.state==='impaired')impairedI.add(p.name);});
                         const seen=new Set(), visibleInstances=[];
-                        (md||[]).forEach(s=>{
-                          const p=extractEc2FacetPair(s);
-                          if(!p?.name||seen.has(p.name))return;
-                          seen.add(p.name);
-                          visibleInstances.push({
-                            name:p.name,
-                            instanceName:p.instanceName,
-                            state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'
-                          });
-                        });
+                        (md||[]).forEach(s=>{const p=extractEc2FacetPair(s);if(!p?.name||seen.has(p.name))return;seen.add(p.name);visibleInstances.push({name:p.name,instanceName:p.instanceName,state:impairedI.has(p.name)?'impaired':activeI.has(p.name)?'running':'stopped'});});
                         if (visibleInstances.length===0) return (
                           <div style={{ padding:'8px 12px 6px', fontSize:11, color:'#7a8aaa', fontStyle:'italic' }}>
                             No instances tagged <code style={{ color:'#4285f4', fontSize:10 }}>Project={project.projectDirName||project.name}</code> found
@@ -1105,16 +1104,6 @@ const ExpandableResourceRow = ({ resource:r, project }) => {
 
             // Generic fallback
             const seen=new Set();
-            const extractFacetName = (series) => {
-              const groups = series?.metadata?.groups;
-              if (Array.isArray(groups)) { const g=groups.find(g=>g.type==='facet'); if (g?.value&&g.value!=='Other') return g.value; }
-              const pt = series?.data?.[0];
-              if (pt?.facet) return Array.isArray(pt.facet)?pt.facet[0]:String(pt.facet);
-              const name = series?.metadata?.name;
-              const SKIP = new Set(['val','Other','unknown','count','latest','FreeableMemory','WriteIOPS','WriteLatency','ReadIOPS','CPUUtilization']);
-              if (name&&!SKIP.has(name)) return name;
-              return null;
-            };
             const items=data.map(s=>{const n=extractFacetName(s);if(!n||seen.has(n))return null;seen.add(n);return n;}).filter(Boolean);
             if (items.length===0) return <div style={{ padding:'4px 12px 6px', fontSize:11, color:'#7a8aaa' }}>No instances found</div>;
             const iD=r.status==='green'?'green':r.status==='red'?'red':'yellow';
@@ -1217,6 +1206,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
         resources: [{ label: 'Total Cost (INR)', type: providerId === 'aws' ? 'aws_billing' : 'gcp_billing', alwaysOn: false }],
       };
     }
+    // normal — no empty/billingOnly flags
     const allOpts      = RESOURCE_OPTIONS[providerId] || [];
     const stdResources = allOpts.filter(o => selectedResources.includes(o.type)).map(o => ({ ...o }));
     const customParsed = (customResources || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1399,6 +1389,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
             <label style={s.label}>Dashboard Short Link</label>
             <input value={form.dashboardLink} onChange={e=>setField('dashboardLink',e.target.value)} placeholder="e.g. https://onenr.io/..." style={s.input} />
           </div>
+          {/* GCP auto-detect notice */}
           {form.projectType==='normal'&&form.providerId==='gcp'&&(
             <div style={{ padding:'10px 14px', background:'rgba(66,133,244,0.06)', border:'1px solid rgba(66,133,244,0.2)', borderRadius:8, marginBottom:18 }}>
               <div style={{ fontSize:12, fontWeight:700, color:'#4285f4', marginBottom:4 }}>✦ Auto-detection enabled</div>
@@ -1407,6 +1398,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               </div>
             </div>
           )}
+          
           {form.projectType==='normal'&&form.providerId==='aws'&&(
             <div style={s.field}>
               <label style={s.label}>Resources to Monitor <span style={{ color:'#4a6080', fontWeight:500, textTransform:'none', letterSpacing:0 }}>(leave empty for TF auto-detect)</span></label>
@@ -1452,6 +1444,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
   );
 };
 
+// ─── GCP auto-detector ────────────────────────────────────────────────────────
 // ─── GCP auto-detector ────────────────────────────────────────────────────────
 const GcpAutoDetectLoader = ({ project, discoveryIndex, detectedResources, onComplete }) => {
   const doneRef = React.useRef(false);
@@ -1528,7 +1521,7 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
           ...p,
           projects: p.projects.map(proj => {
             if (proj.projectDirName !== project.projectDirName) return proj;
-            if (proj.resources && proj.resources.length > 0) return proj;
+            if (proj.resources && proj.resources.length > 0) return proj; // already has resources
             return { ...proj, resources };
           }),
         }));
@@ -1601,8 +1594,6 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   const [actionState,  setActionState]  = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
   const pollCancelRef = useRef({ cancelled: false });
-  const isMountedRef = useRef(true);
-  useEffect(() => { return () => { isMountedRef.current = false; }; }, []);
 
   useEffect(() => {
     if (persistedLifecycle && persistedLifecycle !== lifecycle) {
@@ -1624,80 +1615,44 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
     return ['apply','stop','start','terminate'].filter(a=>!allowed.includes(a));
   };
 
-  // ─── FIX: handleActionDispatched — sets DISPATCHING immediately, wrapped in try/catch ──
-  const handleActionDispatched = useCallback((action, token, dispatchTime) => {
-    // Set state immediately so spinner shows right away
-    setActiveAction(action);
-    setActionState(INFRA_STATES.DISPATCHING);
-
+  const handleActionDispatched = useCallback((action,token,dispatchTime)=>{
+    setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
     if (!lifecycle && action !== 'apply') {
-      const inferred =
-        action === 'stop' || action === 'terminate' ? 'provisioned'
-        : action === 'start' ? 'stopped'
-        : null;
+      const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
+        : action === 'start' ? 'stopped' : null;
       if (inferred) {
         setLifecycle(inferred);
         if (onLifecycleChange) onLifecycleChange(project, inferred);
       }
     }
-
-    const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
-    pollCancelRef.current = { cancelled: false };
-    const cancelRef = pollCancelRef.current;
-
-    const onStatusChange = (newState) => {
-      if (!cancelRef.cancelled && isMountedRef.current) setActionState(newState);
-    };
-
-    const onComplete = (conclusion) => {
-      if (cancelRef.cancelled || !isMountedRef.current) return;
-      if (conclusion === 'success') {
+    const effectiveDispatchTime=(dispatchTime||Date.now())-10000;
+    pollCancelRef.current={cancelled:false};
+    const cancelRef=pollCancelRef.current;
+    const onStatusChange=(newState)=>{ if(!cancelRef.cancelled) setActionState(newState); };
+    const onComplete=(conclusion)=>{
+      if(cancelRef.cancelled) return;
+      if(conclusion==='success'){
         setActionState(INFRA_STATES.SUCCEEDED);
-        const next = NEXT_LIFECYCLE[action];
-        if (next) {
+        const next=NEXT_LIFECYCLE[action];
+        if(next){
           setLifecycle(next);
           if (onLifecycleChange) onLifecycleChange(project, next);
         }
-      } else if (conclusion === 'timeout') {
-        setActionState(INFRA_STATES.TIMEOUT);
-      } else {
-        setActionState(INFRA_STATES.FAILED);
       }
-      setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.IDLE);
-          setActiveAction(null);
-        }
-      }, 8000);
+      else if(conclusion==='timeout') setActionState(INFRA_STATES.TIMEOUT);
+      else setActionState(INFRA_STATES.FAILED);
+      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},8000);
     };
-
-    if (token && token.trim() !== '') {
-      try {
-        pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
-      } catch (e) {
-        console.error('[EagleEye] pollWorkflowRun threw synchronously:', e);
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.FAILED);
-          setTimeout(() => {
-            if (!cancelRef.cancelled && isMountedRef.current) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
-          }, 6000);
-        }
-      }
+    if(token&&token.trim()!==''){
+      pollWorkflowRun(token,effectiveDispatchTime,onStatusChange,onComplete,cancelRef);
     } else {
-      setTimeout(() => {
-        if (!cancelRef.cancelled) {
-          setActionState(INFRA_STATES.TIMEOUT);
-          setTimeout(() => {
-            if (!cancelRef.cancelled) { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }
-          }, 6000);
-        }
-      }, 3000);
+      setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.TIMEOUT);setTimeout(()=>{if(!cancelRef.cancelled){setActionState(INFRA_STATES.IDLE);setActiveAction(null);}},6000);}},3000);
     }
-  }, [onLifecycleChange, project, lifecycle]);
+  },[onLifecycleChange, project]);
 
-  const handleInfraAction = useCallback((proj, action) => {
-    onInfraAction(proj, action, handleActionDispatched);
-  }, [onInfraAction, handleActionDispatched]);
+  const handleInfraAction = useCallback((proj,action)=>{
+    onInfraAction(proj,action,handleActionDispatched);
+  },[onInfraAction,handleActionDispatched]);
 
   const disabledActions = getDisabledActions(); // eslint-disable-line no-unused-vars
   const isBusy = actionState===INFRA_STATES.DISPATCHING||actionState===INFRA_STATES.RUNNING;
@@ -1810,6 +1765,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
   })();
 
   const showGhostState = !lifecycle && hasResources;
+  // ── FIXED: badge shows whenever infraReady and no lifecycle, regardless of hasResources ──
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
   const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
 
@@ -1858,10 +1814,7 @@ const ProjectRow = ({ project, resourceStatuses, loading, index, billingCost, on
           {isBusy&&(
             <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:10, fontWeight:700, color:'#f5a623', background:'rgba(245,166,35,0.1)', border:'1px solid rgba(245,166,35,0.3)', borderRadius:100, padding:'2px 8px' }}>
               <SpinnerIcon size={10} color="#f5a623" />
-              {actionState===INFRA_STATES.DISPATCHING
-                ? { apply:'Applying…', stop:'Stopping…', start:'Starting…', terminate:'Terminating…' }[activeAction] || 'Dispatching…'
-                : { apply:'Applying…', stop:'Stopping…', start:'Starting…', terminate:'Terminating…' }[activeAction] || `${activeAction} running…`
-              }
+              {actionState===INFRA_STATES.DISPATCHING?'Dispatching…':`${activeAction} running…`}
             </span>
           )}
         </div>
@@ -1934,7 +1887,7 @@ const SingleResourceQuery = ({ resource, project, children }) => {
   );
 };
 
-// ─── FIX: ProjectsRendered — resourceBadgeStatus excludes billing projects ────
+// ─── ProjectsRendered ─────────────────────────────────────────────────────────
 const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   const projectStatuses = provider.projects.map((p, i) => {
     if (p.deleted) return 'deleted';
@@ -1949,7 +1902,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     const stateKey = p.projectDirName || p.name;
     const lifecycle = infraStates?.[stateKey] || null;
     if (!lifecycle) return 'not_provisioned';
-    if (lifecycle === 'terminated') return 'terminated';
     return worstStatus(nonUnknown.map(rs => rs.status));
   });
 
@@ -1963,19 +1915,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     }
   });
 
-  // FIX: only count non-billing, non-deleted, non-empty projects for the Resources pill
-  const nonBillingLive = projectStatuses.filter((s, i) => {
-    const p = provider.projects[i];
-    return !p.billingOnly && !p.billingNotConfigured && !p.deleted && !p.empty
-      && s !== 'not_provisioned' && s !== 'billing_only' && s !== 'terminated';
-  });
-  const resourceBadgeStatus = nonBillingLive.length > 0 ? worstStatus(nonBillingLive) : 'unknown';
-
-  // Overall card status still uses all non-billing live for the card border
-  const live = projectStatuses.filter(s =>
-    s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
-    s !== 'billing_only' && s !== 'not_provisioned'
-  );
+  const live = projectStatuses.filter(s => s !== 'deleted' && s !== 'empty' && s !== 'unknown' && s !== 'billing_only' && s !== 'not_provisioned');
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
   const billStatus  = billingCostToStatus(billingCost);
   const overall     = provider.id === 'aws'
@@ -1988,6 +1928,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
 
   const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
+  const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
 
   return (
     <>
@@ -2112,6 +2053,7 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
         />
       );
     }
+    // ── AWS: no resources set + has projectDirName → auto-detect from TF files ──
     if (provider.id === 'aws' && !project.deleted && !project.empty && !project.billingOnly && project.projectDirName) {
       return (
         <AwsTfAutoLoaderStateful
@@ -2216,6 +2158,7 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
   );
 };
 
+// ─── AWS TF auto-loader ───────────────────────────────────────────────────────
 const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
   return (
     <ProjectListInnerStateful
@@ -2277,8 +2220,10 @@ const EagleEye = () => {
     nerdStorageRead(STORAGE_DOC_ID)
       .then((doc) => {
         if (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0) {
+          console.log('[EagleEye] Loaded providers from NerdStorage:', doc.providers.length);
           setProviders(mergeAutoDiscovered(doc.providers));
         } else {
+          console.log('[EagleEye] No providers in NerdStorage, using defaults');
           setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
         }
       })
@@ -2290,8 +2235,12 @@ const EagleEye = () => {
 
     nerdStorageRead(STORAGE_CONFIG_ID)
       .then((doc) => {
+        console.log('[EagleEye] Config doc from NerdStorage:', doc);
         if (doc?.accessToken) {
+          console.log('[EagleEye] Token loaded, length:', doc.accessToken.length);
           setGhToken(doc.accessToken);
+        } else {
+          console.warn('[EagleEye] No accessToken found in config document');
         }
       })
       .catch((err) => {
@@ -2301,6 +2250,7 @@ const EagleEye = () => {
     nerdStorageRead(STORAGE_INFRA_STATE_ID)
       .then((doc) => {
         if (doc?.infraStates) {
+          console.log('[EagleEye] Loaded infra states:', doc.infraStates);
           setInfraStates(doc.infraStates);
         }
       })
@@ -2317,6 +2267,18 @@ const EagleEye = () => {
   const handleSaveToken = async (token) => {
     await nerdStorageWrite(STORAGE_CONFIG_ID, { accessToken: token });
     setGhToken(token);
+    setTimeout(async () => {
+      try {
+        const verify = await nerdStorageRead(STORAGE_CONFIG_ID);
+        if (!verify?.accessToken) {
+          console.warn('[EagleEye] Token read-back empty — NerdStorage propagation delay, token was still saved');
+        } else {
+          console.log('[EagleEye] Token verified in NerdStorage');
+        }
+      } catch (e) {
+        console.warn('[EagleEye] Token verification read failed (non-critical):', e);
+      }
+    }, 2000);
   };
 
   const handleRemoveToken = async () => {
@@ -2324,13 +2286,11 @@ const EagleEye = () => {
     setGhToken('');
   };
 
-  const pendingInfraRef = useRef({});
   const handleLifecycleChange = useCallback(async (project, newLifecycle) => {
     const key = project.projectDirName || project.name;
-    pendingInfraRef.current = { ...infraStates, ...pendingInfraRef.current, [key]: newLifecycle };
-    const snapshot = pendingInfraRef.current;
-    await persistInfraStates(snapshot);
-    setInfraStates(snapshot);
+    const updated = { ...infraStates, [key]: newLifecycle };
+    setInfraStates(updated);
+    await persistInfraStates(updated);
   }, [infraStates]);
 
   if (!providers) return <EagleEyeLoader />;
@@ -2397,10 +2357,7 @@ const EagleEye = () => {
             project={infraConfirm.project}
             action={infraConfirm.action}
             ghToken={ghToken}
-            onConfirm={(dispatchTime) => {
-              setInfraConfirm(null);
-              infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime);
-            }}
+            onConfirm={(dispatchTime) => { infraConfirm.onDispatched?.(infraConfirm.action, ghToken, dispatchTime); setInfraConfirm(null); }}
             onCancel={() => setInfraConfirm(null)}
           />
         )}
@@ -2410,3 +2367,4 @@ const EagleEye = () => {
 };
 
 export default EagleEye;
+
