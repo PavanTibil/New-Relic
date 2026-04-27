@@ -1930,8 +1930,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
-
-<<<<<<< HEAD
   const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
   const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
@@ -1942,7 +1940,6 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const cardMeta                = STATUS_META[cardStatus] ?? STATUS_META.unknown;
   const meta                    = PROVIDER_META[provider.id];
   const accentColor             = meta.accent;
-=======
   // FIX: Only factor billing into the card overall status if at least one
   // non-billing project is actually provisioned (has a lifecycle).
   const anyProvisioned = projectStatuses.some(s =>
