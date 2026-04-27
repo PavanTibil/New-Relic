@@ -1931,6 +1931,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   );
   const cloudStatus = live.length > 0 ? worstStatus(live) : 'unknown';
 
+<<<<<<< HEAD
   const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
   const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
   const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
@@ -1941,6 +1942,27 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   const cardMeta                = STATUS_META[cardStatus] ?? STATUS_META.unknown;
   const meta                    = PROVIDER_META[provider.id];
   const accentColor             = meta.accent;
+=======
+  // FIX: Only factor billing into the card overall status if at least one
+  // non-billing project is actually provisioned (has a lifecycle).
+  const anyProvisioned = projectStatuses.some(s =>
+    s !== 'deleted' && s !== 'empty' && s !== 'unknown' &&
+    s !== 'billing_only' && s !== 'not_provisioned' && s !== 'terminated'
+  );
+  const billStatus = anyProvisioned ? billingCostToStatus(billingCost) : 'unknown';
+
+  const overall = provider.id === 'aws'
+    ? worstStatus([cloudStatus, billStatus].filter(s => s !== 'unknown')) || 'unknown'
+    : cloudStatus;
+
+  const cardMeta    = STATUS_META[overall] ?? STATUS_META.unknown;
+  const meta        = PROVIDER_META[provider.id];
+  const accentColor = meta.accent;
+
+  const gcpBillingProject       = provider.id === 'gcp' ? provider.projects.find(p => p.billingOnly) : null;
+  const gcpBillingNotConfigured = gcpBillingProject?.billingNotConfigured ?? false;
+  const resourceBadgeStatus     = live.length > 0 ? cloudStatus : 'unknown';
+>>>>>>> 6f081ff544784d5c79f06deffa85c5794b033906
 
   return (
     <>
