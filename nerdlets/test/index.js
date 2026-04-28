@@ -326,7 +326,7 @@ const useTfResources = (projectDirName, token, refreshTrigger) => {
       setState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
       return;
     }
-    setState({ loading: true, ec2Ids: [], ec2Names: {}, allResources: null });
+    setState(prev => ({ ...prev, loading: true }));
     let cancelled = false;
 
     fetch(
@@ -1144,7 +1144,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   // Don't render if not provisioned or already cleared
   if (!lifecycle || listCleared) return null;
 
-  if (idsLoading) {
+  if (idsLoading && (!ec2Ids || ec2Ids.length === 0)) {
     return (
       <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
         <SpinnerIcon size={10} color="#7a8aaa" /> Loading instances from state…
@@ -2387,6 +2387,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
     const stateKey = getProjectStateKey(p);
     const lifecycle = infraStates?.[stateKey] || null;
     if (lifecycle === 'terminated') return 'terminated';
+    if (lifecycle === 'stopped') return 'yellow';
     if (!lifecycle) return 'not_provisioned';
     const r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
     if (!r || r.loading) return 'unknown';
