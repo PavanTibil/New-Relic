@@ -224,14 +224,14 @@ const useGithubTfFiles = (projectDirName, token) => {
 
 // ─── GitHub TF resource auto-detector ────────────────────────────────────────
 const useGithubTfResources = (projectDirName, token, providerId) => {
-  const [state, setState] = React.useState({ loading: false, resources: null });
+  const [state, setState] = React.useState({ loading: false, resources: null, notFound: false });
 
   React.useEffect(() => {
     if (!projectDirName || !token || !providerId) {
-      setState({ loading: false, resources: null });
+      setState({ loading: false, resources: null, notFound: false });
       return;
     }
-    setState({ loading: true, resources: null });
+    setState({ loading: true, resources: null, notFound: false });
     let cancelled = false;
 
     const ghHeaders = {
@@ -241,27 +241,33 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
     };
 
     const listTfFiles = async (path, depth = 0) => {
-      if (depth > 4) return [];
+      if (depth > 4) return { files: [], notFound: false };
       const r = await fetch(
         `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`,
         { headers: ghHeaders }
       );
-      if (!r.ok) return [];
+      if (r.status === 404 && depth === 0) return { files: [], notFound: true };
+      if (!r.ok) return { files: [], notFound: false };
       const items = await r.json();
-      if (!Array.isArray(items)) return [];
+      if (!Array.isArray(items)) return { files: [], notFound: false };
       let files = [];
       for (const item of items) {
         if (item.type === 'file' && item.name.endsWith('.tf')) files.push(item);
         else if (item.type === 'dir' && !item.name.startsWith('.')) {
           const nested = await listTfFiles(item.path, depth + 1);
-          files = [...files, ...nested];
+          files = [...files, ...nested.files];
         }
       }
-      return files;
+      return { files, notFound: false };
     };
 
     const run = async () => {
-      const files = await listTfFiles(`projects/${projectDirName}`);
+      const { files, notFound } = await listTfFiles(`projects/${projectDirName}`);
+      if (cancelled) return;
+      if (notFound) {
+        setState({ loading: false, resources: null, notFound: true });
+        return;
+      }
       const foundEeTypes = new Set();
       for (const file of files) {
         try {
@@ -278,15 +284,14 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
           console.log('[TF-detect] failed to read file', file.path, e);
         }
       }
-      if (cancelled) return;
       const allOpts = RESOURCE_OPTIONS[providerId] || [];
       const resources = allOpts.filter(o => foundEeTypes.has(o.type));
-      setState({ loading: false, resources });
+      setState({ loading: false, resources, notFound: false });
     };
 
     run().catch((e) => {
       console.error('[TF-detect] run failed:', e);
-      if (!cancelled) setState({ loading: false, resources: [] });
+      if (!cancelled) setState({ loading: false, resources: [], notFound: false });
     });
 
     return () => { cancelled = true; };
@@ -1113,9 +1118,9 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   React.useEffect(() => {
     if (!onStatusUpdate) return;
     if (lifecycle === 'stopped') {
-      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'yellow', 'Instances stopped'));
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'yellow', null));
     } else if (lifecycle === 'terminated') {
-      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'red', 'Instances terminated'));
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'red', null));
     }
   }, [lifecycle, onStatusUpdate]);
 
@@ -1150,8 +1155,8 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
         background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#f0f4ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, flexShrink: 0 }}>{statusText}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: '#c0cce0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>
       </div>
     );
   };
@@ -1160,7 +1165,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   if (lifecycle === 'stopped') {
     return (
       <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(245,166,35,0.18)', borderRadius: 6, overflow: 'hidden' }}>
-        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--yellow', '✗ Stopped', '#f5a623'))}
+        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--yellow', '✕ Stopped', '#f5a623'))}
       </div>
     );
   }
@@ -1178,10 +1183,10 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
               background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
             }}>
               <span className="status-dot status-dot--red" style={{ flexShrink: 0 }} />
-              <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 400, fontStyle: 'italic', color: '#4a6080', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: '#4a6080', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {text}
               </span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#ff4d6d', flexShrink: 0 }}>✗ Terminated</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#ff4d6d', flexShrink: 0 }}>Terminated</span>
             </div>
           );
         })}
@@ -1220,23 +1225,21 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
         const instanceColors = ec2Ids.map(id => {
           const entry = liveMap[id];
           if (!entry) {
-            // Not yet in NRQL — optimistic green
-            return { dot: 'status-dot--green', text: '✓ Running', color: '#00d4aa' };
+            return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
           }
           const { statusFailed: sf, instanceState: st } = entry;
           // State codes: 48 = terminated, 32 = shutting-down, 80 = stopped, 64 = stopping
-          if (st === 48 || st === 32) return { dot: 'status-dot--red', text: '✗ Terminated', color: '#ff4d6d' };
-          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: '✗ Stopped', color: '#f5a623' };
-          if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: '✗ Impaired', color: '#ff4d6d' };
-          return { dot: 'status-dot--green', text: '✓ Running', color: '#00d4aa' };
+          if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
+          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: '✕ Stopped', color: '#f5a623' };
+          if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
+          return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
         });
 
         if (onStatusUpdate) {
           const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
           const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
           const overallStatus = hasRed ? 'red' : hasYellow ? 'yellow' : 'green';
-          const overallReason = hasRed ? 'Instance check failed or terminated' : hasYellow ? 'Instances stopped' : 'EC2 Instances Running';
-          Promise.resolve().then(() => onStatusUpdate('aws_ec2', overallStatus, overallReason));
+          Promise.resolve().then(() => onStatusUpdate('aws_ec2', overallStatus, null));
         }
 
         return (
@@ -1272,10 +1275,10 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
   const dotCls = r.status === 'green' ? 'green' : r.status === 'yellow' ? 'yellow' : r.status === 'red' ? 'red' : 'grey';
   const statusColor = r.status === 'green' ? '#00d4aa' : r.status === 'yellow' ? '#f5a623' : r.status === 'red' ? '#ff4d6d' : '#7a8aaa';
   const isPaused = canBePaused(r.type, r.row);
-  const statusLabel = r.status === 'green' ? '✓ Running'
-    : r.status === 'yellow' ? (isPaused ? '⊘ Paused' : r.alwaysOn ? '⚠ Warning' : '✗ Stopped')
-      : r.status === 'red' ? (r.alwaysOn ? '✗ Errors' : '✗ Stopped')
-        : '— No Data';
+  const statusLabel = r.status === 'green' ? 'Running'
+    : r.status === 'yellow' ? (isPaused ? 'Paused' : r.alwaysOn ? 'Warning' : '✕ Stopped')
+      : r.status === 'red' ? (r.alwaysOn ? 'Errors' : '✕ Stopped')
+        : 'No Data';
 
   const query = (r.type !== 'aws_ec2' && hasSubList)
     ? (typeof SERVICE_QUERIES[r.type] === 'function' ? SERVICE_QUERIES[r.type](project) : null)
@@ -1835,7 +1838,7 @@ const GhostStateBanner = ({ project }) => {
 const AwsTfInlineLoader = ({ project, lifecycle }) => {
   const ghToken = React.useContext(GhTokenContext);
   const providerId = 'aws';
-  const { loading, resources } = useGithubTfResources(project.projectDirName, ghToken, providerId);
+  const { loading, resources, notFound } = useGithubTfResources(project.projectDirName, ghToken, providerId);
 
   const savedRef = React.useRef(false);
   React.useEffect(() => {
@@ -1856,6 +1859,20 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
       );
     }
   }, [loading, resources]);
+
+  // Project directory deleted from repo — remove from localStorage and notify UI
+  React.useEffect(() => {
+    if (!loading && notFound) {
+      window.dispatchEvent(new CustomEvent('ee:project-not-found', { detail: { projectDirName: project.projectDirName } }));
+      const doc = lsRead(LS_PROVIDERS_KEY);
+      if (!doc?.providers) return;
+      const newProviders = doc.providers.map(p => ({
+        ...p,
+        projects: p.projects.filter(proj => proj.projectDirName !== project.projectDirName),
+      }));
+      persistProviders(newProviders).catch(() => {});
+    }
+  }, [loading, notFound, project.projectDirName]);
 
   if (loading) {
     return (
@@ -1895,8 +1912,7 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
         // EC2 under stopped/terminated lifecycle: bypass NRQL and use lifecycle-driven status directly
         if (r.type === 'aws_ec2' && (lifecycle === 'stopped' || lifecycle === 'terminated')) {
           const overrideStatus = lifecycle === 'stopped' ? 'yellow' : 'red';
-          const overrideReason = lifecycle === 'stopped' ? 'Instances stopped' : 'Instances terminated';
-          const rs = { ...r, status: overrideStatus, reason: overrideReason, row: null, loading: false };
+          const rs = { ...r, status: overrideStatus, reason: null, row: null, loading: false };
           return (
             <ProvisionedResourceRow
               key={i}
@@ -1953,9 +1969,11 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
       const existing = prev.find(p => p.type === type);
       if (existing && existing.status === status && existing.reason === reason) return prev;
       const other = prev.filter(p => p.type !== type);
-      return [...other, { type, label: type, status, reason }];
+      const allOpts = [...(RESOURCE_OPTIONS['aws'] || []), ...(RESOURCE_OPTIONS['gcp'] || [])];
+      const def = (project.resources || []).find(r => r.type === type) || allOpts.find(r => r.type === type);
+      return [...other, { type, label: def?.label || type, status, reason, alwaysOn: def?.alwaysOn }];
     });
-  }, []);
+  }, [project.resources]);
 
   const [expanded, setExpanded] = useState(false);
   const [lifecycle, setLifecycle] = useState(persistedLifecycle || null);
@@ -2708,6 +2726,19 @@ const EagleEye = () => {
       console.log('[EagleEye] Loaded infra states from localStorage:', infraDoc.infraStates);
       setInfraStates(infraDoc.infraStates);
     }
+
+    const handleProjectNotFound = (e) => {
+      const { projectDirName } = e.detail;
+      setProviders(prev => {
+        if (!prev) return prev;
+        return prev.map(p => ({
+          ...p,
+          projects: p.projects.filter(proj => proj.projectDirName !== projectDirName),
+        }));
+      });
+    };
+    window.addEventListener('ee:project-not-found', handleProjectNotFound);
+    return () => window.removeEventListener('ee:project-not-found', handleProjectNotFound);
   }, []);
 
   const handleSave = async (newProviders) => {
