@@ -1081,16 +1081,31 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   }, [actionState]);
   const { loading: idsLoading, ec2Ids } = useTfResources(project.projectDirName, ghToken, `${actionState}_${fetchKey}`);
   const { loading: nameLoading, tfName } = useTfName(project.projectDirName, ghToken);
-  const [listCleared, setListCleared] = React.useState(false);
+  // Persisted in localStorage so the 1-min countdown survives page refreshes
+  const _terminatedKey = `ee:terminated-at:${project.projectDirName || project.name}`;
+  const [listCleared, setListCleared] = React.useState(() => {
+    if (lifecycle !== 'terminated') return false;
+    try {
+      const raw = localStorage.getItem(`ee:terminated-at:${project.projectDirName || project.name}`);
+      return raw ? (Date.now() - parseInt(raw, 10)) >= 60_000 : false;
+    } catch { return false; }
+  });
 
-  // Terminated cleanup: clear list after 5 minutes; resets when lifecycle changes
   React.useEffect(() => {
-    setListCleared(false);
-    if (lifecycle === 'terminated') {
-      const t = setTimeout(() => setListCleared(true), 5 * 60 * 1000);
-      return () => clearTimeout(t);
+    if (lifecycle !== 'terminated') {
+      try { localStorage.removeItem(_terminatedKey); } catch {}
+      setListCleared(false);
+      return;
     }
-  }, [lifecycle]);
+    // Record the moment we first entered terminated state (don't overwrite on subsequent mounts)
+    try { if (!localStorage.getItem(_terminatedKey)) localStorage.setItem(_terminatedKey, String(Date.now())); } catch {}
+    let raw; try { raw = localStorage.getItem(_terminatedKey); } catch {}
+    const elapsed = Date.now() - (raw ? parseInt(raw, 10) : Date.now());
+    const remaining = 60_000 - elapsed; // 1 minute
+    if (remaining <= 0) { setListCleared(true); return; }
+    const t = setTimeout(() => setListCleared(true), remaining);
+    return () => clearTimeout(t);
+  }, [lifecycle, _terminatedKey]);
 
   // Push lifecycle-driven status to parent row so the EC2 row and project dot update
   // without waiting for NRQL (which is skipped when lifecycle is stopped/terminated)
@@ -1155,11 +1170,26 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
     );
   }
 
-  // Terminated override: red dot, no NRQL
+  // Terminated override: strikethrough label, red badge, no NRQL
   if (lifecycle === 'terminated') {
     return (
-      <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,77,109,0.22)', borderRadius: 6, overflow: 'hidden' }}>
-        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--red', '✗ Terminated', '#ff4d6d'))}
+      <div style={{ margin: '0 8px 6px', background: 'rgba(255,77,109,0.06)', border: '1px solid rgba(255,77,109,0.22)', borderRadius: 6, overflow: 'hidden' }}>
+        {ec2Ids.map((id, i) => {
+          const { text, pending } = buildLabel(id, i);
+          return (
+            <div key={id} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px',
+              borderTop: i === 0 ? 'none' : '1px solid rgba(255,77,109,0.1)',
+              background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+            }}>
+              <span className="status-dot status-dot--red" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#ff6b6b', textDecoration: 'line-through', opacity: 0.75, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {pending ? id : text}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#ff4d6d', flexShrink: 0 }}>✗ Terminated</span>
+            </div>
+          );
+        })}
       </div>
     );
   }
