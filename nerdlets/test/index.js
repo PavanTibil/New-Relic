@@ -1083,7 +1083,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   const { loading: nameLoading, tfName } = useTfName(project.projectDirName, ghToken);
   const [listCleared, setListCleared] = React.useState(false);
 
-  // Terminated cleanup: clear list after 2 minutes; resets when lifecycle changes
+  // Terminated cleanup: clear list after 5 minutes; resets when lifecycle changes
   React.useEffect(() => {
     setListCleared(false);
     if (lifecycle === 'terminated') {
@@ -1091,6 +1091,17 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       return () => clearTimeout(t);
     }
   }, [lifecycle]);
+
+  // Push lifecycle-driven status to parent row so the EC2 row and project dot update
+  // without waiting for NRQL (which is skipped when lifecycle is stopped/terminated)
+  React.useEffect(() => {
+    if (!onStatusUpdate) return;
+    if (lifecycle === 'stopped') {
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'yellow', 'Instances stopped'));
+    } else if (lifecycle === 'terminated') {
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'red', 'Instances terminated'));
+    }
+  }, [lifecycle, onStatusUpdate]);
 
   // Don't render if not provisioned or already cleared
   if (!lifecycle || listCleared) return null;
