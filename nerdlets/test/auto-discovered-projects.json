@@ -11,18 +11,6 @@
       }
     ]
   },
-  "test": {
-    "projectDirName": "test",
-    "name": "Test",
-    "provider": "aws",
-    "resources": [
-      {
-        "label": "EC2",
-        "type": "aws_ec2",
-        "alwaysOn": true
-      }
-    ]
-  },
   "starapp": {
     "projectDirName": "starapp",
     "name": "Starapp",
