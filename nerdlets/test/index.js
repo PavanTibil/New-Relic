@@ -186,11 +186,11 @@ const ec2ProjectFilter = (project) => {
 
 // ─── GitHub TF file checker ───────────────────────────────────────────────────
 const useGithubTfFiles = (projectDirName, token) => {
-  const [state, setState] = React.useState({ loading: false, hasTf: null });
+  const [state, setState] = React.useState({ loading: false, hasTf: null, dirNotFound: false });
   React.useEffect(() => {
-    if (!projectDirName) { setState({ loading: false, hasTf: false }); return; }
-    if (!token) { setState({ loading: false, hasTf: null }); return; }
-    setState({ loading: true, hasTf: null });
+    if (!projectDirName) { setState({ loading: false, hasTf: false, dirNotFound: false }); return; }
+    if (!token) { setState({ loading: false, hasTf: null, dirNotFound: false }); return; }
+    setState({ loading: true, hasTf: null, dirNotFound: false });
     let cancelled = false;
     const ghHeaders = {
       Authorization: `Bearer ${token}`,
@@ -198,25 +198,32 @@ const useGithubTfFiles = (projectDirName, token) => {
       'X-GitHub-Api-Version': '2022-11-28',
     };
     const checkDir = async (path, depth = 0) => {
-      if (depth > 4) return false;
+      if (depth > 4) return { hasTf: false, notFound: false };
       const r = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${path}`, { headers: ghHeaders });
-      if (!r.ok) return false;
+      if (r.status === 404 && depth === 0) return { hasTf: false, notFound: true };
+      if (!r.ok) return { hasTf: false, notFound: false };
       const items = await r.json();
-      if (!Array.isArray(items)) return false;
+      if (!Array.isArray(items)) return { hasTf: false, notFound: false };
       for (const item of items) {
-        if (item.type === 'file' && item.name.endsWith('.tf')) return true;
-        if (item.type === 'dir') { if (await checkDir(item.path, depth + 1)) return true; }
+        if (item.type === 'file' && item.name.endsWith('.tf')) return { hasTf: true, notFound: false };
+        if (item.type === 'dir') {
+          const nested = await checkDir(item.path, depth + 1);
+          if (nested.hasTf) return { hasTf: true, notFound: false };
+        }
       }
-      return false;
+      return { hasTf: false, notFound: false };
     };
     const checkProject = async () => {
       const rootPath = `projects/${projectDirName}`;
-      if (await checkDir(rootPath, 0)) return true;
-      return checkDir(`${rootPath}/modules`, 0);
+      const root = await checkDir(rootPath, 0);
+      if (root.notFound) return { hasTf: false, dirNotFound: true };
+      if (root.hasTf) return { hasTf: true, dirNotFound: false };
+      const mod = await checkDir(`${rootPath}/modules`, 0);
+      return { hasTf: mod.hasTf, dirNotFound: false };
     };
     checkProject()
-      .then(hasTf => { if (!cancelled) setState({ loading: false, hasTf }); })
-      .catch(() => { if (!cancelled) setState({ loading: false, hasTf: false }); });
+      .then(({ hasTf, dirNotFound }) => { if (!cancelled) setState({ loading: false, hasTf, dirNotFound }); })
+      .catch(() => { if (!cancelled) setState({ loading: false, hasTf: false, dirNotFound: false }); });
     return () => { cancelled = true; };
   }, [projectDirName, token]);
   return state;
@@ -1165,7 +1172,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   if (lifecycle === 'stopped') {
     return (
       <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(245,166,35,0.18)', borderRadius: 6, overflow: 'hidden' }}>
-        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--yellow', '✕ Stopped', '#f5a623'))}
+        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--yellow', 'Stopped', '#f5a623'))}
       </div>
     );
   }
@@ -1230,7 +1237,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
           const { statusFailed: sf, instanceState: st } = entry;
           // State codes: 48 = terminated, 32 = shutting-down, 80 = stopped, 64 = stopping
           if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
-          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: '✕ Stopped', color: '#f5a623' };
+          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: 'Stopped', color: '#f5a623' };
           if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
           return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
         });
@@ -1276,8 +1283,8 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
   const statusColor = r.status === 'green' ? '#00d4aa' : r.status === 'yellow' ? '#f5a623' : r.status === 'red' ? '#ff4d6d' : '#7a8aaa';
   const isPaused = canBePaused(r.type, r.row);
   const statusLabel = r.status === 'green' ? 'Running'
-    : r.status === 'yellow' ? (isPaused ? 'Paused' : r.alwaysOn ? 'Warning' : '✕ Stopped')
-      : r.status === 'red' ? (r.alwaysOn ? 'Errors' : '✕ Stopped')
+    : r.status === 'yellow' ? (isPaused ? 'Paused' : r.alwaysOn ? 'Warning' : 'Stopped')
+      : r.status === 'red' ? (r.alwaysOn ? 'Errors' : 'Stopped')
         : 'No Data';
 
   const query = (r.type !== 'aws_ec2' && hasSubList)
@@ -2020,8 +2027,21 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   }, [resourceStatuses, lifecycle, project, onLifecycleChange, actionState, lastActionTime]);
 
   const ghToken = React.useContext(GhTokenContext);
-  const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
+  const { loading: tfLoading, hasTf, dirNotFound } = useGithubTfFiles(project.projectDirName, ghToken);
   const infraReady = hasTf === true;
+
+  useEffect(() => {
+    if (!tfLoading && dirNotFound && project.projectDirName) {
+      window.dispatchEvent(new CustomEvent('ee:project-not-found', { detail: { projectDirName: project.projectDirName } }));
+      const doc = lsRead(LS_PROVIDERS_KEY);
+      if (!doc?.providers) return;
+      const cleaned = doc.providers.map(p => ({
+        ...p,
+        projects: p.projects.filter(proj => proj.projectDirName !== project.projectDirName),
+      }));
+      persistProviders(cleaned).catch(() => {});
+    }
+  }, [tfLoading, dirNotFound, project.projectDirName]);
 
   useEffect(() => { return () => { pollCancelRef.current.cancelled = true; }; }, []);
 
