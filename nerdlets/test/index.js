@@ -2064,6 +2064,8 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
 
   const disabledActions = getDisabledActions(); // eslint-disable-line no-unused-vars
   const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
+  // Must be declared before any conditional early returns to satisfy Rules of Hooks
+  const handleRowClick = useCallback(() => setExpanded(p => !p), []);
 
   if (project.deleted) return (
     <div className="project-row project-row--deleted" style={{ animationDelay: index * 80 + 'ms' }}>
@@ -2144,7 +2146,6 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   const status = (loading || !Array.isArray(resourceStatuses)) ? 'unknown' : worstStatus(resourceStatuses.map(r => r?.status || 'unknown'));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
-  const handleRowClick = useCallback(() => setExpanded(p => !p), []);
 
   const uptimeSummary = (() => {
     if (loading) return null;
