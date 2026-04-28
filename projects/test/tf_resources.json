@@ -1,0 +1,29 @@
+{
+  "ec2_instance_ids": [
+    "i-0033548782b6a06d0"
+  ],
+  "apprunner_service_arns": [],
+  "rds_instance_ids": [],
+  "rds_cluster_ids": [],
+  "ecs_service_arns": [],
+  "eks_cluster_names": [],
+  "eks_nodegroups": {},
+  "asg_names": [],
+  "lambda_arns": [],
+  "s3_buckets": [],
+  "cloudfront_distribution_ids": [],
+  "alb_arns": [],
+  "gce_instances": [],
+  "cloud_run_services": [],
+  "gke_clusters": [],
+  "cloud_sql_instances": [],
+  "cloud_functions": [],
+  "pubsub_topics": [],
+  "gcs_buckets": [],
+  "spanner_instances": [],
+  "redis_instances": [],
+  "ecs_desired_counts": {},
+  "asg_original_configs": {},
+  "eks_nodegroup_configs": {},
+  "gke_nodepool_configs": {}
+}
