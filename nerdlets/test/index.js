@@ -1183,7 +1183,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
               background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
             }}>
               <span className="status-dot status-dot--red" style={{ flexShrink: 0 }} />
-              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#ff6b6b', textDecoration: 'line-through', opacity: 0.75, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 400, fontStyle: 'italic', color: '#4a6080', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {pending ? id : text}
               </span>
               <span style={{ fontSize: 11, fontWeight: 700, color: '#ff4d6d', flexShrink: 0 }}>✗ Terminated</span>
