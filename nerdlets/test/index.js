@@ -12,16 +12,26 @@ try {
 
 const mergeAutoDiscovered = (providers) => {
   if (!AUTO_DISCOVERED || Object.keys(AUTO_DISCOVERED).length === 0) return providers;
-  const merged = providers.map(p => ({ ...p, projects: [...p.projects] }));
+
+  // Step 1: Evict any project whose projectDirName is authoritative in the JSON
+  // but is stored under the wrong provider, or was deleted from the repo.
+  const merged = providers.map(p => ({
+    ...p,
+    projects: (p.projects || []).filter(proj => {
+      if (!proj.projectDirName) return true; // billing-only / manual entry — keep
+      const entry = AUTO_DISCOVERED[proj.projectDirName];
+      if (!entry) return false; // removed from repo — drop from localStorage
+      return entry.provider === p.id; // wrong provider — will be re-added below
+    }),
+  }));
+
+  // Step 2: Add every discovered project into its correct provider
   for (const [dirName, discovered] of Object.entries(AUTO_DISCOVERED)) {
     const { provider, name } = discovered;
     if (!provider || !name) continue;
     const providerEntry = merged.find(p => p.id === provider);
     if (!providerEntry) continue;
-    const alreadyExists = providerEntry.projects.some(
-      p => p.name === name || p.projectDirName === dirName
-    );
-    if (alreadyExists) continue;
+    if (providerEntry.projects.some(p => p.projectDirName === dirName)) continue;
     providerEntry.projects.push({
       name,
       projectDirName: dirName,
