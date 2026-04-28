@@ -2736,13 +2736,10 @@ const EagleEye = () => {
 
   useEffect(() => {
     const providersDoc = lsRead(LS_PROVIDERS_KEY);
-    if (providersDoc?.providers && Array.isArray(providersDoc.providers) && providersDoc.providers.length > 0) {
-      console.log('[EagleEye] Loaded providers from localStorage:', providersDoc.providers.length);
-      setProviders(mergeAutoDiscovered(providersDoc.providers));
-    } else {
-      console.log('[EagleEye] No providers in localStorage, using defaults');
-      setProviders(mergeAutoDiscovered(DEFAULT_CLOUD_PROVIDERS));
-    }
+    const baseProviders = (providersDoc?.providers && Array.isArray(providersDoc.providers) && providersDoc.providers.length > 0)
+      ? providersDoc.providers
+      : DEFAULT_CLOUD_PROVIDERS;
+    setProviders(mergeAutoDiscovered(baseProviders));
 
     const configDoc = lsRead(LS_CONFIG_KEY);
     if (configDoc?.accessToken) {
@@ -2754,8 +2751,21 @@ const EagleEye = () => {
 
     const infraDoc = lsRead(LS_INFRA_STATES_KEY);
     if (infraDoc?.infraStates) {
-      console.log('[EagleEye] Loaded infra states from localStorage:', infraDoc.infraStates);
-      setInfraStates(infraDoc.infraStates);
+      // Projects that are in AUTO_DISCOVERED but absent from the persisted providers
+      // were deleted from the repo and re-added. Their stale infra state (e.g. 'terminated')
+      // must be cleared so they don't show as Destroyed on a fresh add.
+      const existingDirNames = new Set(
+        baseProviders.flatMap(p => (p.projects || []).map(proj => proj.projectDirName)).filter(Boolean)
+      );
+      const freshlyAdded = Object.keys(AUTO_DISCOVERED || {}).filter(d => !existingDirNames.has(d));
+      if (freshlyAdded.length > 0) {
+        const cleaned = { ...infraDoc.infraStates };
+        freshlyAdded.forEach(d => { delete cleaned[d]; });
+        setInfraStates(cleaned);
+        persistInfraStates(cleaned).catch(() => {});
+      } else {
+        setInfraStates(infraDoc.infraStates);
+      }
     }
 
     const handleProjectNotFound = (e) => {
