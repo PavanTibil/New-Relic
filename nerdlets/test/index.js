@@ -2761,48 +2761,96 @@ const EagleEye = () => {
     return () => window.removeEventListener('ee:project-not-found', handleProjectNotFound);
   }, []);
 
-  // Auto-discover project directories from the repo and add any not already in the UI
+  // Keep a ref so the auto-discover effect can read current providers without
+  // listing it as a dep (prevents the AWS card from re-rendering on every providers change)
+  const providersRef = React.useRef(providers);
+  useEffect(() => { providersRef.current = providers; }, [providers]);
+
+  // Auto-discover project directories from the repo, detect their cloud provider
+  // by peeking at .tf resource types, and add new ones to the correct provider.
+  // Runs once per token — no re-run when providers state changes.
   const autoDiscoverRef = React.useRef(false);
   useEffect(() => {
-    if (!ghToken || !providers || autoDiscoverRef.current) return;
+    if (!ghToken || autoDiscoverRef.current) return;
+    // Wait until providers have been loaded from localStorage
+    if (!providersRef.current) return;
     autoDiscoverRef.current = true;
-    fetch(
-      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects`,
-      {
-        cache: 'no-store',
-        headers: {
-          Authorization: `Bearer ${ghToken}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
+
+    const ghHeaders = {
+      Authorization: `Bearer ${ghToken}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+
+    const detectProvider = async (dirName) => {
+      const r = await fetch(
+        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects/${dirName}`,
+        { cache: 'no-store', headers: ghHeaders }
+      );
+      if (!r.ok) return 'aws';
+      const items = await r.json();
+      if (!Array.isArray(items)) return 'aws';
+      const tfFiles = items.filter(i => i.type === 'file' && i.name.endsWith('.tf'));
+      for (const file of tfFiles.slice(0, 3)) {
+        try {
+          const fr = await fetch(file.download_url);
+          if (!fr.ok) continue;
+          const content = await fr.text();
+          if (/provider\s*"google"/.test(content) || /\bgoogle_/.test(content)) return 'gcp';
+          if (/provider\s*"aws"/.test(content) || /\baws_/.test(content)) return 'aws';
+        } catch {}
       }
-    )
-      .then(r => r.ok ? r.json() : null)
-      .then(items => {
-        if (!Array.isArray(items)) return;
-        const repoDirs = items.filter(i => i.type === 'dir').map(i => i.name);
-        setProviders(prev => {
-          if (!prev) return prev;
-          const awsIdx = prev.findIndex(p => p.id === 'aws');
-          if (awsIdx === -1) return prev;
-          const existing = new Set((prev[awsIdx].projects || []).map(p => p.projectDirName).filter(Boolean));
-          const newDirs = repoDirs.filter(d => !existing.has(d));
-          if (newDirs.length === 0) return prev;
-          const added = newDirs.map(dir => ({
+      return 'aws';
+    };
+
+    const run = async () => {
+      const r = await fetch(
+        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects`,
+        { cache: 'no-store', headers: ghHeaders }
+      );
+      if (!r.ok) return;
+      const items = await r.json();
+      if (!Array.isArray(items)) return;
+      const repoDirs = items.filter(i => i.type === 'dir').map(i => i.name);
+
+      const current = providersRef.current || [];
+      const existingByProvider = {};
+      for (const p of current) {
+        existingByProvider[p.id] = new Set((p.projects || []).map(proj => proj.projectDirName).filter(Boolean));
+      }
+      const allExisting = new Set(Object.values(existingByProvider).flatMap(s => [...s]));
+      const newDirs = repoDirs.filter(d => !allExisting.has(d));
+      if (newDirs.length === 0) return;
+
+      // Detect provider for each new directory in parallel
+      const detected = await Promise.all(newDirs.map(async d => ({ dir: d, providerId: await detectProvider(d) })));
+
+      setProviders(prev => {
+        if (!prev) return prev;
+        let updated = [...prev];
+        let changed = false;
+        for (const { dir, providerId } of detected) {
+          const idx = updated.findIndex(p => p.id === providerId);
+          if (idx === -1) continue;
+          const already = new Set((updated[idx].projects || []).map(p => p.projectDirName).filter(Boolean));
+          if (already.has(dir)) continue;
+          const newProject = {
             name: dir.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             projectDirName: dir,
-          }));
-          const updated = prev.map((p, i) => i !== awsIdx ? p : {
-            ...p, projects: [...(p.projects || []), ...added],
-          });
-          persistProviders(updated).catch(() => {});
-          return updated;
-        });
-      })
-      .catch(() => {});
-  }, [ghToken, providers]);
+          };
+          updated[idx] = { ...updated[idx], projects: [...(updated[idx].projects || []), newProject] };
+          changed = true;
+        }
+        if (!changed) return prev;
+        persistProviders(updated).catch(() => {});
+        return updated;
+      });
+    };
 
-  // Reset auto-discover when token changes so new token re-scans
+    run().catch(() => {});
+  }, [ghToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset so new token triggers a fresh scan
   useEffect(() => { autoDiscoverRef.current = false; }, [ghToken]);
 
   const handleSave = async (newProviders) => {
