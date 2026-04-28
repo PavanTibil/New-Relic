@@ -296,7 +296,7 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
 };
 
 // ─── Hook: fetch tf_resources.json from repo (committed after apply) ──────────
-const useTfResources = (projectDirName, token) => {
+const useTfResources = (projectDirName, token, refreshTrigger) => {
   const [state, setState] = React.useState({ loading: false, ec2Ids: [], allResources: null });
 
   React.useEffect(() => {
@@ -310,6 +310,7 @@ const useTfResources = (projectDirName, token) => {
     fetch(
       `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects/${projectDirName}/tf_resources.json`,
       {
+        cache: 'no-store',
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github+json',
@@ -326,9 +327,11 @@ const useTfResources = (projectDirName, token) => {
         }
         try {
           const json = JSON.parse(atob(data.content.replace(/\n/g, '')));
+          // Support both flat id list and richer {id, name} array
+          const ids = json.ec2_instance_ids || [];
           setState({
             loading: false,
-            ec2Ids: json.ec2_instance_ids || [],
+            ec2Ids: ids,
             allResources: json,
           });
         } catch (e) {
@@ -338,6 +341,66 @@ const useTfResources = (projectDirName, token) => {
       })
       .catch(() => {
         if (!cancelled) setState({ loading: false, ec2Ids: [], allResources: null });
+      });
+
+    return () => { cancelled = true; };
+  }, [projectDirName, token, refreshTrigger]);
+
+  return state;
+};
+
+// ─── Hook: fetch main.tf Name tag from repo ───────────────────────────────────
+const useTfName = (projectDirName, token) => {
+  const [state, setState] = React.useState({ loading: false, tfName: null });
+
+  React.useEffect(() => {
+    if (!projectDirName || !token) {
+      setState({ loading: false, tfName: null });
+      return;
+    }
+    setState({ loading: true, tfName: null });
+    let cancelled = false;
+
+    fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects/${projectDirName}/main.tf`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled) return;
+        if (!data || !data.content) {
+          setState({ loading: false, tfName: null });
+          return;
+        }
+        try {
+          const decoded = atob(data.content.replace(/\n/g, ''));
+          // Pattern A: tags = { Name = "value" }
+          const matchA = decoded.match(/tags\s*=\s*\{[^}]*\bName\s*=\s*"([^"]+)"/);
+          if (matchA) { setState({ loading: false, tfName: matchA[1] }); return; }
+          // Pattern B: tag { key = "Name" ... value = "value" }
+          const reB = /tag\s*\{([^}]*)\}/gs;
+          let tb;
+          while ((tb = reB.exec(decoded)) !== null) {
+            const block = tb[1];
+            if (/key\s*=\s*"Name"/.test(block)) {
+              const vm = block.match(/value\s*=\s*"([^"]+)"/);
+              if (vm) { setState({ loading: false, tfName: vm[1] }); return; }
+            }
+          }
+          setState({ loading: false, tfName: null });
+        } catch (e) {
+          console.error('[useTfName] parse error:', e);
+          setState({ loading: false, tfName: null });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState({ loading: false, tfName: null });
       });
 
     return () => { cancelled = true; };
@@ -419,10 +482,10 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 6000);
 };
 
-const callInfraAPI = async (project, action, token) => {
+const triggerWorkflow = async (token, projectDirName, action) => {
   if (!token || token === '') throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
-  if (!project.projectDirName) throw new Error('No project directory name configured for this project.');
-  const projectPath = `projects/${project.projectDirName}`;
+  if (!projectDirName) throw new Error('No project directory name configured for this project.');
+  const projectPath = `projects/${projectDirName}`;
   const res = await fetch(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW_INFRA}/dispatches`,
     {
@@ -442,7 +505,7 @@ const buildResourceQuery = (resource, project) => {
 
   if (resource.type === 'aws_ec2') {
     const pf = ec2ProjectFilter(project);
-    return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, max(\`aws.ec2.StatusCheckFailed_Instance\`) AS instanceCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} SINCE 5 minutes ago`;
+    return `SELECT max(\`aws.ec2.StatusCheckFailed\`) AS statusCheckFailed, max(\`aws.ec2.StatusCheckFailed_Instance\`) AS instanceCheckFailed, average(\`aws.ec2.CPUUtilization\`) AS cpuUsage, latest(\`aws.ec2.InstanceState\`) AS instanceState, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND ${pf} SINCE 15 minutes ago`;
   }
 
   switch (resource.type) {
@@ -533,7 +596,9 @@ const deriveResourceStatus = (resource, row) => {
       return 'green';
     }
     case 'aws_ec2': {
-      if ((row.samples ?? 0) === 0) return 'yellow';
+      const st = row.instanceState;
+      if (st === 48 || st === 32) return 'red';
+      if ((row.samples ?? 0) === 0) return 'green';
       const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
       const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null;
@@ -587,11 +652,12 @@ const deriveResourceReason = (resource, row, status) => {
       return parts.join(' · ') || null;
     }
     case 'aws_ec2': {
+      const st = row.instanceState;
+      if (st === 48 || st === 32) return 'Instance(s) terminated or shutting down';
       const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
       const cpu = typeof row.cpuUsage === 'number' ? row.cpuUsage : null;
       const s = row.samples ?? 0;
-      if (s === 0) return `No metric samples — tag instances with Project=${resource._projectTag || '<project>'} to scope them`;
       const parts = [];
       if (sf > 0) parts.push('System status check failed');
       if (if_ > 0) parts.push('Instance status check failed');
@@ -635,7 +701,8 @@ const ec2StateDisplay = (state) => {
   switch (s) {
     case 'running': return { dot: 'green', label: '✓ Running', color: '#00d4aa' };
     case 'impaired': return { dot: 'red', label: '✗ Impaired', color: '#ff4d6d' };
-    case 'stopped': return { dot: 'yellow', label: '✗ Stopped', color: '#f5a623' };
+    case 'stopped': return { dot: 'yellow', label: '◼ Stopped', color: '#f5a623' };
+    case 'terminated': return { dot: 'red', label: '✗ Terminated', color: '#ff4d6d' };
     case 'pending': return { dot: 'yellow', label: '◌ Pending', color: '#f5a623' };
     case 'stopping': return { dot: 'yellow', label: '◌ Stopping', color: '#f5a623' };
     default: return { dot: 'grey', label: s || '— Unknown', color: '#7a8aaa' };
@@ -645,6 +712,59 @@ const ec2StateDisplay = (state) => {
 const BILLING_BUDGET_INR = 4600;
 const billingCostToStatus = (cost) => { if (cost === null) return 'unknown'; const pct = (cost / BILLING_BUDGET_INR) * 100; return pct >= 70 ? 'red' : pct >= 50 ? 'yellow' : 'green'; };
 const estimatedCostToStatus = (est) => { if (est === null) return 'unknown'; const pct = (est / BILLING_BUDGET_INR) * 100; return pct >= 100 ? 'red' : pct >= 85 ? 'yellow' : 'green'; };
+
+// ─── TerminatedProjectRow ─────────────────────────────────────────────────────
+const TerminatedProjectRow = ({ project, index, actionState, activeAction,
+  infraReady, tfLoading, ghToken, onInfraAction, onClearLifecycle, lastActionTime }) => {
+  const [expanded, setExpanded] = useState(actionState !== INFRA_STATES.IDLE);
+  const lifecycle = 'terminated';
+  const hasResources = project.resources && project.resources.length > 0;
+  return (
+    <div className={`project-row${expanded ? ' project-row--expanded' : ''} project-row--clickable`}
+      style={{ animationDelay: `${index * 80}ms` }}>
+      <div className="project-row__main" onClick={() => setExpanded(p => !p)} style={{ cursor: 'pointer' }}>
+        <div className="project-row__left">
+          <span className="status-dot status-dot--grey" />
+          <span className="project-row__name">{project.name}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#ff4d6d', background: 'rgba(255,77,109,0.12)', border: '1px dashed rgba(255,77,109,0.35)', borderRadius: 100, padding: '2px 9px', textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>Destroyed</span>
+        </div>
+        <div className="project-row__right">
+          <span className={`project-row__chevron${expanded ? ' project-row__chevron--open' : ''}`}>›</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="project-row__detail">
+          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState}
+            activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading}
+            ghToken={ghToken} onAction={onInfraAction} />
+          {hasResources && <GhostStateBanner project={project} />}
+          <div className="project-row__resource-list" style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '8px 0' }}>
+            <Ec2InstanceList project={project} lifecycle={lifecycle} actionState={actionState}
+              lastActionTime={lastActionTime}
+              onStatusUpdate={(type, status) => {
+                if (status === 'green' && onClearLifecycle) onClearLifecycle('provisioned');
+              }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── deduplicateResourceStatuses ──────────────────────────────────────────────
+const deduplicateResourceStatuses = (resourceStatuses) => {
+  if (!Array.isArray(resourceStatuses)) return [];
+  const priority = { 'red': 3, 'yellow': 2, 'green': 1, 'unknown': 0 };
+  const seen = new Map();
+  for (const r of resourceStatuses) {
+    if (!r || !r.type) continue;
+    const existing = seen.get(r.type);
+    if (!existing || (priority[r.status] ?? -1) > (priority[existing.status] ?? -1)) {
+      seen.set(r.type, r);
+    }
+  }
+  return Array.from(seen.values());
+};
 
 // ─── GhostResourceRow ─────────────────────────────────────────────────────────
 const GhostResourceRow = ({ resource, hasToken = false }) => (
@@ -849,7 +969,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
     try {
       const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
       const preDispatch = Date.now();
-      await callInfraAPI(project, ghAction, ghToken);
+      await triggerWorkflow(ghToken, project.projectDirName, ghAction);
       onConfirm(preDispatch);
     } catch (e) { setErr(e?.message || 'GitHub Actions dispatch failed.'); setBusy(false); }
   };
@@ -859,8 +979,8 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
       : isStart ? { bg: 'rgba(0,212,170,0.12)', border: 'rgba(0,212,170,0.4)', text: '#00d4aa' }
         : { bg: 'rgba(245,166,35,0.12)', border: 'rgba(245,166,35,0.4)', text: '#f5a623' };
 
-  const title = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Terminate Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
-  const btnText = busy ? 'Dispatching…' : isApply ? 'Yes, apply it' : isTerminate ? 'Yes, terminate' : isStart ? 'Yes, start it' : 'Yes, stop it';
+  const title = isApply ? 'Apply Infrastructure?' : isTerminate ? 'Destroy Infrastructure?' : isStart ? 'Start Infrastructure?' : 'Stop Infrastructure?';
+  const btnText = busy ? 'Dispatching…' : isApply ? 'Yes, apply it' : isTerminate ? 'Yes, destroy' : isStart ? 'Yes, start it' : 'Yes, stop it';
   const projectPath = `projects/${project.projectDirName}`;
 
   return (
@@ -874,7 +994,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
           {isApply && <>Run <span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform apply</span> on <strong style={{ color: '#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color: colors.text }}>provisioned or updated</strong>.</>}
           {isStop && <>Scale down all services for <strong style={{ color: '#f0f4ff' }}>{project.name}</strong> via CLI.</>}
           {isStart && <>Scale up all services for <strong style={{ color: '#f0f4ff' }}>{project.name}</strong> via CLI.</>}
-          {isTerminate && <><span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform destroy</span> on <strong style={{ color: '#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color: colors.text }}>permanently destroyed</strong>.<div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(255,77,109,0.07)', border: '1px solid rgba(255,77,109,0.2)', borderRadius: 8, fontSize: 12, color: '#ff4d6d' }}>⚠ Use Apply to re-provision after termination.</div></>}
+          {isTerminate && <><span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform destroy</span> on <strong style={{ color: '#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color: colors.text }}>permanently destroyed</strong>.<div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(255,77,109,0.07)', border: '1px solid rgba(255,77,109,0.2)', borderRadius: 8, fontSize: 12, color: '#ff4d6d' }}>⚠ Use Apply to re-provision after destroy.</div></>}
         </div>
         <div style={{ fontSize: 12, color: '#4a6080', marginBottom: 14, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.07)' }}>
           🔗 <strong style={{ color: '#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong>
@@ -893,6 +1013,8 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
 
 const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, infraReady, tfLoading, ghToken, onAction }) => {
   const isBusy = actionState === INFRA_STATES.DISPATCHING || actionState === INFRA_STATES.RUNNING;
+  const isTerminated = lifecycle === 'terminated';
+
   const getButtonState = (action) => {
     if (isBusy) return action === activeAction ? 'running' : 'locked';
     if (!infraReady) return 'disabled';
@@ -900,16 +1022,21 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
     const allowed = ALLOWED_ACTIONS[lifecycle] || [];
     return allowed.includes(action) ? 'enabled' : 'disabled';
   };
+
   const btnDef = [
     { action: 'apply', label: 'Apply', icon: <GearIcon size={12} color="currentColor" />, colors: { bg: '#162d52', border: '#4285f4', text: '#7ab3ff', disabledBg: '#0d1a2e', disabledBorder: '#1e3050', disabledText: '#3a5580' } },
     { action: 'stop', label: 'Stop', icon: <StopIcon size={12} color="currentColor" />, colors: { bg: '#2e1f00', border: '#f5a623', text: '#ffc055', disabledBg: '#1a1200', disabledBorder: '#3d2a00', disabledText: '#5a4010' } },
     { action: 'start', label: 'Start', icon: <PlayIcon size={12} color="currentColor" />, colors: { bg: '#002e22', border: '#00d4aa', text: '#00ffcc', disabledBg: '#001a14', disabledBorder: '#003d2e', disabledText: '#105040' } },
-    { action: 'terminate', label: 'Terminate', icon: <PowerOffIcon size={12} color="currentColor" />, colors: { bg: '#2e0010', border: '#ff4d6d', text: '#ff7a96', disabledBg: '#1a000a', disabledBorder: '#3d0015', disabledText: '#581030' } },
+    { action: 'terminate', label: 'Destroy', icon: <PowerOffIcon size={12} color="currentColor" />, colors: { bg: '#2e0010', border: '#ff4d6d', text: '#ff7a96', disabledBg: '#1a000a', disabledBorder: '#3d0015', disabledText: '#581030' } },
   ];
+
+  const allowed = ALLOWED_ACTIONS[lifecycle] || ['apply'];
+  const visibleBtns = btnDef;
+
   return (
     <div style={{ margin: '8px 0 4px', padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {btnDef.map(({ action, label, icon, colors: c }) => {
+        {visibleBtns.map(({ action, label, icon, colors: c }) => {
           const btnState = getButtonState(action);
           const isRunning = btnState === 'running';
           const isDisabled = btnState === 'disabled' || btnState === 'locked';
@@ -919,8 +1046,8 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
               onMouseEnter={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
               onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1)'; e.currentTarget.style.transform = 'translateY(0)'; } }}
             >
-              {isRunning ? <SpinnerIcon size={12} color={c.text} /> : <span style={{ display: 'flex', alignItems: 'center', color: isDisabled ? c.disabledText : c.text }}>{icon}</span>}
-              <span>{isRunning ? `${label}ing…` : label}</span>
+              {isRunning ? <SpinnerIcon size={12} color={c.text} /> : <span style={{ display: 'flex', alignItems: 'center', color: isDisabled ? c.disabledText : c.text, fontSize: isTerminated && action === 'apply' ? 14 : 12 }}>{icon}</span>}
+              <span>{isRunning ? (label === 'Stop' ? 'Stopping…' : `${label}ing…`) : label}</span>
             </button>
           );
         })}
@@ -942,13 +1069,33 @@ const extractFacetName = (series) => {
 };
 
 // ─── Ec2InstanceList ──────────────────────────────────────────────────────────
-const Ec2InstanceList = ({ project }) => {
+const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onStatusUpdate }) => {
   const ghToken = React.useContext(GhTokenContext);
-  const { loading, ec2Ids } = useTfResources(project.projectDirName, ghToken);
-  const acC = 'rgba(255,153,0,0.08)';
-  const boC = 'rgba(255,153,0,0.12)';
+  // fetchKey increments 5 s after SUCCEEDED so we retry if tf_resources.json wasn't yet propagated
+  const [fetchKey, setFetchKey] = React.useState(0);
+  React.useEffect(() => {
+    if (actionState === INFRA_STATES.SUCCEEDED) {
+      const t = setTimeout(() => setFetchKey(k => k + 1), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [actionState]);
+  const { loading: idsLoading, ec2Ids } = useTfResources(project.projectDirName, ghToken, `${actionState}_${fetchKey}`);
+  const { loading: nameLoading, tfName } = useTfName(project.projectDirName, ghToken);
+  const [listCleared, setListCleared] = React.useState(false);
 
-  if (loading) {
+  // Terminated cleanup: clear list after 2 minutes; resets when lifecycle changes
+  React.useEffect(() => {
+    setListCleared(false);
+    if (lifecycle === 'terminated') {
+      const t = setTimeout(() => setListCleared(true), 5 * 60 * 1000);
+      return () => clearTimeout(t);
+    }
+  }, [lifecycle]);
+
+  // Don't render if not provisioned or already cleared
+  if (!lifecycle || listCleared) return null;
+
+  if (idsLoading) {
     return (
       <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
         <SpinnerIcon size={10} color="#7a8aaa" /> Loading instances from state…
@@ -956,18 +1103,61 @@ const Ec2InstanceList = ({ project }) => {
     );
   }
 
-  if (!ec2Ids || ec2Ids.length === 0) {
+  if (!ec2Ids || ec2Ids.length === 0) return null;
+
+  const acC = 'rgba(255,153,0,0.08)';
+  const count = ec2Ids.length;
+
+  const buildLabel = (id, i) => {
+    if (nameLoading) return { text: id, pending: true };
+    if (!tfName) return { text: id, pending: false };
+    const namePart = count > 1 ? `${tfName}-${i + 1}` : tfName;
+    return { text: `${namePart} (${id})`, pending: false };
+  };
+
+  const renderInstanceRow = (id, i, dotCls, statusText, statusColor) => {
+    const { text, pending } = buildLabel(id, i);
     return (
-      <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>
-        No EC2 instances found in Terraform state
+      <div key={id} style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '8px 14px',
+        borderTop: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)',
+        background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+      }}>
+        <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#f0f4ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {pending
+            ? <>{id}<span style={{ color: '#3d5070', fontWeight: 400, marginLeft: 6 }}>(name pending…)</span></>
+            : text}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, flexShrink: 0 }}>{statusText}</span>
+      </div>
+    );
+  };
+
+  // Stopped override: yellow dot, no NRQL
+  if (lifecycle === 'stopped') {
+    return (
+      <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(245,166,35,0.18)', borderRadius: 6, overflow: 'hidden' }}>
+        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--yellow', '✗ Stopped', '#f5a623'))}
       </div>
     );
   }
 
+  // Terminated override: red dot, no NRQL
+  if (lifecycle === 'terminated') {
+    return (
+      <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,77,109,0.22)', borderRadius: 6, overflow: 'hidden' }}>
+        {ec2Ids.map((id, i) => renderInstanceRow(id, i, 'status-dot--red', '✗ Terminated', '#ff4d6d'))}
+      </div>
+    );
+  }
+
+  // Provisioned: NRQL for statusFailed + instanceState — green default until metrics arrive
   return (
     <NrqlQuery
       accountIds={[ACCOUNT_ID]}
-      query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.tag.Name\`) AS tagName FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
+      query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.InstanceState\`) AS instanceState FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
       pollInterval={60000}
     >
       {({ data, loading: qLoading }) => {
@@ -986,30 +1176,38 @@ const Ec2InstanceList = ({ project }) => {
             }
             if (!id) return;
             const pt = series?.data?.[0];
-            const sf = pt?.statusFailed;
-            liveMap[id] = {
-              state: (sf === null || sf === undefined) ? 'stopped' : sf > 0 ? 'impaired' : 'running',
-              name: pt?.tagName ?? null,
-            };
+            liveMap[id] = { statusFailed: pt?.statusFailed ?? null, instanceState: pt?.instanceState ?? null };
           });
         }
 
+        // Derive per-instance dot/label from NRQL state and statusFailed
+        const instanceColors = ec2Ids.map(id => {
+          const entry = liveMap[id];
+          if (!entry) {
+            // Not yet in NRQL — optimistic green
+            return { dot: 'status-dot--green', text: '✓ Running', color: '#00d4aa' };
+          }
+          const { statusFailed: sf, instanceState: st } = entry;
+          // State codes: 48 = terminated, 32 = shutting-down, 80 = stopped, 64 = stopping
+          if (st === 48 || st === 32) return { dot: 'status-dot--red', text: '✗ Terminated', color: '#ff4d6d' };
+          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: '✗ Stopped', color: '#f5a623' };
+          if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: '✗ Impaired', color: '#ff4d6d' };
+          return { dot: 'status-dot--green', text: '✓ Running', color: '#00d4aa' };
+        });
+
+        if (onStatusUpdate) {
+          const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
+          const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
+          const overallStatus = hasRed ? 'red' : hasYellow ? 'yellow' : 'green';
+          const overallReason = hasRed ? 'Instance check failed or terminated' : hasYellow ? 'Instances stopped' : 'EC2 Instances Running';
+          Promise.resolve().then(() => onStatusUpdate('aws_ec2', overallStatus, overallReason));
+        }
+
         return (
-          <div style={{ margin: '0 8px 6px', background: acC, border: `1px solid ${boC}`, borderRadius: 6, overflow: 'hidden' }}>
+          <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,153,0,0.12)', borderRadius: 6, overflow: 'hidden' }}>
             {ec2Ids.map((id, i) => {
-              const live = liveMap[id];
-              const state = live?.state ?? (qLoading ? 'pending' : 'stopped');
-              const displayName = live?.name ? `${live.name} (${id})` : id;
-              const d = ec2StateDisplay(state);
-              return (
-                <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < ec2Ids.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                  <span className={'status-dot status-dot--' + d.dot} style={{ width: 6, height: 6, flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, color: '#c8d4f0', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {displayName}
-                  </span>
-                  <span style={{ fontSize: 10, color: d.color, fontWeight: 600 }}>{d.label}</span>
-                </div>
-              );
+              const { dot, text, color } = instanceColors[i];
+              return renderInstanceRow(id, i, dot, text, color);
             })}
           </div>
         );
@@ -1019,22 +1217,29 @@ const Ec2InstanceList = ({ project }) => {
 };
 
 // ─── ExpandableResourceRow ────────────────────────────────────────────────────
-const ExpandableResourceRow = ({ resource: r, project }) => {
+const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, lastActionTime, onStatusUpdate }) => {
   const [open, setOpen] = React.useState(false);
   const ghToken = React.useContext(GhTokenContext);
 
-  const { ec2Ids } = r.type === 'aws_ec2'
-    ? useTfResources(project.projectDirName, ghToken)
-    : { ec2Ids: null };
+  // Always call unconditionally — hooks must never be conditional
+  const { loading: ec2IdsLoading, ec2Ids } = useTfResources(
+    r.type === 'aws_ec2' ? project.projectDirName : null,
+    ghToken,
+    r.type === 'aws_ec2' ? actionState : null
+  );
 
   const hasSubList = r.type === 'aws_ec2'
-    ? (ec2Ids !== null && ec2Ids.length > 0)
+    // Show chevron whenever we have a lifecycle — Ec2InstanceList handles empty/loading state
+    ? !!(lifecycle)
     : !!(SERVICE_QUERIES[r.type] && typeof SERVICE_QUERIES[r.type] === 'function' && SERVICE_QUERIES[r.type](project) !== null);
 
   const dotCls = r.status === 'green' ? 'green' : r.status === 'yellow' ? 'yellow' : r.status === 'red' ? 'red' : 'grey';
   const statusColor = r.status === 'green' ? '#00d4aa' : r.status === 'yellow' ? '#f5a623' : r.status === 'red' ? '#ff4d6d' : '#7a8aaa';
   const isPaused = canBePaused(r.type, r.row);
-  const statusLabel = r.status === 'green' ? '✓ Running' : r.status === 'yellow' ? (isPaused ? '⊘ Paused' : r.alwaysOn ? '⚠ Warning' : '✗ Stopped') : r.status === 'red' ? (r.alwaysOn ? '✗ Errors' : '✗ Stopped') : '— No Data';
+  const statusLabel = r.status === 'green' ? '✓ Running'
+    : r.status === 'yellow' ? (isPaused ? '⊘ Paused' : r.alwaysOn ? '⚠ Warning' : '✗ Stopped')
+      : r.status === 'red' ? (r.alwaysOn ? '✗ Errors' : '✗ Stopped')
+        : '— No Data';
 
   const query = (r.type !== 'aws_ec2' && hasSubList)
     ? (typeof SERVICE_QUERIES[r.type] === 'function' ? SERVICE_QUERIES[r.type](project) : null)
@@ -1066,8 +1271,18 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
 
       {open && (
         <>
-          {r.type === 'aws_ec2' && <Ec2InstanceList project={project} />}
+          {/* ── EC2: show instance list from tf_resources.json, validated by NRQL ── */}
+          {r.type === 'aws_ec2' && (
+            <Ec2InstanceList
+              project={project}
+              lifecycle={lifecycle}
+              actionState={actionState}
+              lastActionTime={lastActionTime}
+              onStatusUpdate={onStatusUpdate}
+            />
+          )}
 
+          {/* ── All other resource types: NRQL facet sub-list ── */}
           {r.type !== 'aws_ec2' && query && (
             <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
               {({ data, loading }) => {
@@ -1163,7 +1378,7 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
                   );
                 }
 
-                // Generic fallback for all other resource types
+                // Generic fallback
                 const seen = new Set();
                 const items = data.map(s => { const n = extractFacetName(s); if (!n || seen.has(n)) return null; seen.add(n); return n; }).filter(Boolean);
                 if (items.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>No instances found</div>;
@@ -1189,6 +1404,22 @@ const ExpandableResourceRow = ({ resource: r, project }) => {
     </div>
   );
 };
+
+// ─── ProvisionedResourceRow ───────────────────────────────────────────────────
+// Thread onStatusUpdate and lastActionTime all the way down
+const ProvisionedResourceRow = ({ resource: r, project, lifecycle, actionState, onStatusUpdate, lastActionTime }) => {
+  return (
+    <ExpandableResourceRow
+      resource={r}
+      project={project}
+      lifecycle={lifecycle}
+      actionState={actionState}
+      onStatusUpdate={onStatusUpdate}
+      lastActionTime={lastActionTime}
+    />
+  );
+};
+
 
 // ─── Billing display ───────────────────────────────────────────────────────────
 const BillingSimple = ({ cost, budget }) => {
@@ -1638,7 +1869,16 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
                 const reason = deriveResourceReason(r, row, status);
                 rs = { ...r, status, reason, row, loading: false };
               }
-              return <ProvisionedResourceRow resource={rs} project={project} lifecycle={lifecycle} />;
+              return (
+                <ProvisionedResourceRow
+                  resource={rs}
+                  project={project}
+                  lifecycle={lifecycle}
+                  actionState={INFRA_STATES.IDLE}
+                  onStatusUpdate={undefined}
+                  lastActionTime={0}
+                />
+              );
             }}
           </NrqlQuery>
         );
@@ -1647,84 +1887,35 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
   );
 };
 
-// ─── ProvisionedResourceRow ───────────────────────────────────────────────────
-const ProvisionedResourceRow = ({ resource: r, project, lifecycle }) => {
-  return <ExpandableResourceRow resource={r} project={project} />;
-};
-
-// ─── TerminatedProjectRow ─────────────────────────────────────────────────────
-const TerminatedProjectRow = ({ project, index, actionState, activeAction, infraReady, tfLoading, ghToken, onInfraAction, onDismiss, onClearLifecycle }) => {
-  const [expanded, setExpanded] = useState(actionState !== INFRA_STATES.IDLE);
-  const lifecycle = 'terminated';
-
-  useEffect(() => {
-    const clearTimer = setTimeout(() => {
-      if (onClearLifecycle) onClearLifecycle();
-    }, 60000);
-    return () => clearTimeout(clearTimer);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div
-      className={`project-row project-row--deleted${expanded ? ' project-row--expanded' : ''}`}
-      style={{ animationDelay: `${index * 80}ms`, borderColor: 'rgba(255,77,109,0.35)' }}
-    >
-      <div className="project-row__main" onClick={() => setExpanded(p => !p)} style={{ cursor: 'pointer' }}>
-        <div className="project-row__left">
-          <span className="status-dot status-dot--grey" />
-          <span className="project-row__name">{project.name}</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: '#ff4d6d', background: 'rgba(255,77,109,0.12)', border: '1px solid rgba(255,77,109,0.3)', borderRadius: 100, padding: '2px 8px', textTransform: 'uppercase' }}>
-            <PowerOffIcon size={10} color="#ff4d6d" /> Terminated
-          </span>
-        </div>
-        <div className="project-row__right">
-          <span className={`project-row__chevron${expanded ? ' project-row__chevron--open' : ''}`}>›</span>
-        </div>
-      </div>
-      {expanded && (
-        <div className="project-row__detail">
-          <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={onInfraAction} />
-          <GhostStateBanner project={project} />
-          <div style={{ padding: '8px 0 4px', color: '#7a8aaa', fontSize: 12 }}>
-            All resources destroyed via <code style={{ color: '#ff4d6d' }}>terraform destroy</code>. Use <strong style={{ color: '#4285f4' }}>Apply</strong> to re-provision.
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── deduplicateResourceStatuses ──────────────────────────────────────────────
-// When both the project's saved resources and TF-auto-detected resources contain
-// the same type (e.g. aws_ec2), we end up with duplicate rows. This helper keeps
-// only the entry with the worst status per resource type.
-const deduplicateResourceStatuses = (resourceStatuses) => {
-  const priority = { 'red': 3, 'yellow': 2, 'green': 1, 'unknown': 0 };
-  const seen = new Map();
-  for (const r of resourceStatuses) {
-    const key = r.type;
-    if (!seen.has(key)) {
-      seen.set(key, r);
-    } else {
-      const existing = seen.get(key);
-      const cp = priority[r.status] ?? -1;
-      const ep = priority[existing.status] ?? -1;
-      if (cp > ep) seen.set(key, r);
-    }
-  }
-  return Array.from(seen.values());
-};
-
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
-const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, index, billingCost, onInfraAction, persistedLifecycle, onLifecycleChange }) => {
-  // Deduplicate resource statuses so that the same resource type (e.g. EC2)
-  // never appears twice — we keep the entry with the worst status.
+const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLifecycle, onInfraAction, resourceStatuses: incomingStatuses = [], loading, billingCost }) => {
+  const [internalStatuses, setInternalStatuses] = useState([]);
+
+  // Combine statuses from the main dashboard (Billing, etc.) with internal ones (EC2)
+  const rawResourceStatuses = [...incomingStatuses, ...internalStatuses];
   const resourceStatuses = deduplicateResourceStatuses(rawResourceStatuses);
+
+  const handleStatusUpdate = useCallback((type, status, reason) => {
+    setInternalStatuses(prev => {
+      const existing = prev.find(p => p.type === type);
+      if (existing && existing.status === status && existing.reason === reason) return prev;
+      const other = prev.filter(p => p.type !== type);
+      return [...other, { type, label: type, status, reason }];
+    });
+  }, []);
 
   const [expanded, setExpanded] = useState(false);
   const [lifecycle, setLifecycle] = useState(persistedLifecycle || null);
   const [actionState, setActionState] = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
+
+  // Persist last action time in session storage so it survives refresh during grace period
+  const sessionKey = `ee_last_action_${project.projectDirName || project.name}`;
+  const [lastActionTime, setLastActionTime] = useState(() => {
+    const saved = sessionStorage.getItem(sessionKey);
+    return saved ? parseInt(saved, 10) : 0;
+  });
+
   const pollCancelRef = useRef({ cancelled: false });
 
   useEffect(() => {
@@ -1732,6 +1923,30 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
       setLifecycle(persistedLifecycle);
     }
   }, [persistedLifecycle]); // eslint-disable-line
+
+  // Sync lifecycle with detected manual termination or recovery
+  useEffect(() => {
+    const GRACE_PERIOD = 5 * 60 * 1000; // 5 minutes
+    const isWithinGracePeriod = (Date.now() - lastActionTime) < GRACE_PERIOD;
+
+    // Only sync if we're not currently performing an action AND we're outside the grace period
+    if (actionState === INFRA_STATES.IDLE && !isWithinGracePeriod && resourceStatuses.length > 0) {
+      const infraStatuses = resourceStatuses.filter(r => !['billing', 'config', 'budget'].includes(r.type));
+      if (infraStatuses.length === 0) return;
+
+      const isManualTerminated = infraStatuses.some(r =>
+        (r.status === 'red' || r.status === 'unknown') &&
+        (r.reason?.toLowerCase().includes('not found') || r.reason?.toLowerCase().includes('terminated'))
+      );
+
+      if (isManualTerminated && lifecycle !== 'terminated') {
+        setLifecycle('terminated');
+        if (onLifecycleChange) onLifecycleChange(project, 'terminated');
+      }
+      // Stale NRQL data (green for ~10 min after destroy) must not revert 'terminated' → 'provisioned'.
+      // Only a completed Apply action is allowed to clear the terminated state.
+    }
+  }, [resourceStatuses, lifecycle, project, onLifecycleChange, actionState, lastActionTime]);
 
   const ghToken = React.useContext(GhTokenContext);
   const { loading: tfLoading, hasTf } = useGithubTfFiles(project.projectDirName, ghToken);
@@ -1748,17 +1963,12 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
   };
 
   const handleActionDispatched = useCallback((action, token, dispatchTime) => {
-    let _inferredLifecycle = null;
-    ReactDOM.unstable_batchedUpdates(() => {
-      setActiveAction(action); setActionState(INFRA_STATES.DISPATCHING);
-      if (!lifecycle && action !== 'apply') {
-        const inferred = action === 'stop' || action === 'terminate' ? 'provisioned'
-          : action === 'start' ? 'stopped' : null;
-        if (inferred) { _inferredLifecycle = inferred; setLifecycle(inferred); }
-      }
-    });
-    if (_inferredLifecycle && onLifecycleChange)
-      setTimeout(() => { onLifecycleChange(project, _inferredLifecycle); }, 0);
+    setActiveAction(action);
+    setActionState(INFRA_STATES.DISPATCHING);
+    const now = Date.now();
+    setLastActionTime(now);
+    sessionStorage.setItem(sessionKey, now.toString());
+
     const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
     pollCancelRef.current = { cancelled: false };
     const cancelRef = pollCancelRef.current;
@@ -1766,29 +1976,44 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
     const onComplete = (conclusion) => {
       if (cancelRef.cancelled) return;
       let _nextLifecycle = null;
-      ReactDOM.unstable_batchedUpdates(() => {
-        if (conclusion === 'success') {
-          setActionState(INFRA_STATES.SUCCEEDED);
-          const next = NEXT_LIFECYCLE[action];
-          if (next) { _nextLifecycle = next; setLifecycle(next); }
+
+      if (conclusion === 'success') {
+        setActionState(INFRA_STATES.SUCCEEDED);
+        const next = NEXT_LIFECYCLE[action];
+        if (next) {
+          _nextLifecycle = next;
+          setLifecycle(next);
         }
-        else if (conclusion === 'timeout' || conclusion === 'timed_out') setActionState(INFRA_STATES.TIMEOUT);
-        else setActionState(INFRA_STATES.FAILED);
-      });
-      if (_nextLifecycle && onLifecycleChange)
+      } else if (conclusion === 'timeout' || conclusion === 'timed_out') {
+        setActionState(INFRA_STATES.TIMEOUT);
+      } else {
+        setActionState(INFRA_STATES.FAILED);
+      }
+
+      if (_nextLifecycle && onLifecycleChange) {
         setTimeout(() => { onLifecycleChange(project, _nextLifecycle); }, 0);
+      }
       setTimeout(() => {
         if (!cancelRef.cancelled) {
-          ReactDOM.unstable_batchedUpdates(() => {
-            setActionState(INFRA_STATES.IDLE); setActiveAction(null);
-          });
+          setActionState(INFRA_STATES.IDLE);
+          setActiveAction(null);
         }
       }, 8000);
     };
     if (token && token.trim() !== '') {
       pollWorkflowRun(token, effectiveDispatchTime, onStatusChange, onComplete, cancelRef);
     } else {
-      setTimeout(() => { if (!cancelRef.cancelled) { setActionState(INFRA_STATES.TIMEOUT); setTimeout(() => { if (!cancelRef.cancelled) { ReactDOM.unstable_batchedUpdates(() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }); } }, 6000); } }, 3000);
+      setTimeout(() => {
+        if (!cancelRef.cancelled) {
+          setActionState(INFRA_STATES.TIMEOUT);
+          setTimeout(() => {
+            if (!cancelRef.cancelled) {
+              setActionState(INFRA_STATES.IDLE);
+              setActiveAction(null);
+            }
+          }, 6000);
+        }
+      }, 3000);
     }
   }, [onLifecycleChange, project]);
 
@@ -1809,7 +2034,7 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
   );
 
   if (project.billingOnly) {
-    const totalCost = billingCost ?? null;
+    const totalCost = (typeof billingCost === 'number') ? billingCost : null;
     if (project.billingNotConfigured) return (
       <div className={'project-row project-row--billing' + (expanded ? ' project-row--expanded' : '')} style={{ animationDelay: index * 80 + 'ms' }}>
         <div className="project-row__main" onClick={() => setExpanded(p => !p)} style={{ cursor: 'pointer' }}>
@@ -1819,7 +2044,9 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
         {expanded && <div className="project-row__detail" style={{ paddingBottom: 12 }}><GcpBillingNotConfigured /></div>}
       </div>
     );
-    const costLabel = totalCost != null ? '₹' + totalCost.toFixed(0) : null, bS = billingCostToStatus(totalCost), dC = bS === 'unknown' ? 'grey' : bS;
+    const bS = billingCostToStatus(totalCost);
+    const dC = bS === 'unknown' ? 'grey' : bS;
+    const costLabel = totalCost !== null ? '₹' + totalCost.toFixed(0) : null;
     return (
       <div className={'project-row project-row--billing' + (expanded ? ' project-row--expanded' : '') + (bS !== 'unknown' ? ' project-row--' + bS : '')} style={{ animationDelay: index * 80 + 'ms' }}>
         <div className="project-row__main" onClick={() => setExpanded(p => !p)} style={{ cursor: 'pointer' }}>
@@ -1864,14 +2091,16 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
       ghToken={ghToken}
       onInfraAction={handleInfraAction}
       onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }}
-      onClearLifecycle={() => {
-        setLifecycle(null);
-        if (onLifecycleChange) onLifecycleChange(project, null);
+      onClearLifecycle={(forcedNext) => {
+        const next = forcedNext || null;
+        setLifecycle(next);
+        if (onLifecycleChange) onLifecycleChange(project, next);
       }}
+      lastActionTime={lastActionTime}
     />
   );
 
-  const status = loading ? 'unknown' : worstStatus(resourceStatuses.map(r => r.status));
+  const status = (loading || !Array.isArray(resourceStatuses)) ? 'unknown' : worstStatus(resourceStatuses.map(r => r?.status || 'unknown'));
   const hasResources = project.resources && project.resources.length > 0;
   const hasDashboard = !!(project.dashboardGuid || project.dashboardLink);
   const handleRowClick = useCallback(() => setExpanded(p => !p), []);
@@ -1894,7 +2123,7 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
 
   const showGhostState = !lifecycle && hasResources;
   const showNotProvisionedBadge = !lifecycle && infraReady && !project.empty && !project.billingOnly;
-  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : (isBusy ? 'yellow' : status);
+  const effectiveStatus = (showGhostState || (!lifecycle && infraReady)) ? 'unknown' : status;
 
   const renderResourceDetail = () => {
     if (loading) return <span className="project-row__detail-loading">Checking resource health…</span>;
@@ -1916,14 +2145,14 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
     return (
       <div className="project-row__resource-list" style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '8px 0' }}>
         {resourceStatuses.map((r, i) => (
-          <ProvisionedResourceRow key={i} resource={r} project={project} lifecycle={lifecycle} />
+          <ProvisionedResourceRow key={i} resource={r} project={project} lifecycle={lifecycle} actionState={actionState} onStatusUpdate={handleStatusUpdate} lastActionTime={lastActionTime} />
         ))}
       </div>
     );
   };
 
   return (
-    <div className={`project-row project-row--${isBusy ? 'yellow' : effectiveStatus}${expanded ? ' project-row--expanded' : ''} project-row--clickable`} style={{ animationDelay: `${index * 80}ms` }}>
+    <div className={`project-row project-row--${effectiveStatus}${expanded ? ' project-row--expanded' : ''} project-row--clickable`} style={{ animationDelay: `${index * 80}ms` }}>
       <div className="project-row__main" onClick={handleRowClick}>
         <div className="project-row__left">
           <StatusDot status={effectiveStatus} />
@@ -1941,12 +2170,9 @@ const ProjectRow = ({ project, resourceStatuses: rawResourceStatuses, loading, i
           {!loading && infraReady && !showGhostState && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
           {!loading && infraReady && !showGhostState && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
           {isBusy && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: '#f5a623', background: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 100, padding: '2px 8px' }}>
-              <SpinnerIcon size={10} color="#f5a623" />
-              {actionState === INFRA_STATES.DISPATCHING
-                ? 'Dispatching…'
-                : `${{ apply: 'Applying', stop: 'Stopping', start: 'Starting', terminate: 'Terminating' }[activeAction] || 'Working'}…`
-              }
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: '#8899bb', background: 'rgba(122,138,170,0.12)', border: '1px solid rgba(122,138,170,0.3)', borderRadius: 100, padding: '2px 8px' }}>
+              <SpinnerIcon size={10} color="#8899bb" />
+              {`${{ apply: 'Applying', stop: 'Stopping', start: 'Starting', terminate: 'Destroying' }[activeAction] || 'Working'}…`}
             </span>
           )}
         </div>
@@ -2004,6 +2230,21 @@ const SingleResourceQuery = ({ resource, project, children }) => {
   const query = buildResourceQuery(resource, project);
   const [timedOut, setTimedOut] = React.useState(false);
   React.useEffect(() => { const t = setTimeout(() => setTimedOut(true), 6000); return () => clearTimeout(t); }, [query]);
+
+  // Self-lookup last action time for post-apply grace period
+  const sessionKey = `ee_last_action_${project.projectDirName || project.name}`;
+  const [lastActionTime, setLastActionTime] = React.useState(() => {
+    const saved = sessionStorage.getItem(sessionKey);
+    return saved ? parseInt(saved) : null;
+  });
+
+  // Re-check sessionStorage on every render to ensure we catch dispatched actions
+  React.useEffect(() => {
+    const saved = sessionStorage.getItem(sessionKey);
+    const time = saved ? parseInt(saved) : null;
+    if (time !== lastActionTime) setLastActionTime(time);
+  });
+
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
       {({ data, loading, error }) => {
@@ -2011,7 +2252,21 @@ const SingleResourceQuery = ({ resource, project, children }) => {
         if (loading && !timedOut) rs = { ...resource, status: 'unknown', row: null, loading: true };
         else if (loading && timedOut) rs = { ...resource, status: noData(resource), row: null, loading: false };
         else if (error || !data) rs = { ...resource, status: noData(resource), row: null, loading: false };
-        else { const row = extractRow(data); const status = row === null ? noData(resource) : deriveResourceStatus(resource, row); const reason = deriveResourceReason(resource, row, status); rs = { ...resource, status, reason, row, loading: false }; }
+        else {
+          const row = extractRow(data);
+          let status = row === null ? noData(resource) : deriveResourceStatus(resource, row);
+          let reason = deriveResourceReason(resource, row, status);
+
+          // Trust-First: Grace period after Apply (5 mins)
+          const GRACE_PERIOD = 5 * 60 * 1000;
+          const isWithinGracePeriod = (Date.now() - (lastActionTime || 0)) < GRACE_PERIOD;
+          if (row === null && isWithinGracePeriod) {
+            status = 'green';
+            reason = '✓ Provisioned (Syncing metrics...)';
+          }
+
+          rs = { ...resource, status, reason, row, loading: false };
+        }
         return children(rs);
       }}
     </NrqlQuery>
@@ -2129,20 +2384,25 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
   return (
     <>
       {activeProjects.map((project) => {
-        const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
-        const stateKey = getProjectStateKey(project);
-        const persistedLifecycle = infraStates?.[stateKey] || null;
-        return <ProjectRow
-          key={project.projectDirName || project.name}
-          project={project}
-          resourceStatuses={r?.resourceStatuses ?? []}
-          loading={r?.loading ?? false}
-          index={i}
-          billingCost={project.billingOnly ? billingCost : null}
-          onInfraAction={onInfraAction}
-          persistedLifecycle={persistedLifecycle}
-          onLifecycleChange={onLifecycleChange}
-        />;
+        try {
+          const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
+          const stateKey = getProjectStateKey(project);
+          const persistedLifecycle = infraStates?.[stateKey] || null;
+          return <ProjectRow
+            key={project.projectDirName || project.name}
+            project={project}
+            resourceStatuses={r?.resourceStatuses ?? []}
+            loading={r?.loading ?? false}
+            index={i}
+            billingCost={project.billingOnly ? billingCost : null}
+            onInfraAction={onInfraAction}
+            persistedLifecycle={persistedLifecycle}
+            onLifecycleChange={onLifecycleChange}
+          />;
+        } catch (e) {
+          console.error('[EagleEye] Error rendering project row:', project.name, e);
+          return null;
+        }
       })}
       {archivedProjects.length > 0 && (
         <div style={{ marginTop: activeProjects.length > 0 ? 10 : 0 }}>
@@ -2154,20 +2414,25 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
           {archivedOpen && (
             <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
               {archivedProjects.map((project) => {
-                const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
-                const stateKey = getProjectStateKey(project);
-                const persistedLifecycle = infraStates?.[stateKey] || null;
-                return <ProjectRow
-                  key={project.projectDirName || project.name}
-                  project={project}
-                  resourceStatuses={r?.resourceStatuses ?? []}
-                  loading={r?.loading ?? false}
-                  index={i}
-                  billingCost={null}
-                  onInfraAction={onInfraAction}
-                  persistedLifecycle={persistedLifecycle}
-                  onLifecycleChange={onLifecycleChange}
-                />;
+                try {
+                  const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
+                  const stateKey = getProjectStateKey(project);
+                  const persistedLifecycle = infraStates?.[stateKey] || null;
+                  return <ProjectRow
+                    key={project.projectDirName || project.name}
+                    project={project}
+                    resourceStatuses={r?.resourceStatuses ?? []}
+                    loading={r?.loading ?? false}
+                    index={i}
+                    billingCost={null}
+                    onInfraAction={onInfraAction}
+                    persistedLifecycle={persistedLifecycle}
+                    onLifecycleChange={onLifecycleChange}
+                  />;
+                } catch (e) {
+                  console.error('[EagleEye] Error rendering archived project row:', project.name, e);
+                  return null;
+                }
               })}
             </div>
           )}
