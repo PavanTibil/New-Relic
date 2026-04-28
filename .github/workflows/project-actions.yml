@@ -184,6 +184,13 @@ jobs:
             "$JQ_WALK | map(select(.type == \"aws_instance\")) | .[].values.id" \
             tf_show.json 2>/dev/null | sort -u || true)
 
+          # Map of instance-id → Name tag for UI display
+          EC2_NAMES=$(jq -c \
+            "$JQ_WALK | map(select(.type == \"aws_instance\")) | \
+            map({(.values.id): (.values.tags_all.Name // .values.tags.Name // \"\")}) | \
+            add // {}" \
+            tf_show.json 2>/dev/null || echo "{}")
+
           APPRUNNER_ARNS=$(jq -r \
             "$JQ_WALK | map(select(.type == \"aws_apprunner_service\")) | .[].values.arn" \
             tf_show.json 2>/dev/null | sort -u || true)
@@ -287,6 +294,7 @@ jobs:
 
           jq -n \
             --argjson ec2             "$(to_array "$EC2_IDS")"           \
+            --argjson ec2_names       "$EC2_NAMES"                       \
             --argjson apprunner       "$(to_array "$APPRUNNER_ARNS")"    \
             --argjson rds             "$(to_array "$RDS_INSTANCE_IDS")"  \
             --argjson aurora          "$(to_array "$RDS_CLUSTER_IDS")"   \
@@ -309,6 +317,7 @@ jobs:
             --argjson redis           "$(to_array "$REDIS")"             \
             '{
               ec2_instance_ids:            $ec2,
+              ec2_instance_names:          $ec2_names,
               apprunner_service_arns:      $apprunner,
               rds_instance_ids:            $rds,
               rds_cluster_ids:             $aurora,

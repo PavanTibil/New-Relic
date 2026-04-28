@@ -297,14 +297,14 @@ const useGithubTfResources = (projectDirName, token, providerId) => {
 
 // ─── Hook: fetch tf_resources.json from repo (committed after apply) ──────────
 const useTfResources = (projectDirName, token, refreshTrigger) => {
-  const [state, setState] = React.useState({ loading: false, ec2Ids: [], allResources: null });
+  const [state, setState] = React.useState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
 
   React.useEffect(() => {
     if (!projectDirName || !token) {
-      setState({ loading: false, ec2Ids: [], allResources: null });
+      setState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
       return;
     }
-    setState({ loading: true, ec2Ids: [], allResources: null });
+    setState({ loading: true, ec2Ids: [], ec2Names: {}, allResources: null });
     let cancelled = false;
 
     fetch(
@@ -322,25 +322,26 @@ const useTfResources = (projectDirName, token, refreshTrigger) => {
       .then(data => {
         if (cancelled) return;
         if (!data || !data.content) {
-          setState({ loading: false, ec2Ids: [], allResources: null });
+          setState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
           return;
         }
         try {
           const json = JSON.parse(atob(data.content.replace(/\n/g, '')));
-          // Support both flat id list and richer {id, name} array
           const ids = json.ec2_instance_ids || [];
+          const names = json.ec2_instance_names || {};
           setState({
             loading: false,
             ec2Ids: ids,
+            ec2Names: names,
             allResources: json,
           });
         } catch (e) {
           console.error('[useTfResources] parse error:', e);
-          setState({ loading: false, ec2Ids: [], allResources: null });
+          setState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
         }
       })
       .catch(() => {
-        if (!cancelled) setState({ loading: false, ec2Ids: [], allResources: null });
+        if (!cancelled) setState({ loading: false, ec2Ids: [], ec2Names: {}, allResources: null });
       });
 
     return () => { cancelled = true; };
@@ -598,6 +599,7 @@ const deriveResourceStatus = (resource, row) => {
     case 'aws_ec2': {
       const st = row.instanceState;
       if (st === 48 || st === 32) return 'red';
+      if (st === 80 || st === 64) return 'yellow';
       if ((row.samples ?? 0) === 0) return 'green';
       const sf = typeof row.statusCheckFailed === 'number' ? row.statusCheckFailed : 0;
       const if_ = typeof row.instanceCheckFailed === 'number' ? row.instanceCheckFailed : 0;
@@ -1079,8 +1081,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       return () => clearTimeout(t);
     }
   }, [actionState]);
-  const { loading: idsLoading, ec2Ids } = useTfResources(project.projectDirName, ghToken, `${actionState}_${fetchKey}`);
-  const { loading: nameLoading, tfName } = useTfName(project.projectDirName, ghToken);
+  const { loading: idsLoading, ec2Ids, ec2Names } = useTfResources(project.projectDirName, ghToken, `${actionState}_${fetchKey}`);
   // Persisted in localStorage so the 1-min countdown survives page refreshes
   const _terminatedKey = `ee:terminated-at:${project.projectDirName || project.name}`;
   const [listCleared, setListCleared] = React.useState(() => {
@@ -1132,17 +1133,15 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   if (!ec2Ids || ec2Ids.length === 0) return null;
 
   const acC = 'rgba(255,153,0,0.08)';
-  const count = ec2Ids.length;
 
-  const buildLabel = (id, i) => {
-    if (nameLoading) return { text: id, pending: true };
-    if (!tfName) return { text: id, pending: false };
-    const namePart = count > 1 ? `${tfName}-${i + 1}` : tfName;
-    return { text: `${namePart} (${id})`, pending: false };
+  const buildLabel = (id) => {
+    const name = ec2Names && ec2Names[id];
+    if (!name) return { text: id, pending: false };
+    return { text: `${name} (${id})`, pending: false };
   };
 
   const renderInstanceRow = (id, i, dotCls, statusText, statusColor) => {
-    const { text, pending } = buildLabel(id, i);
+    const { text } = buildLabel(id);
     return (
       <div key={id} style={{
         display: 'flex', alignItems: 'center', gap: 12,
@@ -1151,11 +1150,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
         background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#f0f4ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {pending
-            ? <>{id}<span style={{ color: '#3d5070', fontWeight: 400, marginLeft: 6 }}>(name pending…)</span></>
-            : text}
-        </span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#f0f4ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
         <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, flexShrink: 0 }}>{statusText}</span>
       </div>
     );
@@ -1170,12 +1165,12 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
     );
   }
 
-  // Terminated override: strikethrough label, red badge, no NRQL
+  // Terminated override: muted italic label, red badge, no NRQL
   if (lifecycle === 'terminated') {
     return (
       <div style={{ margin: '0 8px 6px', background: 'rgba(255,77,109,0.06)', border: '1px solid rgba(255,77,109,0.22)', borderRadius: 6, overflow: 'hidden' }}>
         {ec2Ids.map((id, i) => {
-          const { text, pending } = buildLabel(id, i);
+          const { text } = buildLabel(id);
           return (
             <div key={id} style={{
               display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px',
@@ -1184,7 +1179,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
             }}>
               <span className="status-dot status-dot--red" style={{ flexShrink: 0 }} />
               <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 400, fontStyle: 'italic', color: '#4a6080', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {pending ? id : text}
+                {text}
               </span>
               <span style={{ fontSize: 11, fontWeight: 700, color: '#ff4d6d', flexShrink: 0 }}>✗ Terminated</span>
             </div>
@@ -1897,6 +1892,23 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
   return (
     <div className="project-row__resource-list" style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '8px 0' }}>
       {resources.map((r, i) => {
+        // EC2 under stopped/terminated lifecycle: bypass NRQL and use lifecycle-driven status directly
+        if (r.type === 'aws_ec2' && (lifecycle === 'stopped' || lifecycle === 'terminated')) {
+          const overrideStatus = lifecycle === 'stopped' ? 'yellow' : 'red';
+          const overrideReason = lifecycle === 'stopped' ? 'Instances stopped' : 'Instances terminated';
+          const rs = { ...r, status: overrideStatus, reason: overrideReason, row: null, loading: false };
+          return (
+            <ProvisionedResourceRow
+              key={i}
+              resource={rs}
+              project={project}
+              lifecycle={lifecycle}
+              actionState={INFRA_STATES.IDLE}
+              onStatusUpdate={undefined}
+              lastActionTime={0}
+            />
+          );
+        }
         const query = buildResourceQuery(r, project);
         return (
           <NrqlQuery key={i} accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
