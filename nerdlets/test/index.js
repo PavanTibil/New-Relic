@@ -2814,33 +2814,74 @@ const EagleEye = () => {
       const repoDirs = items.filter(i => i.type === 'dir').map(i => i.name);
 
       const current = providersRef.current || [];
-      const existingByProvider = {};
-      for (const p of current) {
-        existingByProvider[p.id] = new Set((p.projects || []).map(proj => proj.projectDirName).filter(Boolean));
-      }
-      const allExisting = new Set(Object.values(existingByProvider).flatMap(s => [...s]));
-      const newDirs = repoDirs.filter(d => !allExisting.has(d));
-      if (newDirs.length === 0) return;
 
-      // Detect provider for each new directory in parallel
-      const detected = await Promise.all(newDirs.map(async d => ({ dir: d, providerId: await detectProvider(d) })));
+      // Build a map: dirName -> currentProviderId for every tracked project
+      const dirToCurrentProvider = {};
+      for (const p of current) {
+        for (const proj of (p.projects || [])) {
+          if (proj.projectDirName) dirToCurrentProvider[proj.projectDirName] = p.id;
+        }
+      }
+
+      // Detect provider for:
+      //   - new dirs not tracked yet
+      //   - existing auto-discovered projects (no resources configured — may be misplaced)
+      const toDetect = repoDirs.filter(dir => {
+        if (!(dir in dirToCurrentProvider)) return true; // new
+        const provId = dirToCurrentProvider[dir];
+        const prov = current.find(p => p.id === provId);
+        const proj = (prov?.projects || []).find(p => p.projectDirName === dir);
+        // Re-check if it looks auto-discovered (no resources, not billing-only, not empty)
+        return proj && !proj.billingOnly && !proj.empty && (!proj.resources || proj.resources.length === 0);
+      });
+
+      if (toDetect.length === 0) return;
+
+      const detected = await Promise.all(
+        toDetect.map(async dir => ({ dir, correctProvider: await detectProvider(dir) }))
+      );
 
       setProviders(prev => {
         if (!prev) return prev;
-        let updated = [...prev];
+        let updated = prev.map(p => ({ ...p, projects: [...(p.projects || [])] }));
         let changed = false;
-        for (const { dir, providerId } of detected) {
-          const idx = updated.findIndex(p => p.id === providerId);
-          if (idx === -1) continue;
-          const already = new Set((updated[idx].projects || []).map(p => p.projectDirName).filter(Boolean));
-          if (already.has(dir)) continue;
-          const newProject = {
-            name: dir.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-            projectDirName: dir,
+
+        for (const { dir, correctProvider } of detected) {
+          const currentProv = dirToCurrentProvider[dir];
+
+          // If already in the right provider, nothing to do
+          if (currentProv === correctProvider) {
+            // Make sure it's actually there (new dir case where currentProv is undefined)
+            if (currentProv) continue;
+          }
+
+          // Remove from wrong provider
+          if (currentProv && currentProv !== correctProvider) {
+            const fromIdx = updated.findIndex(p => p.id === currentProv);
+            if (fromIdx !== -1) {
+              const before = updated[fromIdx].projects.length;
+              updated[fromIdx] = {
+                ...updated[fromIdx],
+                projects: updated[fromIdx].projects.filter(p => p.projectDirName !== dir),
+              };
+              if (updated[fromIdx].projects.length !== before) changed = true;
+            }
+          }
+
+          // Add to correct provider if not already there
+          const toIdx = updated.findIndex(p => p.id === correctProvider);
+          if (toIdx === -1) continue;
+          if (updated[toIdx].projects.some(p => p.projectDirName === dir)) continue;
+          updated[toIdx] = {
+            ...updated[toIdx],
+            projects: [...updated[toIdx].projects, {
+              name: dir.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+              projectDirName: dir,
+            }],
           };
-          updated[idx] = { ...updated[idx], projects: [...(updated[idx].projects || []), newProject] };
           changed = true;
         }
+
         if (!changed) return prev;
         persistProviders(updated).catch(() => {});
         return updated;
