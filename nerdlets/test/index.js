@@ -2761,6 +2761,50 @@ const EagleEye = () => {
     return () => window.removeEventListener('ee:project-not-found', handleProjectNotFound);
   }, []);
 
+  // Auto-discover project directories from the repo and add any not already in the UI
+  const autoDiscoverRef = React.useRef(false);
+  useEffect(() => {
+    if (!ghToken || !providers || autoDiscoverRef.current) return;
+    autoDiscoverRef.current = true;
+    fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects`,
+      {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${ghToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(items => {
+        if (!Array.isArray(items)) return;
+        const repoDirs = items.filter(i => i.type === 'dir').map(i => i.name);
+        setProviders(prev => {
+          if (!prev) return prev;
+          const awsIdx = prev.findIndex(p => p.id === 'aws');
+          if (awsIdx === -1) return prev;
+          const existing = new Set((prev[awsIdx].projects || []).map(p => p.projectDirName).filter(Boolean));
+          const newDirs = repoDirs.filter(d => !existing.has(d));
+          if (newDirs.length === 0) return prev;
+          const added = newDirs.map(dir => ({
+            name: dir.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+            projectDirName: dir,
+          }));
+          const updated = prev.map((p, i) => i !== awsIdx ? p : {
+            ...p, projects: [...(p.projects || []), ...added],
+          });
+          persistProviders(updated).catch(() => {});
+          return updated;
+        });
+      })
+      .catch(() => {});
+  }, [ghToken, providers]);
+
+  // Reset auto-discover when token changes so new token re-scans
+  useEffect(() => { autoDiscoverRef.current = false; }, [ghToken]);
+
   const handleSave = async (newProviders) => {
     await persistProviders(newProviders);
     setProviders(newProviders);
