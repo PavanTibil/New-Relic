@@ -1280,7 +1280,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
 // ─── ExpandableResourceRow ────────────────────────────────────────────────────
 const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, lastActionTime, onStatusUpdate }) => {
   const [open, setOpen] = React.useState(false);
-  const prevActionStateRef = React.useRef(actionState);
+  const prevActionStateRef = React.useRef(INFRA_STATES.IDLE);
   React.useEffect(() => {
     if (actionState === INFRA_STATES.SUCCEEDED && prevActionStateRef.current !== INFRA_STATES.SUCCEEDED) {
       setOpen(true);
@@ -2083,6 +2083,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
     sessionStorage.setItem(sessionKey, now.toString());
 
     const effectiveDispatchTime = (dispatchTime || Date.now()) - 10000;
+    pollCancelRef.current.cancelled = true; // cancel any pending reset timer from previous action
     pollCancelRef.current = { cancelled: false };
     const cancelRef = pollCancelRef.current;
     const onStatusChange = (newState) => { if (!cancelRef.cancelled) setActionState(newState); };
