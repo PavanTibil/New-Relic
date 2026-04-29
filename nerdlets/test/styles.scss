@@ -803,3 +803,122 @@ button:focus-visible {
   font-weight: 400;
   letter-spacing: 0.3px;
 }
+
+// ─── THEME TOGGLE ─────────────────────────────────────────────────────────────
+.ee-theme-toggle {
+  position: absolute;
+  top: 24px;
+  right: 40px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: $text-secondary;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.13) !important;
+  transition: background 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background: rgba(255,255,255,0.14);
+    color: $text-primary;
+  }
+}
+
+// ─── LIGHT THEME ─────────────────────────────────────────────────────────────
+.eagle-eye--light {
+  background: #eef1fa;
+  color: #0d1530;
+
+  .ee-theme-toggle {
+    background: rgba(0,0,0,0.06);
+    border-color: rgba(0,0,0,0.13) !important;
+    color: #4a5578;
+    &:hover { background: rgba(0,0,0,0.11); color: #0d1530; }
+  }
+
+  .bg-orb { opacity: 0.07; }
+
+  .ee-header {
+    &__eyebrow { color: #4a5578; }
+    &__pulse-bar {
+      background: rgba(0,0,0,0.05);
+      border-color: rgba(0,0,0,0.09);
+      color: #4a5578;
+    }
+  }
+
+  .cloud-card {
+    background: rgba(255,255,255,0.72);
+    &__name  { color: #0d1530; }
+    &__label { color: #4a5578; }
+    &__divider { background: rgba(0,0,0,0.08); }
+  }
+
+  .status-badge--grey {
+    color: #4a5578;
+    background: rgba(0,0,0,0.05);
+    border-color: rgba(0,0,0,0.10);
+    .status-badge__dot { background: #9aa0b8; }
+  }
+
+  .project-row {
+    background: rgba(255,255,255,0.60);
+    border-color: rgba(0,0,0,0.09);
+
+    &--yellow { border-color: #{$yellow}55; }
+    &--red    { border-color: #{$red}44; }
+
+    &--deleted {
+      background: repeating-linear-gradient(
+        -45deg,
+        rgba(0,0,0,0.02) 0px, rgba(0,0,0,0.02) 2px,
+        rgba(0,0,0,0.05) 2px, rgba(0,0,0,0.05) 10px
+      );
+      border-color: rgba(0,0,0,0.18);
+      .project-row__name { color: #4a5578; }
+    }
+
+    &--empty {
+      background: linear-gradient(135deg, rgba(100,120,200,0.10) 0%, rgba(80,100,180,0.15) 100%);
+      border-color: rgba(100,120,200,0.30);
+    }
+
+    &--expanded { background: rgba(255,255,255,0.82); }
+    &__main:hover { background: rgba(0,0,0,0.03); }
+    &__name { color: #0d1530; }
+    &__uptime-pill { color: #4a5578; background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.10); }
+    &__chevron { color: #9aa0b8; &--open { color: #4a5578; } }
+    &__deleted-badge { color: #9aa0b8; background: rgba(240,244,255,0.6); border-color: rgba(154,160,184,0.25); }
+  }
+
+  .down-services {
+    background: rgba(0,0,0,0.04);
+    border-color: rgba(0,0,0,0.09);
+    &__item { background: rgba(0,0,0,0.03); &-name { color: #0d1530; } &-type { color: #9aa0b8; } }
+    &__title { color: #4a5578; }
+  }
+
+  .skeleton-row {
+    background: rgba(0,0,0,0.03);
+    border-color: rgba(0,0,0,0.09);
+    &__dot, &__bar, &__pill {
+      background: linear-gradient(90deg, #d8dff0 25%, #c5ccdf 50%, #d8dff0 75%);
+      background-size: 400px 100%;
+    }
+  }
+
+  .cr-instances__row { border-bottom-color: rgba(0,0,0,0.05); }
+
+  .billing-breakdown {
+    &__row { background: rgba(0,0,0,0.02); &:hover { background: rgba(0,0,0,0.04); } }
+    &__bar-wrap { background: rgba(0,0,0,0.06); }
+    &__svc-name, &__svc-cost { color: #0d1530; }
+    &__svc-pct, &__total-label { color: #4a5578; }
+  }
+
+  .ee-footer { color: #9aa0b8; }
+}
