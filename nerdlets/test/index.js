@@ -470,7 +470,7 @@ const TrashIcon = ({ size = 11, color = 'currentColor' }) => (
 // ─── Workflow polling ──────────────────────────────────────────────────────────
 const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancelRef) => {
   let attempts = 0, lockedRunId = null;
-  const MAX_ATTEMPTS = 180, FALLBACK_ATTEMPTS = 8, TIME_SLACK_MS = 60 * 1000;
+  const MAX_ATTEMPTS = 180, FALLBACK_ATTEMPTS = 8, TIME_SLACK_MS = 15 * 1000;
   const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' };
 
   const doFetch = async () => {
@@ -504,7 +504,7 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   };
 
   const scheduleNext = () => { if (cancelRef && cancelRef.cancelled) return; setTimeout(doFetch, 8000); };
-  setTimeout(doFetch, 6000);
+  setTimeout(doFetch, 15000);
 };
 
 const triggerWorkflow = async (token, projectDirName, action) => {
@@ -2087,6 +2087,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         if (next) {
           _nextLifecycle = next;
           setLifecycle(next);
+          setExpanded(true);
         }
       } else if (conclusion === 'timeout' || conclusion === 'timed_out') {
         setActionState(INFRA_STATES.TIMEOUT);
