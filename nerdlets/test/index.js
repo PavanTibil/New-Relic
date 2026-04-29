@@ -760,7 +760,6 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction,
       </div>
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => {}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState}
             activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading}
             ghToken={ghToken} onAction={onInfraAction} />
@@ -1069,7 +1068,7 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
           const isDisabled = btnState === 'disabled' || btnState === 'locked';
           return (
             <button key={action} onClick={() => !isDisabled && !isRunning && onAction(project, action)} disabled={isDisabled || isRunning}
-              className={`ee-action-btn ee-action-btn--${action}${isDisabled || isRunning ? ' ee-action-btn--disabled' : ''}`}
+              className={`ee-action-btn ee-action-btn--${action}${isDisabled ? ' ee-action-btn--disabled' : ''}`}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 7, border: `1px solid ${isDisabled ? c.disabledBorder : c.border}`, background: isDisabled ? c.disabledBg : c.bg, color: isDisabled ? c.disabledText : c.text, fontWeight: 700, fontSize: 12, cursor: isDisabled || isRunning ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s', letterSpacing: '0.3px' }}
               onMouseEnter={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
               onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1)'; e.currentTarget.style.transform = 'translateY(0)'; } }}
@@ -2289,7 +2288,6 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
       </div>
       {expanded && (
         <div className="project-row__detail">
-          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {(hasResources || project.projectDirName) && renderResourceDetail()}
         </div>
