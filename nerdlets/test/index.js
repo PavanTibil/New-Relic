@@ -901,7 +901,7 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.92)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--ee-overlay-bg)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ background: 'var(--ee-modal)', border: '1px solid var(--ee-b3)', borderRadius: 16, width: '90%', maxWidth: 420, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
           <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(66,133,244,0.12)', border: '1px solid rgba(66,133,244,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>⚙</div>
@@ -1010,7 +1010,7 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
   const projectPath = `projects/${project.projectDirName}`;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.92)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--ee-overlay-bg)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
       <div style={{ background: 'var(--ee-modal)', border: `1px solid ${colors.border}`, borderRadius: 16, width: '90%', maxWidth: 440, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
         <div style={{ width: 48, height: 48, borderRadius: 12, background: colors.bg, border: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
           {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize: 22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
@@ -1607,11 +1607,11 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
   };
 
   const s = {
-    overlay: { position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.88)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+    overlay: { position: 'fixed', inset: 0, background: 'var(--ee-overlay-bg)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' },
     panel: { background: 'var(--ee-modal)', border: '1px solid var(--ee-b2)', borderRadius: 20, width: '92%', maxWidth: 660, maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 32px 100px rgba(0,0,0,0.7)' },
-    header: { padding: '22px 26px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' },
+    header: { padding: '22px 26px 18px', borderBottom: '1px solid var(--ee-b1)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' },
     body: { padding: '22px 26px', overflowY: 'auto', flex: 1 },
-    footer: { padding: '16px 26px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' },
+    footer: { padding: '16px 26px', borderTop: '1px solid var(--ee-b1)', display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' },
     label: { fontSize: 11, fontWeight: 600, color: 'var(--ee-t2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, display: 'block' },
     field: { marginBottom: 18 },
     input: { width: '100%', background: 'var(--ee-input)', border: '1px solid var(--ee-b3)', borderRadius: 8, padding: '9px 12px', color: 'var(--ee-t1)', fontSize: 13, outline: 'none', boxSizing: 'border-box', colorScheme: 'var(--ee-color-scheme)' },
@@ -2768,13 +2768,8 @@ const EagleEye = () => {
     const configDoc = lsRead(LS_CONFIG_KEY);
     if (configDoc?.accessToken) {
       setGhToken(configDoc.accessToken);
-      // Strip auto-discovered projects from the initial state — the live fetch will add them
-      // back from the authoritative JSON, preventing a flash of deleted projects on load.
-      const stripped = baseProviders.map(p => ({
-        ...p,
-        projects: (p.projects || []).filter(proj => !proj.projectDirName),
-      }));
-      setProviders(stripped);
+      // Keep providers null — the live fetch will set the full merged state in one shot,
+      // so the loader shows until everything is ready and no intermediate flash occurs.
     } else {
       // No token — can't fetch live JSON; fall back to bundled JSON immediately.
       setProviders(mergeAutoDiscovered(baseProviders));
@@ -2810,6 +2805,16 @@ const EagleEye = () => {
     };
     window.addEventListener('ee:project-not-found', handleProjectNotFound);
     return () => window.removeEventListener('ee:project-not-found', handleProjectNotFound);
+  }, []);
+
+  // Stores the raw localStorage providers so the live fetch can merge against them
+  // even though setProviders hasn't been called yet (providers is still null).
+  const baseProvidersRef = React.useRef(null);
+  useEffect(() => {
+    const doc = lsRead(LS_PROVIDERS_KEY);
+    baseProvidersRef.current = (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0)
+      ? doc.providers
+      : DEFAULT_CLOUD_PROVIDERS;
   }, []);
 
   // Keep a ref so the auto-discover effect can read current providers without
@@ -2854,14 +2859,17 @@ const EagleEye = () => {
             return cleaned;
           });
         }
-        setProviders(prev => {
-          if (!prev) return prev;
-          const merged = mergeAutoDiscovered(prev, live);
-          persistProviders(merged).catch(() => {});
-          return merged;
-        });
+        const base = baseProvidersRef.current || DEFAULT_CLOUD_PROVIDERS;
+        const merged = mergeAutoDiscovered(base, live);
+        persistProviders(merged).catch(() => {});
+        setProviders(merged);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) {
+          const base = baseProvidersRef.current || DEFAULT_CLOUD_PROVIDERS;
+          setProviders(mergeAutoDiscovered(base));
+        }
+      });
     return () => { cancelled = true; };
   }, [ghToken]); // eslint-disable-line react-hooks/exhaustive-deps
 

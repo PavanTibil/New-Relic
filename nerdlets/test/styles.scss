@@ -94,6 +94,7 @@ button:focus-visible {
   --ee-b3: rgba(255,255,255,0.15);
   --ee-modal: #0f1629;
   --ee-input: #0d1525;
+  --ee-overlay-bg: rgba(8,11,20,0.92);
   --ee-color-scheme: dark;
 
   // Belt-and-suspenders reset scoped to app too
@@ -861,6 +862,7 @@ button:focus-visible {
   --ee-b3: rgba(0,0,0,0.15);
   --ee-modal: #ffffff;
   --ee-input: #f5f7ff;
+  --ee-overlay-bg: rgba(80,90,140,0.55);
   --ee-color-scheme: light;
 
   .ee-theme-toggle {
