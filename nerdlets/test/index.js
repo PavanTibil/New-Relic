@@ -1068,6 +1068,7 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
           const isDisabled = btnState === 'disabled' || btnState === 'locked';
           return (
             <button key={action} onClick={() => !isDisabled && !isRunning && onAction(project, action)} disabled={isDisabled || isRunning}
+              className={`ee-action-btn ee-action-btn--${action}${isDisabled || isRunning ? ' ee-action-btn--disabled' : ''}`}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 7, border: `1px solid ${isDisabled ? c.disabledBorder : c.border}`, background: isDisabled ? c.disabledBg : c.bg, color: isDisabled ? c.disabledText : c.text, fontWeight: 700, fontSize: 12, cursor: isDisabled || isRunning ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s', letterSpacing: '0.3px' }}
               onMouseEnter={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1.2)'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
               onMouseLeave={e => { if (!isDisabled && !isRunning) { e.currentTarget.style.filter = 'brightness(1)'; e.currentTarget.style.transform = 'translateY(0)'; } }}
@@ -1494,7 +1495,7 @@ const BillingSimple = ({ cost, budget }) => {
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <div style={st}><div style={lb}>Current</div><div style={vl(col)}>{'₹' + cost.toFixed(0)}</div></div>
         <div style={st}><div style={lb}>Est. Month-end</div><div style={vl(eCol)}>{'₹' + est.toFixed(0)}</div></div>
-        <div style={st}><div style={lb}>Budget</div><div style={vl('#f0f4ff')}>{'₹' + budget}</div></div>
+        <div style={st}><div style={lb}>Budget</div><div style={vl('var(--ee-t1)')}>{'₹' + budget}</div></div>
       </div>
       <div style={{ background: 'var(--ee-s3)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: pct + '%', background: col, borderRadius: 4, transition: 'width 0.4s' }} />

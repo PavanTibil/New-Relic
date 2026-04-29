@@ -953,4 +953,48 @@ button:focus-visible {
   }
 
   .ee-footer { color: #9aa0b8; }
+
+  // Action buttons (Apply/Stop/Start/Destroy) — light-mode overrides
+  .ee-action-btn {
+    &--apply {
+      background: rgba(66,133,244,0.10) !important;
+      border-color: rgba(66,133,244,0.45) !important;
+      color: #2060c8 !important;
+      &.ee-action-btn--disabled {
+        background: rgba(66,133,244,0.04) !important;
+        border-color: rgba(66,133,244,0.18) !important;
+        color: rgba(32,96,200,0.35) !important;
+      }
+    }
+    &--stop {
+      background: rgba(245,166,35,0.10) !important;
+      border-color: rgba(245,166,35,0.50) !important;
+      color: #b07200 !important;
+      &.ee-action-btn--disabled {
+        background: rgba(245,166,35,0.04) !important;
+        border-color: rgba(245,166,35,0.18) !important;
+        color: rgba(176,114,0,0.35) !important;
+      }
+    }
+    &--start {
+      background: rgba(0,180,140,0.10) !important;
+      border-color: rgba(0,180,140,0.45) !important;
+      color: #007a5e !important;
+      &.ee-action-btn--disabled {
+        background: rgba(0,180,140,0.04) !important;
+        border-color: rgba(0,180,140,0.18) !important;
+        color: rgba(0,122,94,0.35) !important;
+      }
+    }
+    &--terminate {
+      background: rgba(255,77,109,0.10) !important;
+      border-color: rgba(255,77,109,0.45) !important;
+      color: #c8003a !important;
+      &.ee-action-btn--disabled {
+        background: rgba(255,77,109,0.04) !important;
+        border-color: rgba(255,77,109,0.18) !important;
+        color: rgba(200,0,58,0.35) !important;
+      }
+    }
+  }
 }
