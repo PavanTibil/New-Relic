@@ -710,9 +710,9 @@ const STATUS_META = {
   green: { label: 'Healthy', color: '#00d4aa' },
   yellow: { label: 'Warning', color: '#f5a623' },
   red: { label: 'Critical', color: '#ff4d6d' },
-  unknown: { label: 'No Data', color: '#7a8aaa' },
+  unknown: { label: 'No Data', color: 'var(--ee-t2)' },
   deleted: { label: 'Deleted', color: '#4a5568' },
-  empty: { label: 'No Resources', color: '#3d4a66' },
+  empty: { label: 'No Resources', color: 'var(--ee-t3)' },
 };
 
 const PROVIDER_META = {
@@ -731,7 +731,7 @@ const ec2StateDisplay = (state) => {
     case 'terminated': return { dot: 'red', label: '✗ Terminated', color: '#ff4d6d' };
     case 'pending': return { dot: 'yellow', label: '◌ Pending', color: '#f5a623' };
     case 'stopping': return { dot: 'yellow', label: '◌ Stopping', color: '#f5a623' };
-    default: return { dot: 'grey', label: s || '— Unknown', color: '#7a8aaa' };
+    default: return { dot: 'grey', label: s || '— Unknown', color: 'var(--ee-t2)' };
   }
 };
 
@@ -806,7 +806,7 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
       border: '2px dashed #4a5a7a',
     }} />
     <div style={{ flex: 1, minWidth: 0 }}>
-      <span style={{ fontWeight: 600, fontSize: '0.82rem', color: '#8899bb', display: 'block' }}>{resource.label}</span>
+      <span style={{ fontWeight: 600, fontSize: '0.82rem', color: 'var(--ee-rname)', display: 'block' }}>{resource.label}</span>
     </div>
     {hasToken ? (
       <span style={{ fontSize: 11, fontWeight: 700, color: '#5a9aee', background: 'rgba(66,133,244,0.12)', border: '1px solid rgba(66,133,244,0.30)', borderRadius: 100, padding: '1px 8px', letterSpacing: '0.3px', whiteSpace: 'nowrap', flexShrink: 0 }}>Not Provisioned</span>
@@ -840,7 +840,7 @@ const StatusDot = ({ status }) => { const cls = (status === 'unknown' || status 
 const StatusBadge = ({ status, label }) => { const meta = STATUS_META[status] ?? STATUS_META.green; const cls = (status === 'unknown' || status === 'deleted' || status === 'empty') ? 'grey' : status; return <span className={`status-badge status-badge--${cls}`}><span className="status-badge__dot" />{label ?? meta.label}</span>; };
 
 const DashboardIcon = ({ onClick }) => (
-  <span onClick={onClick} title="Open Dashboard" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', cursor: 'pointer', flexShrink: 0 }}>
+  <span onClick={onClick} title="Open Dashboard" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid var(--ee-b2)', background: 'var(--ee-s1)', cursor: 'pointer', flexShrink: 0 }}>
     <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
       <rect x="1" y="1" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.9" />
       <rect x="7.5" y="1" width="4.5" height="4.5" rx="1" fill="#7a8aaa" opacity="0.6" />
@@ -857,7 +857,7 @@ const NoInfraBadge = ({ checking = false }) => {
     </span>
   );
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: '#7a8aaa', background: 'rgba(122,138,170,0.10)', border: '1px solid rgba(122,138,170,0.28)', borderRadius: 100, padding: '2px 9px', textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>
+    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--ee-t2)', background: 'rgba(122,138,170,0.10)', border: '1px solid rgba(122,138,170,0.28)', borderRadius: 100, padding: '2px 9px', textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>
       No Infra Yet
     </span>
   );
@@ -902,21 +902,21 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.92)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
-      <div style={{ background: '#0f1629', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 16, width: '90%', maxWidth: 420, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--ee-modal)', border: '1px solid var(--ee-b3)', borderRadius: 16, width: '90%', maxWidth: 420, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
           <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(66,133,244,0.12)', border: '1px solid rgba(66,133,244,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>⚙</div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: '#f0f4ff' }}>Configure GitHub Token</div>
-            <div style={{ fontSize: 11, color: '#7a8aaa', marginTop: 1 }}>Stored in browser localStorage · persists across sessions</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--ee-t1)' }}>Configure GitHub Token</div>
+            <div style={{ fontSize: 11, color: 'var(--ee-t2)', marginTop: 1 }}>Stored in browser localStorage · persists across sessions</div>
           </div>
         </div>
         <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: '#7a8aaa', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 6 }}>ACCESS_TOKEN value</label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t2)', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 6 }}>ACCESS_TOKEN value</label>
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <input type={show ? 'text' : 'password'} value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="github_pat_XXXX…"
-              style={{ width: '100%', background: '#0d1525', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 8, padding: '9px 40px 9px 12px', color: '#f0f4ff', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace', colorScheme: 'dark' }}
+              style={{ width: '100%', background: 'var(--ee-input)', border: '1px solid var(--ee-b3)', borderRadius: 8, padding: '9px 40px 9px 12px', color: 'var(--ee-t1)', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace', colorScheme: 'var(--ee-color-scheme)' }}
             />
-            <button onClick={() => setShow(s => !s)} style={{ position: 'absolute', right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#7a8aaa', fontSize: 13, padding: 0, outline: 'none' }}>{show ? '🙈' : '👁'}</button>
+            <button onClick={() => setShow(s => !s)} style={{ position: 'absolute', right: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ee-t2)', fontSize: 13, padding: 0, outline: 'none' }}>{show ? '🙈' : '👁'}</button>
           </div>
           {tokenInput && (
             <div style={{ marginTop: 5, fontSize: 10, color: '#4a6080' }}>
@@ -933,12 +933,12 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
         {confirmRemove && (
           <div style={{ marginBottom: 14, padding: '10px 12px', background: 'rgba(255,77,109,0.08)', border: '1px solid rgba(255,77,109,0.25)', borderRadius: 8 }}>
             <div style={{ fontSize: 12, color: '#ff4d6d', fontWeight: 700, marginBottom: 6 }}>⚠ Remove token?</div>
-            <div style={{ fontSize: 11, color: '#7a8aaa', marginBottom: 10 }}>This will clear the stored GitHub token. Infrastructure actions will be disabled until you set a new one.</div>
+            <div style={{ fontSize: 11, color: 'var(--ee-t2)', marginBottom: 10 }}>This will clear the stored GitHub token. Infrastructure actions will be disabled until you set a new one.</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleRemove} disabled={removing} style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#ff4d6d', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', opacity: removing ? 0.6 : 1 }}>
                 {removing ? 'Removing…' : 'Yes, remove'}
               </button>
-              <button onClick={() => setConfirmRemove(false)} style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#7a8aaa', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => setConfirmRemove(false)} style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid var(--ee-b3)', background: 'transparent', color: 'var(--ee-t2)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
             </div>
           </div>
         )}
@@ -952,7 +952,7 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onClose} disabled={saving} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#7a8aaa', fontWeight: 600, fontSize: 13, cursor: 'pointer', outline: 'none', boxShadow: 'none', WebkitAppearance: 'none', appearance: 'none' }}>Cancel</button>
+            <button onClick={onClose} disabled={saving} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--ee-b3)', background: 'transparent', color: 'var(--ee-t2)', fontWeight: 600, fontSize: 13, cursor: 'pointer', outline: 'none', boxShadow: 'none', WebkitAppearance: 'none', appearance: 'none' }}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: '#4285f4', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', outline: 'none', opacity: saving ? 0.65 : 1 }}>{saving ? 'Saving…' : 'Save Token'}</button>
           </div>
         </div>
@@ -978,7 +978,7 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
       <span style={{ color: cfg.color, fontSize: 13, flexShrink: 0, display: 'flex', alignItems: 'center' }}>{cfg.icon}</span>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: cfg.color }}>{cfg.text}</div>
-        <div style={{ fontSize: 10, color: '#7a8aaa', marginTop: 1 }}>{cfg.sub}</div>
+        <div style={{ fontSize: 10, color: 'var(--ee-t2)', marginTop: 1 }}>{cfg.sub}</div>
       </div>
       {cfg.dismissable && <button onClick={onDismiss} style={{ background: 'none', border: 'none', outline: 'none', boxShadow: 'none', color: '#4a6080', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1 }}>✕</button>}
     </div>
@@ -1011,25 +1011,25 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.92)', backdropFilter: 'blur(10px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
-      <div style={{ background: '#0f1629', border: `1px solid ${colors.border}`, borderRadius: 16, width: '90%', maxWidth: 440, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--ee-modal)', border: `1px solid ${colors.border}`, borderRadius: 16, width: '90%', maxWidth: 440, padding: '28px 28px 22px', boxShadow: '0 32px 100px rgba(0,0,0,0.8)' }} onClick={e => e.stopPropagation()}>
         <div style={{ width: 48, height: 48, borderRadius: 12, background: colors.bg, border: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
           {isTerminate ? <PowerOffIcon size={22} color={colors.text} /> : <span style={{ fontSize: 22 }}>{isApply ? '⚙' : isStart ? '▶' : '⏸'}</span>}
         </div>
-        <div style={{ fontSize: 17, fontWeight: 800, color: '#f0f4ff', marginBottom: 8 }}>{title}</div>
-        <div style={{ fontSize: 13, color: '#7a8aaa', lineHeight: 1.6, marginBottom: 20 }}>
-          {isApply && <>Run <span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform apply</span> on <strong style={{ color: '#f0f4ff' }}>{project.name}</strong>. Resources will be <strong style={{ color: colors.text }}>provisioned or updated</strong>.</>}
-          {isStop && <>Scale down all services for <strong style={{ color: '#f0f4ff' }}>{project.name}</strong> via CLI.</>}
-          {isStart && <>Scale up all services for <strong style={{ color: '#f0f4ff' }}>{project.name}</strong> via CLI.</>}
-          {isTerminate && <><span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform destroy</span> on <strong style={{ color: '#f0f4ff' }}>{project.name}</strong>. All resources will be <strong style={{ color: colors.text }}>permanently destroyed</strong>.<div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(255,77,109,0.07)', border: '1px solid rgba(255,77,109,0.2)', borderRadius: 8, fontSize: 12, color: '#ff4d6d' }}>⚠ Use Apply to re-provision after destroy.</div></>}
+        <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--ee-t1)', marginBottom: 8 }}>{title}</div>
+        <div style={{ fontSize: 13, color: 'var(--ee-t2)', lineHeight: 1.6, marginBottom: 20 }}>
+          {isApply && <>Run <span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform apply</span> on <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong>. Resources will be <strong style={{ color: colors.text }}>provisioned or updated</strong>.</>}
+          {isStop && <>Scale down all services for <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong> via CLI.</>}
+          {isStart && <>Scale up all services for <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong> via CLI.</>}
+          {isTerminate && <><span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform destroy</span> on <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong>. All resources will be <strong style={{ color: colors.text }}>permanently destroyed</strong>.<div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(255,77,109,0.07)', border: '1px solid rgba(255,77,109,0.2)', borderRadius: 8, fontSize: 12, color: '#ff4d6d' }}>⚠ Use Apply to re-provision after destroy.</div></>}
         </div>
-        <div style={{ fontSize: 12, color: '#4a6080', marginBottom: 14, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.07)' }}>
-          🔗 <strong style={{ color: '#c8d4f0' }}>{GH_OWNER}/{GH_REPO}</strong>
+        <div style={{ fontSize: 12, color: '#4a6080', marginBottom: 14, padding: '8px 12px', background: 'var(--ee-s1)', borderRadius: 6, border: '1px solid var(--ee-b1)' }}>
+          🔗 <strong style={{ color: 'var(--ee-hint)' }}>{GH_OWNER}/{GH_REPO}</strong>
           <div style={{ marginTop: 3, fontSize: 11, color: '#3d5070' }}>Path: <code style={{ color: '#7a9aaa' }}>{projectPath}</code></div>
         </div>
         {!ghToken && <div style={{ fontSize: 12, color: '#f5a623', marginBottom: 14, padding: '8px 12px', background: 'rgba(245,166,35,0.08)', borderRadius: 6, border: '1px solid rgba(245,166,35,0.25)' }}>⚠ ACCESS_TOKEN not set — use ⚙ Config to add it first.</div>}
         {err && <div style={{ fontSize: 12, color: '#ff4d6d', marginBottom: 14, padding: '8px 12px', background: 'rgba(255,77,109,0.08)', borderRadius: 6, border: '1px solid rgba(255,77,109,0.2)' }}>⚠ {err}</div>}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} disabled={busy} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#7a8aaa', fontWeight: 600, fontSize: 13, cursor: 'pointer', outline: 'none', boxShadow: 'none', WebkitAppearance: 'none', appearance: 'none' }}>Cancel</button>
+          <button onClick={onCancel} disabled={busy} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--ee-b3)', background: 'transparent', color: 'var(--ee-t2)', fontWeight: 600, fontSize: 13, cursor: 'pointer', outline: 'none', boxShadow: 'none', WebkitAppearance: 'none', appearance: 'none' }}>Cancel</button>
           <button onClick={handleConfirm} disabled={busy || !ghToken} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: colors.text, color: '#fff', fontWeight: 700, fontSize: 13, cursor: busy || !ghToken ? 'not-allowed' : 'pointer', outline: 'none', opacity: busy || !ghToken ? 0.5 : 1 }}>{btnText}</button>
         </div>
       </div>
@@ -1060,7 +1060,7 @@ const InfraActionButtons = ({ project, lifecycle, actionState, activeAction, inf
   const visibleBtns = btnDef;
 
   return (
-    <div style={{ margin: '8px 0 4px', padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
+    <div style={{ margin: '8px 0 4px', padding: '10px 12px', background: 'var(--ee-s2)', border: '1px solid var(--ee-b1)', borderRadius: 8 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {visibleBtns.map(({ action, label, icon, colors: c }) => {
           const btnState = getButtonState(action);
@@ -1148,7 +1148,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
 
   if (idsLoading && (!ec2Ids || ec2Ids.length === 0)) {
     return (
-      <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', display: 'flex', alignItems: 'center', gap: 6 }}>
         <SpinnerIcon size={10} color="#7a8aaa" /> Loading instances from state…
       </div>
     );
@@ -1170,11 +1170,11 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       <div key={id} style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '8px 14px',
-        borderTop: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)',
-        background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+        borderTop: i === 0 ? 'none' : '1px solid var(--ee-row-div)',
+        background: i % 2 === 0 ? 'var(--ee-s1)' : 'transparent',
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: '#c0cce0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: 'var(--ee-t4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
         <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>
       </div>
     );
@@ -1199,7 +1199,7 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
             <div key={id} style={{
               display: 'flex', alignItems: 'center', gap: 12, padding: '8px 14px',
               borderTop: i === 0 ? 'none' : '1px solid rgba(255,77,109,0.1)',
-              background: i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+              background: i % 2 === 0 ? 'var(--ee-s1)' : 'transparent',
             }}>
               <span className="status-dot status-dot--red" style={{ flexShrink: 0 }} />
               <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: '#4a6080', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1304,7 +1304,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
     : null;
 
   return (
-    <div style={{ borderRadius: 6, overflow: 'hidden', background: 'rgba(255,255,255,0.03)' }}>
+    <div style={{ borderRadius: 6, overflow: 'hidden', background: 'var(--ee-s1)' }}>
       <div
         style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', cursor: hasSubList ? 'pointer' : 'default' }}
         onClick={() => hasSubList && setOpen(o => !o)}
@@ -1312,9 +1312,9 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
         <span className={'status-dot status-dot--' + dotCls} style={{ flexShrink: 0, alignSelf: 'flex-start', marginTop: 3 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#f0f4ff' }}>{r.label}</span>
+            <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--ee-t1)' }}>{r.label}</span>
             {r.type === 'aws_ec2' && ec2Ids !== null && ec2Ids.length > 0 && (
-              <span style={{ fontSize: 10, fontWeight: 600, color: '#7a8aaa' }}>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--ee-t2)' }}>
                 — {ec2Ids.length} instance{ec2Ids.length !== 1 ? 's' : ''}
               </span>
             )}
@@ -1323,7 +1323,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
         </div>
         <span style={{ color: statusColor, fontSize: '0.75rem', fontWeight: 600, flexShrink: 0 }}>{statusLabel}</span>
         {hasSubList && (
-          <span style={{ fontSize: 14, color: '#3d4a66', transition: 'transform 0.2s', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', flexShrink: 0 }}>›</span>
+          <span style={{ fontSize: 14, color: 'var(--ee-t3)', transition: 'transform 0.2s', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', flexShrink: 0 }}>›</span>
         )}
       </div>
 
@@ -1344,8 +1344,8 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
           {r.type !== 'aws_ec2' && query && (
             <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
               {({ data, loading }) => {
-                if (loading) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', fontStyle: 'italic' }}>Loading…</div>;
-                if (!data || data.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>No instances found</div>;
+                if (loading) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', fontStyle: 'italic' }}>Loading…</div>;
+                if (!data || data.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No instances found</div>;
                 const acC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.08)' : 'rgba(66,133,244,0.08)';
                 const boC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.12)' : 'rgba(66,133,244,0.12)';
 
@@ -1354,7 +1354,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                   return (
                     <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
                       {({ data: ad, loading: al }) => {
-                        if (al) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', fontStyle: 'italic' }}>Loading…</div>;
+                        if (al) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', fontStyle: 'italic' }}>Loading…</div>;
                         const activeServices = new Set();
                         (ad || []).forEach(series => {
                           let name = null; const g = series?.metadata?.groups;
@@ -1373,14 +1373,14 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                           seen.add(name); return name;
                         }).filter(Boolean);
                         (project.knownServices || []).forEach(s => { if (!seen.has(s)) { seen.add(s); allServices.push(s); } });
-                        if (allServices.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>No services found</div>;
+                        if (allServices.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No services found</div>;
                         allServices.sort((a, b) => { const aA = activeServices.has(a), bA = activeServices.has(b); if (aA !== bA) return bA ? 1 : -1; return a.localeCompare(b); });
                         return (
                           <div style={{ margin: '0 8px 6px', background: acC, border: `1px solid ${boC}`, borderRadius: 6, overflow: 'hidden' }}>
                             {allServices.map((name, i) => (
-                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < allServices.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < allServices.length - 1 ? '1px solid var(--ee-row-div)' : 'none' }}>
                                 <span className="status-dot status-dot--green" style={{ width: 6, height: 6, flexShrink: 0 }} />
-                                <span style={{ fontSize: 11, color: '#c8d4f0', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                                <span style={{ fontSize: 11, color: 'var(--ee-hint)', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                                 <span style={{ fontSize: 10, color: '#00d4aa', fontWeight: 600 }}>{activeServices.has(name) ? '▶ Running' : '◼ Scaled to zero'}</span>
                               </div>
                             ))}
@@ -1396,7 +1396,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                   return (
                     <NrqlQuery accountIds={[ACCOUNT_ID]} query={aq} pollInterval={60000}>
                       {({ data: ad, loading: al }) => {
-                        if (al) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa', fontStyle: 'italic' }}>Loading…</div>;
+                        if (al) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', fontStyle: 'italic' }}>Loading…</div>;
                         const activeMap = {};
                         (ad || []).forEach(series => {
                           let name = null; const g = series?.metadata?.groups;
@@ -1415,16 +1415,16 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                           if (!name || NONSVC.has(name) || seen.has(name)) return null;
                           seen.add(name); return name;
                         }).filter(Boolean);
-                        if (services.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>No services found</div>;
+                        if (services.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No services found</div>;
                         services.sort((a, b) => { const aA = activeMap[a] ?? null, bA = activeMap[b] ?? null; if (aA !== null && bA === null) return -1; if (bA !== null && aA === null) return 1; if ((aA ?? 0) > 0 && (bA ?? 0) === 0) return -1; if ((bA ?? 0) > 0 && (aA ?? 0) === 0) return 1; return a.localeCompare(b); });
                         return (
                           <div style={{ margin: '0 8px 6px', background: acC, border: `1px solid ${boC}`, borderRadius: 6, overflow: 'hidden' }}>
                             {services.map((name, i) => {
                               const ai = activeMap[name] ?? null, sDot = ai === null ? 'grey' : ai > 0 ? 'green' : 'yellow', sLabel = ai === null ? '— Unknown' : ai > 0 ? '✓ Running' : '⊘ Paused', sColor = ai === null ? '#7a8aaa' : ai > 0 ? '#00d4aa' : '#f5a623';
                               return (
-                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < services.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < services.length - 1 ? '1px solid var(--ee-row-div)' : 'none' }}>
                                   <span className={'status-dot status-dot--' + sDot} style={{ width: 6, height: 6, flexShrink: 0 }} />
-                                  <span style={{ fontSize: 11, color: '#c8d4f0', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                                  <span style={{ fontSize: 11, color: 'var(--ee-hint)', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                                   <span style={{ fontSize: 10, color: sColor, fontWeight: 600 }}>{sLabel}</span>
                                 </div>
                               );
@@ -1439,16 +1439,16 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                 // Generic fallback
                 const seen = new Set();
                 const items = data.map(s => { const n = extractFacetName(s); if (!n || seen.has(n)) return null; seen.add(n); return n; }).filter(Boolean);
-                if (items.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: '#7a8aaa' }}>No instances found</div>;
+                if (items.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No instances found</div>;
                 const iD = r.status === 'green' ? 'green' : r.status === 'red' ? 'red' : 'yellow';
                 const iL = r.status === 'green' ? '✓ Active' : r.status === 'red' ? '✗ Errors' : '⚠ Warning';
                 const iC = r.status === 'green' ? '#00d4aa' : r.status === 'red' ? '#ff4d6d' : '#f5a623';
                 return (
                   <div style={{ margin: '0 8px 6px', background: acC, border: `1px solid ${boC}`, borderRadius: 6, overflow: 'hidden' }}>
                     {items.map((name, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderBottom: i < items.length - 1 ? '1px solid var(--ee-row-div)' : 'none' }}>
                         <span className={'status-dot status-dot--' + iD} style={{ width: 6, height: 6, flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, color: '#c8d4f0', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                        <span style={{ fontSize: 11, color: 'var(--ee-hint)', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                         <span style={{ fontSize: 10, color: iC, fontWeight: 600 }}>{iL}</span>
                       </div>
                     ))}
@@ -1481,13 +1481,13 @@ const ProvisionedResourceRow = ({ resource: r, project, lifecycle, actionState, 
 
 // ─── Billing display ───────────────────────────────────────────────────────────
 const BillingSimple = ({ cost, budget }) => {
-  if (cost === null) return <div style={{ color: '#7a8aaa', fontSize: 12, fontStyle: 'italic' }}>No billing data</div>;
+  if (cost === null) return <div style={{ color: 'var(--ee-t2)', fontSize: 12, fontStyle: 'italic' }}>No billing data</div>;
   const now = new Date(), day = now.getDate(), dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(), est = (cost / day) * dim;
   const status = billingCostToStatus(cost), estStatus = estimatedCostToStatus(est);
   const col = status === 'red' ? '#ff4d6d' : status === 'yellow' ? '#f5a623' : '#00d4aa', eCol = estStatus === 'red' ? '#ff4d6d' : estStatus === 'yellow' ? '#f5a623' : '#00d4aa';
   const pct = Math.min((cost / budget) * 100, 100), fPct = ((cost / budget) * 100).toFixed(1);
-  const st = { flex: 1, padding: '8px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.07)' };
-  const lb = { fontSize: 10, color: '#7a8aaa', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 };
+  const st = { flex: 1, padding: '8px 10px', background: 'var(--ee-s1)', borderRadius: 8, border: '1px solid var(--ee-b1)' };
+  const lb = { fontSize: 10, color: 'var(--ee-t2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 };
   const vl = (c) => ({ fontSize: 18, fontWeight: 800, color: c });
   return (
     <div style={{ padding: '6px 4px' }}>
@@ -1496,7 +1496,7 @@ const BillingSimple = ({ cost, budget }) => {
         <div style={st}><div style={lb}>Est. Month-end</div><div style={vl(eCol)}>{'₹' + est.toFixed(0)}</div></div>
         <div style={st}><div style={lb}>Budget</div><div style={vl('#f0f4ff')}>{'₹' + budget}</div></div>
       </div>
-      <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--ee-s3)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: pct + '%', background: col, borderRadius: 4, transition: 'width 0.4s' }} />
       </div>
       <div style={{ marginTop: 4, fontSize: 10, color: col, textAlign: 'right', fontWeight: 600 }}>{fPct}% of budget used · Day {day} of {dim}</div>
@@ -1509,7 +1509,7 @@ const GcpBillingNotConfigured = () => (
     <span style={{ fontSize: 16, lineHeight: 1.2, opacity: 0.6 }}>🔧</span>
     <div>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#4285f4', marginBottom: 2 }}>Not Configured</div>
-      <div style={{ fontSize: 11, color: '#7a8aaa', lineHeight: 1.5 }}>GCP Billing export to BigQuery has not been set up yet.</div>
+      <div style={{ fontSize: 11, color: 'var(--ee-t2)', lineHeight: 1.5 }}>GCP Billing export to BigQuery has not been set up yet.</div>
     </div>
   </div>
 );
@@ -1608,15 +1608,15 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
 
   const s = {
     overlay: { position: 'fixed', inset: 0, background: 'rgba(8,11,20,0.88)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    panel: { background: '#0f1629', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 20, width: '92%', maxWidth: 660, maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 32px 100px rgba(0,0,0,0.7)' },
+    panel: { background: 'var(--ee-modal)', border: '1px solid var(--ee-b2)', borderRadius: 20, width: '92%', maxWidth: 660, maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 32px 100px rgba(0,0,0,0.7)' },
     header: { padding: '22px 26px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' },
     body: { padding: '22px 26px', overflowY: 'auto', flex: 1 },
     footer: { padding: '16px 26px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center' },
-    label: { fontSize: 11, fontWeight: 600, color: '#7a8aaa', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, display: 'block' },
+    label: { fontSize: 11, fontWeight: 600, color: 'var(--ee-t2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, display: 'block' },
     field: { marginBottom: 18 },
-    input: { width: '100%', background: '#0d1525', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 8, padding: '9px 12px', color: '#f0f4ff', fontSize: 13, outline: 'none', boxSizing: 'border-box', colorScheme: 'dark' },
+    input: { width: '100%', background: 'var(--ee-input)', border: '1px solid var(--ee-b3)', borderRadius: 8, padding: '9px 12px', color: 'var(--ee-t1)', fontSize: 13, outline: 'none', boxSizing: 'border-box', colorScheme: 'var(--ee-color-scheme)' },
     btnPrimary: { padding: '9px 22px', borderRadius: 8, border: 'none', background: '#4285f4', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' },
-    btnSecondary: { padding: '9px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#7a8aaa', fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+    btnSecondary: { padding: '9px 18px', borderRadius: 8, border: '1px solid var(--ee-b3)', background: 'transparent', color: 'var(--ee-t2)', fontWeight: 600, fontSize: 13, cursor: 'pointer' },
   };
 
   if (view === 'list') return (
@@ -1628,7 +1628,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               <span style={{ fontSize: 18 }}>{provider?.icon}</span>
               <div style={{ fontSize: 19, fontWeight: 800, color: accentColor }}>{provider?.name} Projects</div>
             </div>
-            <div style={{ fontSize: 12, color: '#7a8aaa', marginTop: 3 }}>Manage {provider?.label} projects</div>
+            <div style={{ fontSize: 12, color: 'var(--ee-t2)', marginTop: 3 }}>Manage {provider?.label} projects</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => { setEditInfo(null); setForm({ providerId, name: '', gcpProjectId: '', dashboardGuid: '', dashboardLink: '', projectDirName: '', projectType: 'normal', selectedResources: [], knownServices: '', customResources: '' }); setSaveError(''); setView('form'); }} style={{ ...s.btnPrimary, background: accentColor, padding: '7px 14px', fontSize: 12 }}>+ Add Project</button>
@@ -1637,25 +1637,25 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
         </div>
         <div style={s.body}>
           {!provider || provider.projects.length === 0 ? (
-            <div style={{ color: '#3d4a66', fontSize: 12, fontStyle: 'italic', padding: '8px 0' }}>No projects configured yet. Click "+ Add Project" to get started.</div>
+            <div style={{ color: 'var(--ee-t3)', fontSize: 12, fontStyle: 'italic', padding: '8px 0' }}>No projects configured yet. Click "+ Add Project" to get started.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {provider.projects.map((project, pj) => {
                 const typeTag = project.deleted ? 'Archived' : project.empty ? 'No Monitoring' : project.billingNotConfigured ? 'Billing N/A' : project.billingOnly ? 'Billing' : null;
                 const key = `${pi}-${pj}`;
                 const tagColor = project.deleted ? '#4a5568' : project.billingNotConfigured ? '#4285f4' : '#7a8aaa';
-                const tagBg = project.deleted ? 'rgba(74,85,104,0.15)' : project.billingNotConfigured ? 'rgba(66,133,244,0.12)' : 'rgba(255,255,255,0.06)';
+                const tagBg = project.deleted ? 'rgba(74,85,104,0.15)' : project.billingNotConfigured ? 'rgba(66,133,244,0.12)' : 'var(--ee-s3)';
                 const health = projectHealthMap?.[project.name] ?? 'unknown';
                 const dotColor = project.deleted ? '#4a5568' : health === 'green' ? '#00d4aa' : health === 'yellow' ? '#f5a623' : health === 'red' ? '#ff4d6d' : '#7a8aaa';
                 return (
-                  <div key={project.projectDirName || project.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10 }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.055)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}>
+                  <div key={project.projectDirName || project.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', background: 'var(--ee-s1)', border: '1px solid var(--ee-b1)', borderRadius: 10 }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--ee-s3)'} onMouseLeave={e => e.currentTarget.style.background = 'var(--ee-s1)'}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
-                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#c8d4f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--ee-hint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
                     {project.projectDirName && <span style={{ fontSize: 10, color: '#3d5070', fontFamily: 'monospace', flexShrink: 0 }}>{project.projectDirName}</span>}
                     {typeTag && <span style={{ fontSize: 10, fontWeight: 700, color: tagColor, background: tagBg, borderRadius: 100, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0, border: `1px solid ${tagColor}44` }}>{typeTag}</span>}
-                    {!typeTag && project.resources?.length > 0 && <span style={{ fontSize: 11, color: '#4a5568', flexShrink: 0 }}>{project.resources.length} resource{project.resources.length !== 1 ? 's' : ''}</span>}
-                    <button onClick={() => startEdit(pj)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(200,212,240,0.4)', background: 'rgba(200,212,240,0.1)', color: '#c8d4f0', fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0, outline: 'none' }}>Edit</button>
+                    {!typeTag && project.resources?.length > 0 && <span style={{ fontSize: 11, color: 'var(--ee-t3)', flexShrink: 0 }}>{project.resources.length} resource{project.resources.length !== 1 ? 's' : ''}</span>}
+                    <button onClick={() => startEdit(pj)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(200,212,240,0.4)', background: 'rgba(200,212,240,0.1)', color: 'var(--ee-hint)', fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0, outline: 'none' }}>Edit</button>
                     {project.deleted
                       ? <button onClick={() => handleUnarchive(pj)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(66,133,244,0.55)', background: 'rgba(66,133,244,0.12)', color: '#4285f4', fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0, outline: 'none' }}>Unarchive</button>
                       : <button onClick={() => handleArchive(pj)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(245,166,35,0.55)', background: 'rgba(245,166,35,0.12)', color: '#f5a623', fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0, outline: 'none' }}>Archive</button>}
@@ -1663,7 +1663,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                       ? <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: 11, color: '#ff4d6d', flexShrink: 0 }}>Sure?</span>
                         <button onClick={() => handleDelete(pj)} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(255,77,109,0.55)', background: 'rgba(255,77,109,0.22)', color: '#ff4d6d', fontWeight: 700, fontSize: 12, cursor: 'pointer', outline: 'none' }}>Yes</button>
-                        <button onClick={() => setDeleteConfirm(null)} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#7a8aaa', fontWeight: 600, fontSize: 12, cursor: 'pointer', outline: 'none' }}>No</button>
+                        <button onClick={() => setDeleteConfirm(null)} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--ee-b3)', background: 'var(--ee-s3)', color: 'var(--ee-t2)', fontWeight: 600, fontSize: 12, cursor: 'pointer', outline: 'none' }}>No</button>
                       </div>
                       : <button onClick={() => setDeleteConfirm(key)} style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(255,77,109,0.55)', background: 'rgba(255,77,109,0.12)', color: '#ff4d6d', fontWeight: 600, fontSize: 12, cursor: 'pointer', flexShrink: 0, outline: 'none' }}>Delete</button>}
                   </div>
@@ -1686,8 +1686,8 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
       <div style={s.panel} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <div>
-            <div style={{ fontSize: 19, fontWeight: 800, color: '#f0f4ff' }}>{editInfo ? 'Edit Project' : 'Add Project'}</div>
-            <div style={{ fontSize: 12, color: '#7a8aaa', marginTop: 3 }}>{editInfo ? 'Update the project details below' : 'Configure a new project to monitor'}</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--ee-t1)' }}>{editInfo ? 'Edit Project' : 'Add Project'}</div>
+            <div style={{ fontSize: 12, color: 'var(--ee-t2)', marginTop: 3 }}>{editInfo ? 'Update the project details below' : 'Configure a new project to monitor'}</div>
           </div>
           <button onClick={goBack} style={{ ...s.btnSecondary, padding: '7px 14px', fontSize: 12 }}>← Back</button>
         </div>
@@ -1707,7 +1707,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
               ].map(opt => {
                 const sel = form.projectType === opt.value;
                 return (
-                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: sel ? `1px solid ${accentColor}66` : '1px solid rgba(255,255,255,0.07)', background: sel ? `${accentColor}12` : 'rgba(255,255,255,0.03)' }}>
+                  <div key={opt.value} onClick={() => setField('projectType', opt.value)} style={{ padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: sel ? `1px solid ${accentColor}66` : '1px solid var(--ee-b1)', background: sel ? `${accentColor}12` : 'var(--ee-s1)' }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: sel ? accentColor : '#c8d4f0' }}>{opt.title}</div>
                     <div style={{ fontSize: 11, color: '#4a6080', marginTop: 2 }}>{opt.sub}</div>
                   </div>
@@ -1743,7 +1743,7 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
           {form.projectType === 'normal' && form.providerId === 'gcp' && (
             <div style={{ padding: '10px 14px', background: 'rgba(66,133,244,0.06)', border: '1px solid rgba(66,133,244,0.2)', borderRadius: 8, marginBottom: 18 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#4285f4', marginBottom: 4 }}>✦ Auto-detection enabled</div>
-              <div style={{ fontSize: 11, color: '#7a8aaa', lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, color: 'var(--ee-t2)', lineHeight: 1.5 }}>
                 When a GCP Project ID is set, Eagle Eye will automatically detect which resources (Compute Engine, Cloud Run, GKE, etc.) are active by querying New Relic. No manual resource selection is needed.
               </div>
             </div>
@@ -1755,12 +1755,12 @@ const ProjectManagerModal = ({ providers, providerId, projectHealthMap, onSave, 
                 {providerOptions.map(opt => {
                   const checked = form.selectedResources.includes(opt.type);
                   return (
-                    <label key={opt.type} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', background: checked ? 'rgba(255,153,0,0.08)' : 'rgba(255,255,255,0.03)', borderRadius: 8, border: checked ? `1px solid ${accentColor}44` : '1px solid rgba(255,255,255,0.07)' }}>
+                    <label key={opt.type} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', background: checked ? 'rgba(255,153,0,0.08)' : 'var(--ee-s1)', borderRadius: 8, border: checked ? `1px solid ${accentColor}44` : '1px solid var(--ee-b1)' }}>
                       <input type="checkbox" checked={checked} onChange={e => setField('selectedResources', e.target.checked ? [...form.selectedResources, opt.type] : form.selectedResources.filter(t => t !== opt.type))} style={{ accentColor, width: 14, height: 14, cursor: 'pointer', marginTop: 2, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: '#c8d4f0' }}>{opt.label}</span>
-                          <span style={{ fontSize: 10, color: opt.scalesToZero ? '#4285f4' : '#4a5568', background: opt.scalesToZero ? 'rgba(66,133,244,0.1)' : 'rgba(255,255,255,0.05)', border: opt.scalesToZero ? '1px solid rgba(66,133,244,0.2)' : '1px solid rgba(255,255,255,0.07)', borderRadius: 100, padding: '1px 7px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{opt.scalesToZero ? 'scales to zero' : opt.alwaysOn ? 'always on' : ''}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ee-hint)' }}>{opt.label}</span>
+                          <span style={{ fontSize: 10, color: opt.scalesToZero ? '#4285f4' : '#4a5568', background: opt.scalesToZero ? 'rgba(66,133,244,0.1)' : 'var(--ee-s1)', border: opt.scalesToZero ? '1px solid rgba(66,133,244,0.2)' : '1px solid var(--ee-b1)', borderRadius: 100, padding: '1px 7px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{opt.scalesToZero ? 'scales to zero' : opt.alwaysOn ? 'always on' : ''}</span>
                         </div>
                         {opt.desc && <div style={{ fontSize: 11, color: '#4a6080', marginTop: 3 }}>{opt.desc}</div>}
                       </div>
@@ -1843,7 +1843,7 @@ const GhostStateBanner = ({ project }) => {
           <GhostResourceRow key={i} resource={r} hasToken={!!ghToken} />
         ))}
       </div>
-      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#c8d4f0' }}>
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ee-hint)' }}>
         <GearIcon size={11} color="#7ab3ff" />
         {ghToken
           ? <span>Hit <strong style={{ color: '#7ab3ff', fontStyle: 'normal' }}>Apply</strong> above to provision </span>
@@ -2132,7 +2132,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   if (project.deleted) return (
     <div className="project-row project-row--deleted" style={{ animationDelay: index * 80 + 'ms' }}>
       <div className="project-row__main">
-        <div className="project-row__left" style={{ gap: 10 }}><span style={{ fontSize: 14, opacity: 0.65 }}>🗑</span><span className="project-row__name" style={{ color: '#8899bb' }}>{project.name}</span></div>
+        <div className="project-row__left" style={{ gap: 10 }}><span style={{ fontSize: 14, opacity: 0.65 }}>🗑</span><span className="project-row__name" style={{ color: 'var(--ee-rname)' }}>{project.name}</span></div>
         <div className="project-row__right"><span className="project-row__deleted-badge">Archived</span>{project.dashboardGuid && <DashboardIcon onClick={() => openDashboard(project)} />}</div>
       </div>
     </div>
@@ -2164,15 +2164,15 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   }
 
   if (project.empty) return (
-    <div className={'project-row project-row--clickable' + (expanded ? ' project-row--expanded' : '')} style={{ animationDelay: index * 80 + 'ms', cursor: 'pointer', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, marginBottom: 4 }} onClick={() => setExpanded(p => !p)}>
+    <div className={'project-row project-row--clickable' + (expanded ? ' project-row--expanded' : '')} style={{ animationDelay: index * 80 + 'ms', cursor: 'pointer', background: 'var(--ee-s1)', border: '1px solid var(--ee-b1)', borderRadius: 10, marginBottom: 4 }} onClick={() => setExpanded(p => !p)}>
       <div className="project-row__main">
         <div className="project-row__left" style={{ gap: 10 }}>
-          <span style={{ fontSize: 14, color: '#7a8aaa' }}>◎</span>
-          <span className="project-row__name" style={{ color: '#c8d4f0' }}>{project.name}</span>
+          <span style={{ fontSize: 14, color: 'var(--ee-t2)' }}>◎</span>
+          <span className="project-row__name" style={{ color: 'var(--ee-hint)' }}>{project.name}</span>
           {tfLoading ? <NoInfraBadge checking /> : !infraReady ? <NoInfraBadge /> : null}
         </div>
         <div className="project-row__right">
-          <span style={{ fontSize: 10, fontWeight: 600, color: '#8899bb', background: 'rgba(100,120,170,0.18)', border: '1px solid rgba(100,120,170,0.4)', borderRadius: 100, padding: '2px 10px', textTransform: 'uppercase' }}>No Monitoring</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--ee-rname)', background: 'rgba(100,120,170,0.18)', border: '1px solid rgba(100,120,170,0.4)', borderRadius: 100, padding: '2px 10px', textTransform: 'uppercase' }}>No Monitoring</span>
           {project.dashboardGuid && <DashboardIcon onClick={e => { e.stopPropagation(); openDashboard(project); }} />}
           <span className={`project-row__chevron${expanded ? ' project-row__chevron--open' : ''}`} onClick={e => { e.stopPropagation(); setExpanded(p => !p); }}>›</span>
         </div>
@@ -2274,7 +2274,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
           {!loading && infraReady && !showGhostState && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
           {!loading && infraReady && !showGhostState && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
           {isBusy && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: '#8899bb', background: 'rgba(122,138,170,0.12)', border: '1px solid rgba(122,138,170,0.3)', borderRadius: 100, padding: '2px 8px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: 'var(--ee-rname)', background: 'rgba(122,138,170,0.12)', border: '1px solid rgba(122,138,170,0.3)', borderRadius: 100, padding: '2px 8px' }}>
               <SpinnerIcon size={10} color="#8899bb" />
               {`${{ apply: 'Applying', stop: 'Stopping', start: 'Starting', terminate: 'Destroying' }[activeAction] || 'Working'}…`}
             </span>
@@ -2511,7 +2511,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
       })}
       {archivedProjects.length > 0 && (
         <div style={{ marginTop: activeProjects.length > 0 ? 10 : 0 }}>
-          <button onClick={() => setArchivedOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: '#4a5568', fontSize: 11, fontWeight: 700, letterSpacing: '0.6px', textTransform: 'uppercase', width: '100%', outline: 'none' }}>
+          <button onClick={() => setArchivedOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: '1px solid var(--ee-b1)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', color: 'var(--ee-t3)', fontSize: 11, fontWeight: 700, letterSpacing: '0.6px', textTransform: 'uppercase', width: '100%', outline: 'none' }}>
             <span style={{ display: 'inline-block', transition: 'transform 0.2s', transform: archivedOpen ? 'rotate(90deg)' : 'rotate(0deg)', fontSize: 12 }}>›</span>
             <span>🗑 Archived</span>
             <span style={{ marginLeft: 'auto', fontSize: 10, background: 'rgba(74,85,104,0.2)', border: '1px solid rgba(74,85,104,0.3)', borderRadius: 100, padding: '1px 8px' }}>{archivedProjects.length}</span>
@@ -2714,7 +2714,7 @@ const EagleEyeLoader = () => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16 }}>
     <div style={{ width: 40, height: 40, border: '3px solid rgba(66,133,244,0.2)', borderTop: '3px solid #4285f4', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    <div style={{ color: '#7a8aaa', fontSize: 13 }}>Loading Eagle Eye…</div>
+    <div style={{ color: 'var(--ee-t2)', fontSize: 13 }}>Loading Eagle Eye…</div>
   </div>
 );
 

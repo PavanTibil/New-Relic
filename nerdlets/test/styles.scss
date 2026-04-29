@@ -78,6 +78,24 @@ button:focus-visible {
   overflow: hidden;
   box-sizing: border-box;
 
+  // CSS custom properties — dark defaults, overridden by --light modifier
+  --ee-t1: #f0f4ff;
+  --ee-t2: #7a8aaa;
+  --ee-t3: #3d4a66;
+  --ee-t4: #c0cce0;
+  --ee-hint: #c8d4f0;
+  --ee-rname: #8899bb;
+  --ee-s1: rgba(255,255,255,0.03);
+  --ee-s2: rgba(255,255,255,0.025);
+  --ee-s3: rgba(255,255,255,0.06);
+  --ee-row-div: rgba(255,255,255,0.04);
+  --ee-b1: rgba(255,255,255,0.07);
+  --ee-b2: rgba(255,255,255,0.12);
+  --ee-b3: rgba(255,255,255,0.15);
+  --ee-modal: #0f1629;
+  --ee-input: #0d1525;
+  --ee-color-scheme: dark;
+
   // Belt-and-suspenders reset scoped to app too
   button {
     border: none !important;
@@ -827,6 +845,23 @@ button:focus-visible {
 .eagle-eye--light {
   background: #eef1fa;
   color: #0d1530;
+
+  --ee-t1: #0d1530;
+  --ee-t2: #4a5578;
+  --ee-t3: #8a92a8;
+  --ee-t4: #4a5578;
+  --ee-hint: #4a5578;
+  --ee-rname: #4a5578;
+  --ee-s1: rgba(0,0,0,0.03);
+  --ee-s2: rgba(0,0,0,0.02);
+  --ee-s3: rgba(0,0,0,0.06);
+  --ee-row-div: rgba(0,0,0,0.06);
+  --ee-b1: rgba(0,0,0,0.08);
+  --ee-b2: rgba(0,0,0,0.12);
+  --ee-b3: rgba(0,0,0,0.15);
+  --ee-modal: #ffffff;
+  --ee-input: #f5f7ff;
+  --ee-color-scheme: light;
 
   .ee-theme-toggle {
     border-color: rgba(100,80,220,0.40) !important;
