@@ -488,7 +488,9 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
       const runs = (await res.json()).workflow_runs || [];
       const cutoff = dispatchTime - TIME_SLACK_MS;
       const candidates = runs.filter(r => new Date(r.created_at).getTime() >= cutoff);
-      let run = candidates.length > 0 ? candidates[0] : null;
+      // Prefer queued/in_progress runs (our new dispatch); avoid locking onto a pre-dispatch completed run
+      let run = candidates.find(r => r.status === 'queued' || r.status === 'in_progress') || null;
+      if (!run) run = candidates.find(r => new Date(r.created_at).getTime() >= dispatchTime + 10000) || null;
       if (!run && attempts >= FALLBACK_ATTEMPTS) { run = runs[0] || null; if (run) console.warn('[Eagle Eye] Falling back to newest run:', run.id); }
       if (!run) { scheduleNext(); return; }
       lockedRunId = run.id;
@@ -1278,6 +1280,13 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
 // ─── ExpandableResourceRow ────────────────────────────────────────────────────
 const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, lastActionTime, onStatusUpdate }) => {
   const [open, setOpen] = React.useState(false);
+  const prevActionStateRef = React.useRef(actionState);
+  React.useEffect(() => {
+    if (actionState === INFRA_STATES.SUCCEEDED && prevActionStateRef.current !== INFRA_STATES.SUCCEEDED) {
+      setOpen(true);
+    }
+    prevActionStateRef.current = actionState;
+  }, [actionState]);
   const ghToken = React.useContext(GhTokenContext);
 
   // Always call unconditionally — hooks must never be conditional
@@ -2088,6 +2097,12 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
           _nextLifecycle = next;
           setLifecycle(next);
           setExpanded(true);
+        }
+        // Optimistic resource status update so the dot reflects the new state immediately
+        if (action === 'stop') {
+          setInternalStatuses(prev => prev.map(s => ({ ...s, status: 'yellow' })));
+        } else if (action === 'start') {
+          setInternalStatuses(prev => prev.map(s => ({ ...s, status: 'green' })));
         }
       } else if (conclusion === 'timeout' || conclusion === 'timed_out') {
         setActionState(INFRA_STATES.TIMEOUT);
