@@ -2764,21 +2764,26 @@ const EagleEye = () => {
     const baseProviders = (providersDoc?.providers && Array.isArray(providersDoc.providers) && providersDoc.providers.length > 0)
       ? providersDoc.providers
       : DEFAULT_CLOUD_PROVIDERS;
-    setProviders(mergeAutoDiscovered(baseProviders));
 
     const configDoc = lsRead(LS_CONFIG_KEY);
     if (configDoc?.accessToken) {
-      console.log('[EagleEye] Token loaded from localStorage, length:', configDoc.accessToken.length);
       setGhToken(configDoc.accessToken);
+      // Strip auto-discovered projects from the initial state — the live fetch will add them
+      // back from the authoritative JSON, preventing a flash of deleted projects on load.
+      const stripped = baseProviders.map(p => ({
+        ...p,
+        projects: (p.projects || []).filter(proj => !proj.projectDirName),
+      }));
+      setProviders(stripped);
     } else {
-      console.warn('[EagleEye] No accessToken found in localStorage config');
+      // No token — can't fetch live JSON; fall back to bundled JSON immediately.
+      setProviders(mergeAutoDiscovered(baseProviders));
     }
 
     const infraDoc = lsRead(LS_INFRA_STATES_KEY);
     if (infraDoc?.infraStates) {
-      // Projects that are in AUTO_DISCOVERED but absent from the persisted providers
-      // were deleted from the repo and re-added. Their stale infra state (e.g. 'terminated')
-      // must be cleared so they don't show as Destroyed on a fresh add.
+      // Detect projects in AUTO_DISCOVERED absent from persisted providers (re-added after deletion)
+      // and wipe their stale infra state so they don't show as Destroyed.
       const existingDirNames = new Set(
         baseProviders.flatMap(p => (p.projects || []).map(proj => proj.projectDirName)).filter(Boolean)
       );
@@ -2893,9 +2898,6 @@ const EagleEye = () => {
   return (
     <GhTokenContext.Provider value={ghToken}>
       <div className={`eagle-eye${theme === 'light' ? ' eagle-eye--light' : ''}`}>
-        <button className="ee-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-          {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-        </button>
         <div className="bg-orb bg-orb--blue" />
         <div className="bg-orb bg-orb--orange" />
         <div className="bg-orb bg-orb--green" />
@@ -2910,8 +2912,12 @@ const EagleEye = () => {
             <span className="ee-header__pulse-dot" />
             <span className="ee-header__pulse-label">Live · auto-refreshes every 60s</span>
           </div>
-          <div style={{ marginTop: 10 }}>
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             <ConfigButton hasToken={!!ghToken} onClick={() => setShowConfig(true)} />
+            <button className="ee-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+              <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+            </button>
           </div>
         </header>
 
