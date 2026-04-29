@@ -10,8 +10,10 @@ try {
   AUTO_DISCOVERED = require('./auto-discovered-projects.json');
 } catch (_) { }
 
-const mergeAutoDiscovered = (providers) => {
-  if (!AUTO_DISCOVERED || Object.keys(AUTO_DISCOVERED).length === 0) return providers;
+// discovered defaults to the bundled JSON (compile-time fallback).
+// Pass live-fetched data from GitHub to get up-to-date project list without republishing.
+const mergeAutoDiscovered = (providers, discovered = AUTO_DISCOVERED) => {
+  if (!discovered || Object.keys(discovered).length === 0) return providers;
 
   // Step 1: Evict any project whose projectDirName is authoritative in the JSON
   // but is stored under the wrong provider, or was deleted from the repo.
@@ -19,15 +21,15 @@ const mergeAutoDiscovered = (providers) => {
     ...p,
     projects: (p.projects || []).filter(proj => {
       if (!proj.projectDirName) return true; // billing-only / manual entry — keep
-      const entry = AUTO_DISCOVERED[proj.projectDirName];
+      const entry = discovered[proj.projectDirName];
       if (!entry) return false; // removed from repo — drop from localStorage
       return entry.provider === p.id; // wrong provider — will be re-added below
     }),
   }));
 
   // Step 2: Add every discovered project into its correct provider
-  for (const [dirName, discovered] of Object.entries(AUTO_DISCOVERED)) {
-    const { provider, name } = discovered;
+  for (const [dirName, disc] of Object.entries(discovered)) {
+    const { provider, name } = disc;
     if (!provider || !name) continue;
     const providerEntry = merged.find(p => p.id === provider);
     if (!providerEntry) continue;
@@ -35,11 +37,11 @@ const mergeAutoDiscovered = (providers) => {
     providerEntry.projects.push({
       name,
       projectDirName: dirName,
-      gcpProjectId: discovered.gcpProjectId || null,
-      dashboardGuid: discovered.dashboardGuid || null,
-      dashboardLink: discovered.dashboardLink || null,
-      resources: Array.isArray(discovered.resources) ? discovered.resources : [],
-      knownServices: Array.isArray(discovered.knownServices) ? discovered.knownServices : [],
+      gcpProjectId: disc.gcpProjectId || null,
+      dashboardGuid: disc.dashboardGuid || null,
+      dashboardLink: disc.dashboardLink || null,
+      resources: Array.isArray(disc.resources) ? disc.resources : [],
+      knownServices: Array.isArray(disc.knownServices) ? disc.knownServices : [],
     });
   }
   return merged;
@@ -2787,133 +2789,53 @@ const EagleEye = () => {
   const providersRef = React.useRef(providers);
   useEffect(() => { providersRef.current = providers; }, [providers]);
 
-  // Auto-discover project directories from the repo, detect their cloud provider
-  // by peeking at .tf resource types, and add new ones to the correct provider.
-  // Runs once per token — no re-run when providers state changes.
-  const autoDiscoverRef = React.useRef(false);
+  // Fetch auto-discovered-projects.json live from GitHub so new/removed projects
+  // appear immediately without republishing the nerdpack.
+  // Runs once per token change. Falls back to bundled JSON if fetch fails.
   useEffect(() => {
-    if (!ghToken || autoDiscoverRef.current) return;
-    // Wait until providers have been loaded from localStorage
-    if (!providersRef.current) return;
-    autoDiscoverRef.current = true;
-
-    const ghHeaders = {
-      Authorization: `Bearer ${ghToken}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-
-    const detectProvider = async (dirName) => {
-      const r = await fetch(
-        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects/${dirName}`,
-        { cache: 'no-store', headers: ghHeaders }
-      );
-      if (!r.ok) return 'aws';
-      const items = await r.json();
-      if (!Array.isArray(items)) return 'aws';
-      const tfFiles = items.filter(i => i.type === 'file' && i.name.endsWith('.tf'));
-      for (const file of tfFiles.slice(0, 3)) {
-        try {
-          const fr = await fetch(file.download_url);
-          if (!fr.ok) continue;
-          const content = await fr.text();
-          if (/provider\s*"google"/.test(content) || /\bgoogle_/.test(content)) return 'gcp';
-          if (/provider\s*"aws"/.test(content) || /\baws_/.test(content)) return 'aws';
-        } catch {}
+    if (!ghToken) return;
+    let cancelled = false;
+    fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/nerdlets/test/auto-discovered-projects.json`,
+      {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${ghToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
       }
-      return 'aws';
-    };
-
-    const run = async () => {
-      const r = await fetch(
-        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/projects`,
-        { cache: 'no-store', headers: ghHeaders }
-      );
-      if (!r.ok) return;
-      const items = await r.json();
-      if (!Array.isArray(items)) return;
-      const repoDirs = items.filter(i => i.type === 'dir').map(i => i.name);
-
-      const current = providersRef.current || [];
-
-      // Build a map: dirName -> currentProviderId for every tracked project
-      const dirToCurrentProvider = {};
-      for (const p of current) {
-        for (const proj of (p.projects || [])) {
-          if (proj.projectDirName) dirToCurrentProvider[proj.projectDirName] = p.id;
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled || !data?.content) return;
+        const live = JSON.parse(atob(data.content.replace(/\n/g, '')));
+        // Clear stale infra states for projects newly appearing in the live registry
+        // (handles re-added projects that were previously terminated)
+        const existingDirNames = new Set(
+          (providersRef.current || [])
+            .flatMap(p => (p.projects || []).map(proj => proj.projectDirName))
+            .filter(Boolean)
+        );
+        const freshlyAdded = Object.keys(live).filter(d => !existingDirNames.has(d));
+        if (freshlyAdded.length > 0) {
+          setInfraStates(prev => {
+            const cleaned = { ...prev };
+            freshlyAdded.forEach(d => { delete cleaned[d]; });
+            persistInfraStates(cleaned).catch(() => {});
+            return cleaned;
+          });
         }
-      }
-
-      // Detect provider for:
-      //   - new dirs not tracked yet
-      //   - existing auto-discovered projects (no resources configured — may be misplaced)
-      const toDetect = repoDirs.filter(dir => {
-        if (!(dir in dirToCurrentProvider)) return true; // new
-        const provId = dirToCurrentProvider[dir];
-        const prov = current.find(p => p.id === provId);
-        const proj = (prov?.projects || []).find(p => p.projectDirName === dir);
-        // Re-check if it looks auto-discovered (no resources, not billing-only, not empty)
-        return proj && !proj.billingOnly && !proj.empty && (!proj.resources || proj.resources.length === 0);
-      });
-
-      if (toDetect.length === 0) return;
-
-      const detected = await Promise.all(
-        toDetect.map(async dir => ({ dir, correctProvider: await detectProvider(dir) }))
-      );
-
-      setProviders(prev => {
-        if (!prev) return prev;
-        let updated = prev.map(p => ({ ...p, projects: [...(p.projects || [])] }));
-        let changed = false;
-
-        for (const { dir, correctProvider } of detected) {
-          const currentProv = dirToCurrentProvider[dir];
-
-          // If already in the right provider, nothing to do
-          if (currentProv === correctProvider) {
-            // Make sure it's actually there (new dir case where currentProv is undefined)
-            if (currentProv) continue;
-          }
-
-          // Remove from wrong provider
-          if (currentProv && currentProv !== correctProvider) {
-            const fromIdx = updated.findIndex(p => p.id === currentProv);
-            if (fromIdx !== -1) {
-              const before = updated[fromIdx].projects.length;
-              updated[fromIdx] = {
-                ...updated[fromIdx],
-                projects: updated[fromIdx].projects.filter(p => p.projectDirName !== dir),
-              };
-              if (updated[fromIdx].projects.length !== before) changed = true;
-            }
-          }
-
-          // Add to correct provider if not already there
-          const toIdx = updated.findIndex(p => p.id === correctProvider);
-          if (toIdx === -1) continue;
-          if (updated[toIdx].projects.some(p => p.projectDirName === dir)) continue;
-          updated[toIdx] = {
-            ...updated[toIdx],
-            projects: [...updated[toIdx].projects, {
-              name: dir.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-              projectDirName: dir,
-            }],
-          };
-          changed = true;
-        }
-
-        if (!changed) return prev;
-        persistProviders(updated).catch(() => {});
-        return updated;
-      });
-    };
-
-    run().catch(() => {});
+        setProviders(prev => {
+          if (!prev) return prev;
+          const merged = mergeAutoDiscovered(prev, live);
+          persistProviders(merged).catch(() => {});
+          return merged;
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [ghToken]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reset so new token triggers a fresh scan
-  useEffect(() => { autoDiscoverRef.current = false; }, [ghToken]);
 
   const handleSave = async (newProviders) => {
     await persistProviders(newProviders);

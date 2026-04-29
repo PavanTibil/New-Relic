@@ -83,18 +83,18 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 3 — Publishes whenever job 1 found registry changes OR
-  #          job 2 detected an index.js / styles.scss edit.
+  # JOB 3 — Publishes ONLY when index.js or styles.scss changed.
+  #          Project additions/removals update the registry JSON in the repo;
+  #          the UI fetches that file live from GitHub at runtime, so no
+  #          nerdpack republish is needed for project changes.
   # ─────────────────────────────────────────────────────────────────────────
   redeploy:
     name: Publish Nerdpack to New Relic
     runs-on: ubuntu-latest
     needs: [discover, check-files]
     if: |
-      always() && !failure() && !cancelled() && (
-        needs.discover.outputs.has_changes == 'true' ||
-        needs.check-files.outputs.files_changed == 'true'
-      )
+      always() && !failure() && !cancelled() &&
+      needs.check-files.outputs.files_changed == 'true'
 
     steps:
       - name: Checkout (pick up bot commit)
