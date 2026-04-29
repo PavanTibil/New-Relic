@@ -760,6 +760,7 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction,
       </div>
       {expanded && (
         <div className="project-row__detail">
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => {}} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState}
             activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading}
             ghToken={ghToken} onAction={onInfraAction} />
@@ -2288,6 +2289,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
       </div>
       {expanded && (
         <div className="project-row__detail">
+          <InfraStatusBanner actionState={actionState} lastAction={activeAction} onDismiss={() => { setActionState(INFRA_STATES.IDLE); setActiveAction(null); }} />
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {(hasResources || project.projectDirName) && renderResourceDetail()}
         </div>
@@ -2847,7 +2849,7 @@ const EagleEye = () => {
         // Clear stale infra states for projects newly appearing in the live registry
         // (handles re-added projects that were previously terminated)
         const existingDirNames = new Set(
-          (providersRef.current || [])
+          (baseProvidersRef.current || [])
             .flatMap(p => (p.projects || []).map(proj => proj.projectDirName))
             .filter(Boolean)
         );
