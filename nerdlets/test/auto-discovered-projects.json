@@ -1,1 +1,38 @@
-{}
+{
+  "dms": {
+    "projectDirName": "dms",
+    "name": "Dms",
+    "provider": "aws",
+    "resources": [
+      {
+        "label": "App Runner",
+        "type": "aws_apprunner",
+        "alwaysOn": true
+      }
+    ]
+  },
+  "starapp": {
+    "projectDirName": "starapp",
+    "name": "Starapp",
+    "provider": "gcp",
+    "resources": [
+      {
+        "label": "Compute Engine",
+        "type": "google_compute_instance",
+        "alwaysOn": true
+      }
+    ]
+  },
+  "test": {
+    "projectDirName": "test",
+    "name": "Test",
+    "provider": "aws",
+    "resources": [
+      {
+        "label": "EC2",
+        "type": "aws_ec2",
+        "alwaysOn": true
+      }
+    ]
+  }
+}
