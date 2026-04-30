@@ -13,6 +13,9 @@ on:
           - stop
       project:
         required: true
+      backup:
+        required: false
+        default: 'false'
 
 permissions:
   actions: read
@@ -349,8 +352,103 @@ jobs:
           rm -f tf_show.json
 
       # ══════════════════════════════════════════════════════════════════════
-      # DESTROY
+      # DESTROY — optional backup before destroy
       # ══════════════════════════════════════════════════════════════════════
+      - name: Create Backup Before Destroy
+        if: ${{ github.event.inputs.action == 'destroy' && github.event.inputs.backup == 'true' }}
+        working-directory: ${{ github.event.inputs.project }}
+        run: |
+          RESOURCE_FILE="tf_resources.json"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          SAFE_PROJECT=$(echo "${{ github.event.inputs.project }}" | sed 's/\//-/g')
+          echo "📦 Creating backup for ${{ github.event.inputs.project }} at $TIMESTAMP"
+
+          if [ ! -f "$RESOURCE_FILE" ]; then
+            echo "ℹ️  No tf_resources.json found — skipping resource-level backup."
+          else
+            # ── AWS Backups ──────────────────────────────────────────────────
+
+            # EC2 → AMI snapshots
+            while IFS= read -r INSTANCE_ID; do
+              [ -z "$INSTANCE_ID" ] && continue
+              NAME="backup-${SAFE_PROJECT}-${INSTANCE_ID}-${TIMESTAMP}"
+              echo "📸 Creating AMI snapshot for EC2 $INSTANCE_ID → $NAME"
+              aws ec2 create-image \
+                --instance-id "$INSTANCE_ID" \
+                --name "$NAME" \
+                --no-reboot \
+                --output text || echo "⚠️  AMI creation failed for $INSTANCE_ID"
+              echo "✅ AMI queued: $NAME"
+            done < <(jq -r '.ec2_instance_ids // [] | .[]' "$RESOURCE_FILE")
+
+            # RDS instances → DB snapshots
+            while IFS= read -r DB; do
+              [ -z "$DB" ] && continue
+              SNAP_ID="backup-${SAFE_PROJECT}-${DB}-${TIMESTAMP}"
+              echo "📸 Creating RDS snapshot: $SNAP_ID"
+              aws rds create-db-snapshot \
+                --db-instance-identifier "$DB" \
+                --db-snapshot-identifier "$SNAP_ID" || echo "⚠️  RDS snapshot failed for $DB"
+              echo "✅ RDS snapshot queued: $SNAP_ID"
+            done < <(jq -r '.rds_instance_ids // [] | .[]' "$RESOURCE_FILE")
+
+            # Aurora clusters → cluster snapshots
+            while IFS= read -r CLUSTER; do
+              [ -z "$CLUSTER" ] && continue
+              SNAP_ID="backup-${SAFE_PROJECT}-${CLUSTER}-${TIMESTAMP}"
+              echo "📸 Creating Aurora cluster snapshot: $SNAP_ID"
+              aws rds create-db-cluster-snapshot \
+                --db-cluster-identifier "$CLUSTER" \
+                --db-cluster-snapshot-identifier "$SNAP_ID" || echo "⚠️  Aurora snapshot failed for $CLUSTER"
+              echo "✅ Aurora snapshot queued: $SNAP_ID"
+            done < <(jq -r '.rds_cluster_ids // [] | .[]' "$RESOURCE_FILE")
+
+            # ── GCP Backups ──────────────────────────────────────────────────
+
+            # GCE → disk snapshots
+            while IFS= read -r ENTRY; do
+              [ -z "$ENTRY" ] && continue
+              ZONE=$(echo "$ENTRY"     | cut -d'/' -f1)
+              INSTANCE=$(echo "$ENTRY" | cut -d'/' -f2)
+              SNAP_NAME="backup-${SAFE_PROJECT}-${INSTANCE}-${TIMESTAMP}"
+              # Get disks attached to instance
+              DISKS=$(gcloud compute instances describe "$INSTANCE" \
+                --zone "$ZONE" \
+                --format='value(disks[].source.basename())' 2>/dev/null || true)
+              while IFS= read -r DISK; do
+                [ -z "$DISK" ] && continue
+                echo "📸 GCE disk snapshot: $DISK → $SNAP_NAME"
+                gcloud compute disks snapshot "$DISK" \
+                  --zone "$ZONE" \
+                  --snapshot-names "${SNAP_NAME}-${DISK}" \
+                  --quiet || echo "⚠️  Disk snapshot failed for $DISK"
+                echo "✅ GCE snapshot queued: ${SNAP_NAME}-${DISK}"
+              done <<< "$DISKS"
+            done < <(jq -r '.gce_instances // [] | .[]' "$RESOURCE_FILE")
+
+            # Cloud SQL → export to GCS
+            while IFS= read -r ENTRY; do
+              [ -z "$ENTRY" ] && continue
+              NAME=$(echo "$ENTRY"    | cut -d'/' -f1)
+              PROJECT=$(echo "$ENTRY" | cut -d'/' -f2)
+              GCS_URI="gs://${PROJECT}-backups/${SAFE_PROJECT}/${NAME}-${TIMESTAMP}.sql.gz"
+              echo "📸 Cloud SQL export: $NAME → $GCS_URI"
+              gcloud sql export sql "$NAME" "$GCS_URI" \
+                --project "$PROJECT" \
+                --quiet || echo "⚠️  Cloud SQL export failed for $NAME (bucket may not exist)"
+              echo "✅ Cloud SQL export queued: $GCS_URI"
+            done < <(jq -r '.cloud_sql_instances // [] | .[]' "$RESOURCE_FILE")
+
+            # Spanner → export to GCS via Dataflow
+            while IFS= read -r ENTRY; do
+              [ -z "$ENTRY" ] && continue
+              echo "ℹ️  Spanner instance $ENTRY — export via Dataflow not automated here. Use Cloud Console to export manually."
+            done < <(jq -r '.spanner_instances // [] | .[]' "$RESOURCE_FILE")
+          fi
+
+          echo ""
+          echo "🎉 Backup step complete. Proceeding to destroy."
+
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         working-directory: ${{ github.event.inputs.project }}

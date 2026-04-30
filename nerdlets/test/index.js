@@ -509,20 +509,45 @@ const pollWorkflowRun = (token, dispatchTime, onStatusChange, onComplete, cancel
   setTimeout(doFetch, 15000);
 };
 
-const triggerWorkflow = async (token, projectDirName, action) => {
+const triggerWorkflow = async (token, projectDirName, action, createBackup = false) => {
   if (!token || token === '') throw new Error('GitHub ACCESS_TOKEN not configured. Click the ⚙ Config button to set it.');
   if (!projectDirName) throw new Error('No project directory name configured for this project.');
   const projectPath = `projects/${projectDirName}`;
+  const inputs = { project: projectPath, action };
+  if (createBackup) inputs.backup = 'true';
   const res = await fetch(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW_INFRA}/dispatches`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
-      body: JSON.stringify({ ref: 'main', inputs: { project: projectPath, action } }),
+      body: JSON.stringify({ ref: 'main', inputs }),
     }
   );
   if (!res.ok) { const body = await res.text().catch(() => ''); throw new Error(`GitHub Actions dispatch failed (${res.status}): ${body}`); }
   return { success: true };
+};
+
+const getBackupInfo = (project) => {
+  const types = (project.resources || []).map(r => r.type).filter(Boolean);
+  const isAws = types.some(t => t.startsWith('aws_'));
+  const isGcp = types.some(t => t.startsWith('google_') || t === 'gcp_billing');
+
+  if (isAws) {
+    if (types.includes('aws_rds')) return { service: 'RDS Snapshot', description: 'A database snapshot will be saved to Amazon RDS before destroy.' };
+    if (types.includes('aws_ec2')) return { service: 'AMI Snapshot (AWS Backup)', description: 'An AMI snapshot of the EC2 instance will be created via AWS Backup.' };
+    if (types.includes('aws_s3')) return { service: 'S3 Bucket Backup', description: 'S3 bucket contents will be versioned/replicated before destroy.' };
+    if (types.includes('aws_ecs')) return { service: 'AWS Backup', description: 'ECS task/service config will be backed up via AWS Backup.' };
+    return { service: 'AWS Backup', description: 'Resources will be backed up using AWS Backup before destroy.' };
+  }
+  if (isGcp) {
+    if (types.includes('google_sql_database_instance')) return { service: 'Cloud SQL Export → GCS', description: 'Database will be exported to Cloud Storage before destroy.' };
+    if (types.includes('google_compute_instance')) return { service: 'Persistent Disk Snapshot', description: 'VM disk snapshot will be saved to Cloud Storage before destroy.' };
+    if (types.includes('google_container_cluster')) return { service: 'Backup for GKE', description: 'GKE cluster state will be backed up before destroy.' };
+    if (types.includes('google_spanner_instance')) return { service: 'Spanner Export → GCS', description: 'Spanner data will be exported to Cloud Storage before destroy.' };
+    if (types.includes('google_storage_bucket')) return { service: 'GCS Bucket Transfer', description: 'Bucket contents will be transferred to a backup bucket before destroy.' };
+    return { service: 'Cloud Storage', description: 'Resources will be backed up to Cloud Storage before destroy.' };
+  }
+  return { service: 'Cloud Backup', description: 'A backup will be created before the resources are destroyed.' };
 };
 
 // ─── NRQL query builders ───────────────────────────────────────────────────────
@@ -963,6 +988,22 @@ const ConfigModal = ({ currentToken, onSave, onRemove, onClose }) => {
   );
 };
 
+// ─── Toast notifications ──────────────────────────────────────────────────────
+const ToastNotification = ({ notifications, onDismiss }) => {
+  if (!notifications || notifications.length === 0) return null;
+  return (
+    <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 8, pointerEvents: 'none' }}>
+      {notifications.map(n => (
+        <div key={n.id} className="ee-toast" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--ee-modal)', border: '1px solid rgba(0,212,170,0.4)', borderRadius: 10, boxShadow: '0 4px 24px rgba(0,0,0,0.55)', pointerEvents: 'all', minWidth: 240, maxWidth: 360 }}>
+          <span style={{ color: '#00d4aa', fontSize: 15, flexShrink: 0 }}>✓</span>
+          <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--ee-t1)' }}>{n.message}</div>
+          <button onClick={() => onDismiss(n.id)} style={{ background: 'none', border: 'none', outline: 'none', color: '#4a6080', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1 }}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // ─── Infra UI components ───────────────────────────────────────────────────────
 const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
   if (actionState === INFRA_STATES.IDLE) return null;
@@ -990,14 +1031,16 @@ const InfraStatusBanner = ({ actionState, lastAction, onDismiss }) => {
 const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [createBackup, setCreateBackup] = useState(false);
   const isStop = action === 'stop', isStart = action === 'start', isApply = action === 'apply', isTerminate = action === 'terminate';
+  const backupInfo = isTerminate ? getBackupInfo(project) : null;
 
   const handleConfirm = async () => {
     setBusy(true); setErr('');
     try {
       const ghAction = isApply ? 'apply' : isStop ? 'stop' : isStart ? 'start' : 'destroy';
       const preDispatch = Date.now();
-      await triggerWorkflow(ghToken, project.projectDirName, ghAction);
+      await triggerWorkflow(ghToken, project.projectDirName, ghAction, isTerminate && createBackup);
       onConfirm(preDispatch);
     } catch (e) { setErr(e?.message || 'GitHub Actions dispatch failed.'); setBusy(false); }
   };
@@ -1024,6 +1067,29 @@ const InfraConfirmModal = ({ project, action, ghToken, onConfirm, onCancel }) =>
           {isStart && <>Scale up all services for <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong> via CLI.</>}
           {isTerminate && <><span style={{ fontFamily: 'monospace', color: colors.text, fontWeight: 700 }}>terraform destroy</span> on <strong style={{ color: 'var(--ee-t1)' }}>{project.name}</strong>. All resources will be <strong style={{ color: colors.text }}>permanently destroyed</strong>.<div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(255,77,109,0.07)', border: '1px solid rgba(255,77,109,0.2)', borderRadius: 8, fontSize: 12, color: '#ff4d6d' }}>⚠ Use Apply to re-provision after destroy.</div></>}
         </div>
+        {isTerminate && backupInfo && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={createBackup}
+                onChange={e => setCreateBackup(e.target.checked)}
+                style={{ marginTop: 2, cursor: 'pointer', accentColor: '#00d4aa', width: 14, height: 14, flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ee-t1)' }}>Create backup before destroy</div>
+                <div style={{ fontSize: 11, color: 'var(--ee-t2)', marginTop: 2 }}>
+                  Service: <span style={{ color: '#00d4aa', fontWeight: 600 }}>{backupInfo.service}</span>
+                </div>
+              </div>
+            </label>
+            {createBackup && (
+              <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(0,212,170,0.07)', border: '1px solid rgba(0,212,170,0.25)', borderRadius: 8, fontSize: 12, color: '#00d4aa' }}>
+                📦 {backupInfo.description}
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ fontSize: 12, color: '#4a6080', marginBottom: 14, padding: '8px 12px', background: 'var(--ee-s1)', borderRadius: 6, border: '1px solid var(--ee-b1)' }}>
           🔗 <strong style={{ color: 'var(--ee-hint)' }}>{GH_OWNER}/{GH_REPO}</strong>
           <div style={{ marginTop: 3, fontSize: 11, color: '#3d5070' }}>Path: <code style={{ color: '#7a9aaa' }}>{projectPath}</code></div>
@@ -1986,7 +2052,7 @@ const AwsTfInlineLoader = ({ project, lifecycle }) => {
 };
 
 // ─── ProjectRow ────────────────────────────────────────────────────────────────
-const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLifecycle, onInfraAction, resourceStatuses: incomingStatuses = [], loading, billingCost }) => {
+const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLifecycle, onInfraAction, onNotify, resourceStatuses: incomingStatuses = [], loading, billingCost }) => {
   const [internalStatuses, setInternalStatuses] = useState([]);
 
   // Combine statuses from the main dashboard (Billing, etc.) with internal ones (EC2)
@@ -2105,6 +2171,10 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         } else if (action === 'start') {
           setInternalStatuses(prev => prev.map(s => ({ ...s, status: 'green' })));
         }
+        if (onNotify) {
+          const verb = { apply: 'applied', stop: 'stopped', start: 'started', terminate: 'destroyed' }[action] || action;
+          onNotify(`${project.name} has been ${verb}`);
+        }
       } else if (conclusion === 'timeout' || conclusion === 'timed_out') {
         setActionState(INFRA_STATES.TIMEOUT);
       } else {
@@ -2136,7 +2206,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         }
       }, 3000);
     }
-  }, [onLifecycleChange, project]);
+  }, [onLifecycleChange, project, onNotify]);
 
   const handleInfraAction = useCallback((proj, action) => {
     onInfraAction(proj, action, handleActionDispatched);
@@ -2396,7 +2466,7 @@ const SingleResourceQuery = ({ resource, project, children }) => {
 };
 
 // ─── ProjectsRendered ─────────────────────────────────────────────────────────
-const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   const getProjectStateKey = (project) => project.projectDirName || project.name;
 
   const projectStatuses = provider.projects.map((p, i) => {
@@ -2489,6 +2559,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
           allResults={allResults}
           billingCost={billingCost}
           onInfraAction={onInfraAction}
+          onNotify={onNotify}
           infraStates={infraStates}
           onLifecycleChange={onLifecycleChange}
         />
@@ -2497,7 +2568,7 @@ const ProjectsRendered = ({ provider, allResults, billingCost, onManage, onInfra
   );
 };
 
-const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAction, infraStates, onLifecycleChange }) => {
+const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   const [archivedOpen, setArchivedOpen] = React.useState(false);
   const activeProjects = provider.projects.filter(p => !p.deleted);
   const archivedProjects = provider.projects.filter(p => p.deleted);
@@ -2519,6 +2590,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
             index={i}
             billingCost={project.billingOnly ? billingCost : null}
             onInfraAction={onInfraAction}
+            onNotify={onNotify}
             persistedLifecycle={persistedLifecycle}
             onLifecycleChange={onLifecycleChange}
           />;
@@ -2549,6 +2621,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
                     index={i}
                     billingCost={null}
                     onInfraAction={onInfraAction}
+                    onNotify={onNotify}
                     persistedLifecycle={persistedLifecycle}
                     onLifecycleChange={onLifecycleChange}
                   />;
@@ -2566,7 +2639,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
 };
 
 // ─── Stateful loaders ─────────────────────────────────────────────────────────
-const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   if (projectIndex >= provider.projects.length) {
     if (provider.id === 'aws') {
       const bQ = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
@@ -2574,12 +2647,12 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
         <NrqlQuery accountIds={[ACCOUNT_ID]} query={bQ} pollInterval={300000}>
           {({ data }) => {
             const bc = data?.[0]?.data?.[0]?.y ?? data?.[0]?.data?.[0]?.totalCostINR ?? null;
-            return <ProjectsRendered provider={provider} allResults={results} billingCost={bc} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+            return <ProjectsRendered provider={provider} allResults={results} billingCost={bc} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
           }}
         </NrqlQuery>
       );
     }
-    return <ProjectsRendered provider={provider} allResults={results} billingCost={null} onManage={onManage} onInfraAction={onInfraAction} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
+    return <ProjectsRendered provider={provider} allResults={results} billingCost={null} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
   }
 
   const project = provider.projects[projectIndex];
@@ -2589,7 +2662,7 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
       return (
         <GcpProjectAutoLoaderStateful
           project={project} projectIndex={projectIndex} provider={provider}
-          results={results} onManage={onManage} onInfraAction={onInfraAction}
+          results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
           infraStates={infraStates} onLifecycleChange={onLifecycleChange}
         />
       );
@@ -2598,7 +2671,7 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
       return (
         <AwsTfAutoLoaderStateful
           project={project} projectIndex={projectIndex} provider={provider}
-          results={results} onManage={onManage} onInfraAction={onInfraAction}
+          results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
           infraStates={infraStates} onLifecycleChange={onLifecycleChange}
         />
       );
@@ -2607,7 +2680,7 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
         results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
-        onManage={onManage} onInfraAction={onInfraAction}
+        onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
     );
@@ -2617,7 +2690,7 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
     return (
       <GcpProjectAutoLoaderStateful
         project={project} projectIndex={projectIndex} provider={provider}
-        results={results} onManage={onManage} onInfraAction={onInfraAction}
+        results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
     );
@@ -2627,20 +2700,20 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
     <ProjectResourceLoaderStateful
       project={project} resourceIndex={0} collectedStatuses={[]}
       projectIndex={projectIndex} provider={provider} results={results}
-      onManage={onManage} onInfraAction={onInfraAction}
+      onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
     />
   );
 };
 
-const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   if (resourceIndex >= project.resources.length) {
     const anyLoading = collectedStatuses.some(r => r.loading);
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
         results={[...results, { projectIndex, loading: anyLoading, resourceStatuses: collectedStatuses }]}
-        onManage={onManage} onInfraAction={onInfraAction}
+        onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
     );
@@ -2653,7 +2726,7 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
           project={project} resourceIndex={resourceIndex + 1}
           collectedStatuses={[...collectedStatuses, rs]}
           projectIndex={projectIndex} provider={provider} results={results}
-          onManage={onManage} onInfraAction={onInfraAction}
+          onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
           infraStates={infraStates} onLifecycleChange={onLifecycleChange}
         />
       )}
@@ -2661,7 +2734,7 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
   );
 };
 
-const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   const [detectedResources, setDetectedResources] = React.useState(null);
 
   if (!project.gcpProjectId) {
@@ -2669,7 +2742,7 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
       <ProjectResourceLoaderStateful
         project={project} resourceIndex={0} collectedStatuses={[]}
         projectIndex={projectIndex} provider={provider} results={results}
-        onManage={onManage} onInfraAction={onInfraAction}
+        onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
     );
@@ -2692,25 +2765,25 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
     <ProjectResourceLoaderStateful
       project={enrichedProject} resourceIndex={0} collectedStatuses={[]}
       projectIndex={projectIndex} provider={provider} results={results}
-      onManage={onManage} onInfraAction={onInfraAction}
+      onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
     />
   );
 };
 
-const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const AwsTfAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   return (
     <ProjectListInnerStateful
       provider={provider} projectIndex={projectIndex + 1}
       results={[...results, { projectIndex, loading: false, resourceStatuses: [] }]}
-      onManage={onManage} onInfraAction={onInfraAction}
+      onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
     />
   );
 };
 
 // ─── CloudCard ────────────────────────────────────────────────────────────────
-const CloudCard = ({ provider, onManage, onInfraAction, infraStates, onLifecycleChange }) => {
+const CloudCard = ({ provider, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   const meta = PROVIDER_META[provider.id];
   return (
     <div className={`cloud-card cloud-card--${provider.id}`} style={{ background: meta.gradient }}>
@@ -2720,6 +2793,7 @@ const CloudCard = ({ provider, onManage, onInfraAction, infraStates, onLifecycle
         results={[]}
         onManage={onManage}
         onInfraAction={onInfraAction}
+        onNotify={onNotify}
         infraStates={infraStates}
         onLifecycleChange={onLifecycleChange}
       />
@@ -2768,6 +2842,7 @@ const EagleEye = () => {
   const [showConfig, setShowConfig] = useState(false);
   const [infraConfirm, setInfraConfirm] = useState(null);
   const [infraStates, setInfraStates] = useState({});
+  const [notifications, setNotifications] = useState([]);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('eagle-eye:theme') || 'dark'; } catch { return 'dark'; }
   });
@@ -2915,6 +2990,16 @@ const EagleEye = () => {
     });
   }, []);
 
+  const addNotification = useCallback((message) => {
+    const id = Date.now() + Math.random();
+    setNotifications(prev => [...prev, { id, message }]);
+    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
+  }, []);
+
+  const dismissNotification = useCallback((id) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
   if (!providers) return <EagleEyeLoader />;
 
   const handleInfraAction = (project, action, onDispatched) => {
@@ -2956,6 +3041,7 @@ const EagleEye = () => {
               provider={provider}
               onManage={(healthMap) => setShowModal({ providerId: provider.id, projectHealthMap: healthMap })}
               onInfraAction={handleInfraAction}
+              onNotify={addNotification}
               infraStates={infraStates}
               onLifecycleChange={handleLifecycleChange}
             />
@@ -2986,6 +3072,7 @@ const EagleEye = () => {
             onCancel={() => setInfraConfirm(null)}
           />
         )}
+        <ToastNotification notifications={notifications} onDismiss={dismissNotification} />
       </div>
     </GhTokenContext.Provider>
   );
