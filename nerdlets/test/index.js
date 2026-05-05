@@ -606,6 +606,64 @@ const SERVICE_QUERIES = {
   aws_s3: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/S3' FACET aws.s3.BucketName SINCE 1 hour ago LIMIT 30",
 };
 
+// AWS service name substrings to match against billing FACET results
+const AWS_SERVICE_KEYWORDS = {
+  aws_ec2:        ['elastic compute cloud', 'ec2 - compute', 'ec2-compute'],
+  aws_rds:        ['relational database'],
+  aws_s3:         ['simple storage'],
+  aws_lambda:     ['lambda'],
+  aws_cloudfront: ['cloudfront'],
+  aws_ecs:        ['container service', 'ecs'],
+  aws_apprunner:  ['app runner'],
+};
+
+// Single FACET query — tries both attribute names used by different NR AWS integration versions
+const BILLING_FACET_QUERY = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET \`aws.billing.ServiceName\`, \`provider.serviceName\` SINCE this month LIMIT 50`;
+
+const ResourceCostBadge = ({ resourceType }) => {
+  const keywords = AWS_SERVICE_KEYWORDS[resourceType];
+  if (!keywords) return null;
+
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+      {({ data, loading }) => {
+        if (loading) return (
+          <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
+        );
+
+        let cost = null;
+        if (Array.isArray(data)) {
+          for (const series of data) {
+            // Extract facet value (service name)
+            let name = null;
+            const groups = series?.metadata?.groups;
+            if (Array.isArray(groups)) { const f = groups.find(g => g.type === 'facet'); if (f?.value) name = f.value; }
+            if (!name) { const pt = series?.data?.[0]; if (pt?.facet) name = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
+            if (!name) name = series?.metadata?.name ?? '';
+            const nameLower = name.toLowerCase();
+            if (keywords.some(kw => nameLower.includes(kw))) {
+              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+              if (v != null) cost = (cost ?? 0) + v;
+            }
+          }
+        }
+
+        if (!cost || cost <= 0) return (
+          <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
+        );
+
+        const color = cost > 5000 ? '#ff4d6d' : cost > 2000 ? '#f5a623' : '#00d4aa';
+        const label = cost >= 1000 ? `₹${(cost / 1000).toFixed(1)}k` : `₹${Math.round(cost)}`;
+        return (
+          <span title={`This month: ₹${Math.round(cost)}`} style={{ fontSize: 10, fontWeight: 700, color, background: `${color}18`, border: `1px solid ${color}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
+            {label}/mo
+          </span>
+        );
+      }}
+    </NrqlQuery>
+  );
+};
+
 const noData = (resource) => resource.scalesToZero ? 'green' : resource.alwaysOn ? 'yellow' : 'unknown';
 
 const deriveResourceStatus = (resource, row) => {
@@ -1233,18 +1291,29 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
     return { text: `${name} (${id})`, pending: false };
   };
 
-  const renderInstanceRow = (id, i, dotCls, statusText, statusColor) => {
+  const renderInstanceRow = (id, i, dotCls, statusText, statusColor, cost = null) => {
     const { text } = buildLabel(id);
+    const hasCost = cost != null && cost > 0;
+    const costLabel = hasCost
+      ? (cost >= 1000 ? `₹${(cost / 1000).toFixed(1)}k` : `₹${Math.round(cost)}`)
+      : null;
     return (
       <div key={id} style={{
-        display: 'flex', alignItems: 'center', gap: 12,
+        display: 'flex', alignItems: 'center', gap: 8,
         padding: '8px 14px',
         borderTop: i === 0 ? 'none' : '1px solid var(--ee-row-div)',
         background: i % 2 === 0 ? 'var(--ee-s1)' : 'transparent',
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: 'var(--ee-t4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>
+        {hasCost ? (
+          <span title={`EC2 cost this month ÷ ${ec2Ids.length} instance${ec2Ids.length !== 1 ? 's' : ''}`} style={{ fontSize: 10, fontWeight: 700, color: '#f5a623', background: 'rgba(245,166,35,0.13)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
+            {costLabel}/mo
+          </span>
+        ) : (
+          <span style={{ fontSize: 10, fontWeight: 600, color: '#8899bb', background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>₹—</span>
+        )}
+        {statusText !== 'Running' && <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>}
       </div>
     );
   };
@@ -1282,61 +1351,72 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
     );
   }
 
-  // Provisioned: NRQL for statusFailed + instanceState — green default until metrics arrive
+  // Provisioned: billing query (outer) + status query (inner)
   return (
-    <NrqlQuery
-      accountIds={[ACCOUNT_ID]}
-      query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.InstanceState\`) AS instanceState FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
-      pollInterval={60000}
-    >
-      {({ data, loading: qLoading }) => {
-        const liveMap = {};
-        if (!qLoading && data) {
-          data.forEach(series => {
-            let id = null;
-            const groups = series?.metadata?.groups;
-            if (Array.isArray(groups)) {
-              const f = groups.find(g => g.type === 'facet');
-              if (f?.value) id = f.value;
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+      {({ data: billingData }) => {
+        let ec2TotalCost = null;
+        if (Array.isArray(billingData)) {
+          const EC2_KW = ['elastic compute cloud', 'ec2 - compute', 'ec2-compute'];
+          for (const series of billingData) {
+            let name = '';
+            const g = series?.metadata?.groups;
+            if (Array.isArray(g)) { const f = g.find(x => x.type === 'facet'); if (f?.value) name = f.value; }
+            if (!name) { const pt = series?.data?.[0]; if (pt?.facet) name = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
+            if (EC2_KW.some(kw => name.toLowerCase().includes(kw))) {
+              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+              if (v != null) ec2TotalCost = (ec2TotalCost ?? 0) + v;
             }
-            if (!id) {
-              const pt = series?.data?.[0];
-              if (pt?.facet) id = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet);
-            }
-            if (!id) return;
-            const pt = series?.data?.[0];
-            liveMap[id] = { statusFailed: pt?.statusFailed ?? null, instanceState: pt?.instanceState ?? null };
-          });
-        }
-
-        // Derive per-instance dot/label from NRQL state and statusFailed
-        const instanceColors = ec2Ids.map(id => {
-          const entry = liveMap[id];
-          if (!entry) {
-            return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
           }
-          const { statusFailed: sf, instanceState: st } = entry;
-          // State codes: 48 = terminated, 32 = shutting-down, 80 = stopped, 64 = stopping
-          if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
-          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: 'Stopped', color: '#f5a623' };
-          if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
-          return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
-        });
-
-        if (onStatusUpdate) {
-          const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
-          const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
-          const overallStatus = hasRed ? 'red' : hasYellow ? 'yellow' : 'green';
-          Promise.resolve().then(() => onStatusUpdate('aws_ec2', overallStatus, null));
         }
+        const costPerInstance = ec2TotalCost != null && ec2Ids.length > 0 ? ec2TotalCost / ec2Ids.length : null;
 
         return (
-          <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,153,0,0.12)', borderRadius: 6, overflow: 'hidden' }}>
-            {ec2Ids.map((id, i) => {
-              const { dot, text, color } = instanceColors[i];
-              return renderInstanceRow(id, i, dot, text, color);
-            })}
-          </div>
+          <NrqlQuery
+            accountIds={[ACCOUNT_ID]}
+            query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.InstanceState\`) AS instanceState FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
+            pollInterval={60000}
+          >
+            {({ data, loading: qLoading }) => {
+              const liveMap = {};
+              if (!qLoading && data) {
+                data.forEach(series => {
+                  let id = null;
+                  const groups = series?.metadata?.groups;
+                  if (Array.isArray(groups)) { const f = groups.find(g => g.type === 'facet'); if (f?.value) id = f.value; }
+                  if (!id) { const pt = series?.data?.[0]; if (pt?.facet) id = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
+                  if (!id) return;
+                  const pt = series?.data?.[0];
+                  liveMap[id] = { statusFailed: pt?.statusFailed ?? null, instanceState: pt?.instanceState ?? null };
+                });
+              }
+
+              const instanceColors = ec2Ids.map(id => {
+                const entry = liveMap[id];
+                if (!entry) return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
+                const { statusFailed: sf, instanceState: st } = entry;
+                if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
+                if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: 'Stopped', color: '#f5a623' };
+                if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
+                return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
+              });
+
+              if (onStatusUpdate) {
+                const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
+                const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
+                Promise.resolve().then(() => onStatusUpdate('aws_ec2', hasRed ? 'red' : hasYellow ? 'yellow' : 'green', null));
+              }
+
+              return (
+                <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,153,0,0.12)', borderRadius: 6, overflow: 'hidden' }}>
+                  {ec2Ids.map((id, i) => {
+                    const { dot, text, color } = instanceColors[i];
+                    return renderInstanceRow(id, i, dot, text, color, costPerInstance);
+                  })}
+                </div>
+              );
+            }}
+          </NrqlQuery>
         );
       }}
     </NrqlQuery>
@@ -1353,6 +1433,17 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
     }
     prevActionStateRef.current = actionState;
   }, [actionState]);
+
+  // For EC2, override status immediately based on lifecycle without requiring row expansion
+  React.useEffect(() => {
+    if (r.type !== 'aws_ec2' || !onStatusUpdate) return;
+    if (lifecycle === 'stopped') {
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'yellow', null));
+    } else if (lifecycle === 'terminated') {
+      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'red', null));
+    }
+  }, [r.type, lifecycle, onStatusUpdate]);
+
   const ghToken = React.useContext(GhTokenContext);
 
   // Always call unconditionally — hooks must never be conditional
@@ -1397,7 +1488,8 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
           </div>
           {r.reason && <div style={{ fontSize: '0.75rem', color: statusColor, marginTop: 3, lineHeight: 1.5, fontWeight: 500 }}>{r.reason}</div>}
         </div>
-        <span style={{ color: statusColor, fontSize: '0.75rem', fontWeight: 600, flexShrink: 0 }}>{statusLabel}</span>
+        {r.status !== 'green' && <span style={{ color: statusColor, fontSize: '0.75rem', fontWeight: 600, flexShrink: 0 }}>{statusLabel}</span>}
+        <ResourceCostBadge resourceType={r.type} />
         {hasSubList && (
           <span style={{ fontSize: 14, color: 'var(--ee-t3)', transition: 'transform 0.2s', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', flexShrink: 0 }}>›</span>
         )}
@@ -2719,17 +2811,27 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
     );
   }
   const resource = project.resources[resourceIndex];
+  const stateKey = project.projectDirName || project.name;
+  const lifecycle = infraStates?.[stateKey] || null;
   return (
     <SingleResourceQuery resource={resource} project={project}>
-      {rs => (
-        <ProjectResourceLoaderStateful
-          project={project} resourceIndex={resourceIndex + 1}
-          collectedStatuses={[...collectedStatuses, rs]}
-          projectIndex={projectIndex} provider={provider} results={results}
-          onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
-          infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-        />
-      )}
+      {rs => {
+        // Override EC2 status from lifecycle immediately — don't wait for NRQL or row expansion
+        let resolvedRs = rs;
+        if (rs.type === 'aws_ec2') {
+          if (lifecycle === 'stopped') resolvedRs = { ...rs, status: 'yellow', reason: null };
+          else if (lifecycle === 'terminated') resolvedRs = { ...rs, status: 'red', reason: null };
+        }
+        return (
+          <ProjectResourceLoaderStateful
+            project={project} resourceIndex={resourceIndex + 1}
+            collectedStatuses={[...collectedStatuses, resolvedRs]}
+            projectIndex={projectIndex} provider={provider} results={results}
+            onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
+            infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+          />
+        );
+      }}
     </SingleResourceQuery>
   );
 };
