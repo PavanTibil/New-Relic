@@ -1,7 +1,7 @@
 {
     "private": true,
     "name": "test",
-    "version": "0.3.91",
+    "version": "0.3.92",
     "scripts": {
         "start": "nr1 nerdpack:serve",
         "test": "exit 0"
