@@ -3222,7 +3222,7 @@ const EagleEye = () => {
     if (!ghToken) return;
     let cancelled = false;
     fetch(
-      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/nerdlets/test/auto-discovered-projects.json`,
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/nerdlets/eagle-eye/auto-discovered-projects.json`,
       {
         cache: 'no-store',
         headers: {
