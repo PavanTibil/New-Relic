@@ -1,4 +1,4 @@
-# Create the App Runner service
+﻿# Create the App Runner service
 resource "aws_apprunner_service" "prod_dtransformer_ms" {
   service_name = "Prod_dtransformer_ms"
 
@@ -35,7 +35,8 @@ resource "aws_apprunner_service" "prod_dtransformer_ms" {
   }
 
   tags = {
-    Environment = var.environment
-    App         = "ms"
+    Project_Name = "DMS"
+    Environment  = var.environment
+    App          = "ms"
   }
 }

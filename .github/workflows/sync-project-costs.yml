@@ -26,8 +26,8 @@ jobs:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION }}
-          NR_INGEST_KEY:         ${{ secrets.NR_API_KEY }}
+          NR_INGEST_KEY:         ${{ secrets.NR_INGEST_KEY }}
           NR_ACCOUNT_ID:         ${{ secrets.NR_ACCOUNT_ID }}
           INR_RATE:              '92'
-          TAG_KEY:               name
+          TAG_KEY:               Project_Name
         run: python scripts/sync-project-costs.py

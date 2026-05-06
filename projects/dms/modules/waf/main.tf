@@ -12,6 +12,11 @@ resource "aws_wafv2_ip_set" "prod_sarvatra_api_ip" {
 
   ip_address_version = "IPV4"
 
+  tags = {
+    Project_Name  = "DMS"
+    Resource_Type = "WAF"
+  }
+
   addresses = [
     "1.7.23.65/32",
     "129.154.47.227/32",
@@ -29,6 +34,11 @@ resource "aws_wafv2_web_acl" "waf_cloudfront" {
   name        = var.waf_name
   scope       = "CLOUDFRONT"
   description = "CloudFront Global WAF"
+
+  tags = {
+    Project_Name  = "DMS"
+    Resource_Type = "WAF"
+  }
 
   default_action {
     allow {}

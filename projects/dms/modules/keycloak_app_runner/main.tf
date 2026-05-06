@@ -46,6 +46,7 @@ resource "aws_apprunner_service" "keycloak_service" {
   }
 
   tags = {
-    Environment = var.environment
-    App         = "keycloak"
+    Project_Name = "DMS"
+    Environment  = var.environment
+    App          = "keycloak"
   }

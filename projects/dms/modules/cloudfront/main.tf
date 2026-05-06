@@ -220,4 +220,9 @@ resource "aws_cloudfront_distribution" "this" {
   }
 
   http_version = "http2"
+
+  tags = {
+    Project_Name = "DMS"
+    Resource_Type = "CloudFront"
+  }
 }

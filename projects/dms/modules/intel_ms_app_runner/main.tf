@@ -1,4 +1,4 @@
-# Create the App Runner service
+﻿# Create the App Runner service
 resource "aws_apprunner_service" "prod_intel_ms" {
   service_name = "Prod_Intel_ms"
 
@@ -17,7 +17,7 @@ resource "aws_apprunner_service" "prod_intel_ms" {
       }
     }
 
-    # ✅ Use existing manually created IAM Role
+    # âœ… Use existing manually created IAM Role
     authentication_configuration {
       access_role_arn = var.ecr_access_role_arn
     }
@@ -37,7 +37,8 @@ resource "aws_apprunner_service" "prod_intel_ms" {
   }
 
   tags = {
-    Environment = var.environment
-    App         = "ms"
+    Project_Name = "DMS"
+    Environment  = var.environment
+    App          = "ms"
   }
 }

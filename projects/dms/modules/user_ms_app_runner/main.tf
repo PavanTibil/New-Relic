@@ -35,7 +35,8 @@ resource "aws_apprunner_service" "prod_user_ms" {
   }
 
   tags = {
-    Environment = var.environment
-    App         = "ms"
+    Project_Name = "DMS"
+    Environment  = var.environment
+    App          = "ms"
   }
 }

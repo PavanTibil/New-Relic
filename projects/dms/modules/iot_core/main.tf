@@ -1,6 +1,11 @@
 # Create IoT Thing Group
 resource "aws_iot_thing_group" "iot_group" {
-  name        = var.thing_group_name
+  name = var.thing_group_name
+
+  tags = {
+    Project_Name  = "DMS"
+    Resource_Type = "IoT"
+  }
 }
 
 # IoT Policy using your exact JSON
