@@ -19,7 +19,21 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install boto3 requests
+
+      - name: Sync project costs to New Relic
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION }}
+          NR_INGEST_KEY:         ${{ secrets.NR_API_KEY }}
+          NR_ACCOUNT_ID:         ${{ secrets.NR_ACCOUNT_ID }}
+          INR_RATE:              '92'
+          TAG_KEY:               name
+        run: python scripts/sync-project-costs.py
+
+      - name: Wait for New Relic to index events
+        run: sleep 20
 
       - name: Generate HTML digest
         id: digest

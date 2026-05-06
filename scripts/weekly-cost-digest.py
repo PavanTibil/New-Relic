@@ -78,7 +78,15 @@ for row in totals_rows:
     }
 
 if not projects:
-    print('No project cost data found in New Relic. Exiting.')
+    print('No project cost data found in New Relic — writing placeholder email.')
+    placeholder = f"""<!DOCTYPE html><html><body style="font-family:sans-serif;padding:32px;">
+<h2 style="color:#4c1d95;">AWS Cost Digest — {now.strftime('%d %b %Y')}</h2>
+<p style="color:#555;">No cost data is available yet in New Relic for this month ({date_label}).<br>
+The sync pipeline may still be initializing — data will appear in the next digest.</p>
+</body></html>"""
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(placeholder)
+    print(f'Placeholder written to {OUTPUT_FILE}')
     sys.exit(0)
 
 print(f'Found {len(projects)} project(s): {", ".join(projects.keys())}')

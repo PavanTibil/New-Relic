@@ -674,7 +674,7 @@ const BILLING_FACET_QUERY = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 A
 // via AWS Cost Explorer (grouped by `name` cost allocation tag). Works correctly even when
 // two projects share the same resource type, because Cost Explorer isolates by tag.
 const awsProjectCostQuery = (projectName) =>
-  `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) = '${projectName.toLowerCase()}' SINCE this month`;
+  `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) LIKE '%${projectName.toLowerCase()}%' SINCE this month`;
 
 const gcpBillingFacetQuery = (gcpProjectId) =>
   `SELECT sum(cost) * 92 AS costINR FROM GcpBillingServiceSample WHERE projectId = '${gcpProjectId}' FACET serviceName SINCE this month LIMIT 50`;
