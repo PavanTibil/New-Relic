@@ -589,7 +589,7 @@ const SERVICE_QUERIES = {
   google_bigquery_dataset: (p) => `SELECT count(*) AS val FROM GcpBigQueryDataSetSample WHERE projectId = '${p.gcpProjectId}' FACET datasetId SINCE 30 minutes ago LIMIT 20`,
   google_container_cluster: (p) => `SELECT count(*) AS val FROM GcpKubernetesClusterSample WHERE projectId = '${p.gcpProjectId}' FACET clusterName SINCE 5 minutes ago LIMIT 20`,
   google_pubsub_topic: (p) => `SELECT count(*) AS val FROM GcpPubSubTopicSample WHERE projectId = '${p.gcpProjectId}' FACET topicId SINCE 5 minutes ago LIMIT 20`,
-  google_compute_instance: (p) => `SELECT count(*) AS val FROM GcpVirtualMachineSample WHERE projectId = '${p.gcpProjectId}' FACET instanceName SINCE 5 minutes ago LIMIT 20`,
+  google_compute_instance: () => null, // handled by GceInstanceList (tf_resources.json)
   google_spanner_instance: (p) => `SELECT count(*) AS val FROM GcpSpannerInstanceSample WHERE projectId = '${p.gcpProjectId}' FACET instanceId SINCE 5 minutes ago LIMIT 20`,
   google_storage_bucket: (p) => `SELECT count(*) AS val FROM GcpStorageBucketSample WHERE projectId = '${p.gcpProjectId}' FACET bucketName SINCE 1 hour ago LIMIT 20`,
   google_cloudfunctions2_function: (p) => `SELECT count(*) AS val FROM GcpCloudFunctionsSample WHERE projectId = '${p.gcpProjectId}' FACET functionName SINCE 5 minutes ago LIMIT 20`,
@@ -617,48 +617,143 @@ const AWS_SERVICE_KEYWORDS = {
   aws_apprunner:  ['app runner'],
 };
 
+// GCP service name substrings to match against GCP billing FACET results
+const GCP_SERVICE_KEYWORDS = {
+  google_compute_instance:         ['compute engine'],
+  google_cloud_run_v2_service:     ['cloud run'],
+  google_sql_database_instance:    ['cloud sql'],
+  google_bigquery_dataset:         ['bigquery'],
+  google_container_cluster:        ['kubernetes engine'],
+  google_pubsub_topic:             ['pub/sub', 'pubsub'],
+  google_storage_bucket:           ['cloud storage'],
+  google_cloudfunctions2_function: ['cloud functions'],
+  google_redis_instance:           ['memorystore'],
+  google_spanner_instance:         ['cloud spanner'],
+};
+
 // Single FACET query — tries both attribute names used by different NR AWS integration versions
 const BILLING_FACET_QUERY = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET \`aws.billing.ServiceName\`, \`provider.serviceName\` SINCE this month LIMIT 50`;
 
-const ResourceCostBadge = ({ resourceType }) => {
-  const keywords = AWS_SERVICE_KEYWORDS[resourceType];
-  if (!keywords) return null;
+const gcpBillingFacetQuery = (gcpProjectId) =>
+  `SELECT sum(cost) * 92 AS costINR FROM GcpBillingServiceSample WHERE projectId = '${gcpProjectId}' FACET serviceName SINCE this month LIMIT 50`;
 
+const gcpBillingTotalQuery = (gcpProjectId) =>
+  `SELECT sum(cost) * 92 AS costINR FROM GcpBillingProjectSample WHERE projectId = '${gcpProjectId}' SINCE this month`;
+
+const COST_BADGE_PLACEHOLDER = (
+  <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
+);
+
+const formatCostLabel = (cost) =>
+  cost >= 1000 ? `₹${(cost / 1000).toFixed(1)}k` : `₹${Math.round(cost)}`;
+
+const costColor = (cost) =>
+  cost > 5000 ? '#ff4d6d' : cost > 2000 ? '#f5a623' : '#00d4aa';
+
+const renderCostBadge = (cost) => {
+  if (!cost || cost <= 0) return COST_BADGE_PLACEHOLDER;
+  const color = costColor(cost);
   return (
-    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
-      {({ data, loading }) => {
-        if (loading) return (
-          <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
-        );
+    <span title={`Total incurred: ₹${Math.round(cost)}`} style={{ fontSize: 10, fontWeight: 700, color, background: `${color}18`, border: `1px solid ${color}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
+      {formatCostLabel(cost)}
+    </span>
+  );
+};
 
+const ResourceCostBadge = ({ resourceType, project }) => {
+  const awsKeywords = AWS_SERVICE_KEYWORDS[resourceType];
+  const gcpKeywords = GCP_SERVICE_KEYWORDS[resourceType];
+
+  if (!awsKeywords && !gcpKeywords) return COST_BADGE_PLACEHOLDER;
+
+  if (awsKeywords) {
+    return (
+      <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+        {({ data, loading }) => {
+          if (loading) return COST_BADGE_PLACEHOLDER;
+          let cost = null;
+          if (Array.isArray(data)) {
+            for (const series of data) {
+              const nameLower = (extractFacetName(series) ?? '').toLowerCase();
+              if (awsKeywords.some(kw => nameLower.includes(kw))) {
+                const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+                if (v != null) cost = (cost ?? 0) + v;
+              }
+            }
+          }
+          return renderCostBadge(cost);
+        }}
+      </NrqlQuery>
+    );
+  }
+
+  // GCP resource
+  if (!project?.gcpProjectId) return COST_BADGE_PLACEHOLDER;
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={gcpBillingFacetQuery(project.gcpProjectId)} pollInterval={300000}>
+      {({ data, loading }) => {
+        if (loading) return COST_BADGE_PLACEHOLDER;
         let cost = null;
         if (Array.isArray(data)) {
           for (const series of data) {
-            // Extract facet value (service name)
-            let name = null;
-            const groups = series?.metadata?.groups;
-            if (Array.isArray(groups)) { const f = groups.find(g => g.type === 'facet'); if (f?.value) name = f.value; }
-            if (!name) { const pt = series?.data?.[0]; if (pt?.facet) name = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
-            if (!name) name = series?.metadata?.name ?? '';
-            const nameLower = name.toLowerCase();
-            if (keywords.some(kw => nameLower.includes(kw))) {
+            const nameLower = (extractFacetName(series) ?? '').toLowerCase();
+            if (gcpKeywords.some(kw => nameLower.includes(kw))) {
               const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
               if (v != null) cost = (cost ?? 0) + v;
             }
           }
         }
+        return renderCostBadge(cost);
+      }}
+    </NrqlQuery>
+  );
+};
 
-        if (!cost || cost <= 0) return (
-          <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
-        );
+// Project-level total cost badge shown in the project row header
+const ProjectCostBadge = ({ project }) => {
+  if (project.billingOnly) return null;
 
-        const color = cost > 5000 ? '#ff4d6d' : cost > 2000 ? '#f5a623' : '#00d4aa';
-        const label = cost >= 1000 ? `₹${(cost / 1000).toFixed(1)}k` : `₹${Math.round(cost)}`;
-        return (
-          <span title={`This month: ₹${Math.round(cost)}`} style={{ fontSize: 10, fontWeight: 700, color, background: `${color}18`, border: `1px solid ${color}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
-            {label}/mo
-          </span>
-        );
+  const pillStyle = { fontSize: 10, fontWeight: 700, borderRadius: 100, padding: '2px 8px', border: '1px solid', flexShrink: 0 };
+  const placeholder = <span className="project-row__uptime-pill" style={{ ...pillStyle, color: '#8899bb', borderColor: 'rgba(100,120,170,0.35)', background: 'rgba(100,120,170,0.12)' }}>₹—</span>;
+
+  const makePill = (total, title) => {
+    const color = costColor(total);
+    return <span className="project-row__uptime-pill" title={title} style={{ ...pillStyle, color, borderColor: `${color}40`, background: `${color}18` }}>{formatCostLabel(total)}</span>;
+  };
+
+  // GCP: query total project cost from GcpBillingProjectSample
+  if (project.gcpProjectId) {
+    return (
+      <NrqlQuery accountIds={[ACCOUNT_ID]} query={gcpBillingTotalQuery(project.gcpProjectId)} pollInterval={300000}>
+        {({ data, loading }) => {
+          if (loading) return placeholder;
+          const cost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
+          if (!cost || cost <= 0) return placeholder;
+          return makePill(cost, `GCP total incurred this month: ₹${Math.round(cost)}`);
+        }}
+      </NrqlQuery>
+    );
+  }
+
+  // AWS: show ₹— immediately; if we have keyword matches, try to resolve a real cost
+  const allKeywords = (project.resources || []).flatMap(r => AWS_SERVICE_KEYWORDS[r.type] || []);
+  if (allKeywords.length === 0) return placeholder;
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+      {({ data, loading }) => {
+        if (loading) return placeholder;
+        let cost = null;
+        if (Array.isArray(data)) {
+          for (const series of data) {
+            const nameLower = (extractFacetName(series) ?? '').toLowerCase();
+            if (allKeywords.some(kw => nameLower.includes(kw))) {
+              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+              if (v != null) cost = (cost ?? 0) + v;
+            }
+          }
+        }
+        if (!cost || cost <= 0) return placeholder;
+        return makePill(cost, `AWS total incurred this month: ₹${Math.round(cost)}`);
       }}
     </NrqlQuery>
   );
@@ -1242,15 +1337,24 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       return raw ? (Date.now() - parseInt(raw, 10)) >= 60_000 : false;
     } catch { return false; }
   });
+  const prevLifecycleRef = React.useRef(lifecycle);
 
   React.useEffect(() => {
+    const wasTerminated = prevLifecycleRef.current === 'terminated';
+    prevLifecycleRef.current = lifecycle;
+
     if (lifecycle !== 'terminated') {
       try { localStorage.removeItem(_terminatedKey); } catch {}
       setListCleared(false);
       return;
     }
-    // Record the moment we first entered terminated state (don't overwrite on subsequent mounts)
-    try { if (!localStorage.getItem(_terminatedKey)) localStorage.setItem(_terminatedKey, String(Date.now())); } catch {}
+    // New termination (transition from non-terminated): always write a fresh timestamp
+    // Page refresh / remount already-terminated: preserve existing key so countdown continues
+    if (!wasTerminated) {
+      try { localStorage.setItem(_terminatedKey, String(Date.now())); } catch {}
+    } else {
+      try { if (!localStorage.getItem(_terminatedKey)) localStorage.setItem(_terminatedKey, String(Date.now())); } catch {}
+    }
     let raw; try { raw = localStorage.getItem(_terminatedKey); } catch {}
     const elapsed = Date.now() - (raw ? parseInt(raw, 10) : Date.now());
     const remaining = 60_000 - elapsed; // 1 minute
@@ -1294,9 +1398,8 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
   const renderInstanceRow = (id, i, dotCls, statusText, statusColor, cost = null) => {
     const { text } = buildLabel(id);
     const hasCost = cost != null && cost > 0;
-    const costLabel = hasCost
-      ? (cost >= 1000 ? `₹${(cost / 1000).toFixed(1)}k` : `₹${Math.round(cost)}`)
-      : null;
+    const costLabel = hasCost ? formatCostLabel(cost) : null;
+    const color = hasCost ? costColor(cost) : '#8899bb';
     return (
       <div key={id} style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -1306,13 +1409,9 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: 'var(--ee-t4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
-        {hasCost ? (
-          <span title={`EC2 cost this month ÷ ${ec2Ids.length} instance${ec2Ids.length !== 1 ? 's' : ''}`} style={{ fontSize: 10, fontWeight: 700, color: '#f5a623', background: 'rgba(245,166,35,0.13)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
-            {costLabel}/mo
-          </span>
-        ) : (
-          <span style={{ fontSize: 10, fontWeight: 600, color: '#8899bb', background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>₹—</span>
-        )}
+        <span title={hasCost ? `Total incurred: ₹${Math.round(cost)}` : 'No billing data'} style={{ fontSize: 10, fontWeight: 700, color, background: `${color}18`, border: `1px solid ${color}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
+          {costLabel ?? '₹—'}
+        </span>
         {statusText !== 'Running' && <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>}
       </div>
     );
@@ -1434,27 +1533,31 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
     prevActionStateRef.current = actionState;
   }, [actionState]);
 
-  // For EC2, override status immediately based on lifecycle without requiring row expansion
+  // Override lifecycle-driven status immediately without requiring row expansion
+  const LIFECYCLE_TYPES = ['aws_ec2', 'google_compute_instance'];
   React.useEffect(() => {
-    if (r.type !== 'aws_ec2' || !onStatusUpdate) return;
+    if (!LIFECYCLE_TYPES.includes(r.type) || !onStatusUpdate) return;
     if (lifecycle === 'stopped') {
-      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'yellow', null));
+      Promise.resolve().then(() => onStatusUpdate(r.type, 'yellow', null));
     } else if (lifecycle === 'terminated') {
-      Promise.resolve().then(() => onStatusUpdate('aws_ec2', 'red', null));
+      Promise.resolve().then(() => onStatusUpdate(r.type, 'red', null));
+    } else if (lifecycle === 'provisioned') {
+      Promise.resolve().then(() => onStatusUpdate(r.type, 'green', null));
     }
   }, [r.type, lifecycle, onStatusUpdate]);
 
   const ghToken = React.useContext(GhTokenContext);
 
   // Always call unconditionally — hooks must never be conditional
+  const usesTfList = r.type === 'aws_ec2' || r.type === 'google_compute_instance';
   const { loading: ec2IdsLoading, ec2Ids } = useTfResources(
-    r.type === 'aws_ec2' ? project.projectDirName : null,
+    usesTfList ? project.projectDirName : null,
     ghToken,
-    r.type === 'aws_ec2' ? actionState : null
+    usesTfList ? actionState : null
   );
 
-  const hasSubList = r.type === 'aws_ec2'
-    // Show chevron whenever we have a lifecycle — Ec2InstanceList handles empty/loading state
+  const hasSubList = usesTfList
+    // Show chevron whenever we have a lifecycle — instance list handles empty/loading state
     ? !!(lifecycle)
     : !!(SERVICE_QUERIES[r.type] && typeof SERVICE_QUERIES[r.type] === 'function' && SERVICE_QUERIES[r.type](project) !== null);
 
@@ -1466,7 +1569,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
       : r.status === 'red' ? (r.alwaysOn ? 'Errors' : 'Stopped')
         : 'No Data';
 
-  const query = (r.type !== 'aws_ec2' && hasSubList)
+  const query = (!usesTfList && hasSubList)
     ? (typeof SERVICE_QUERIES[r.type] === 'function' ? SERVICE_QUERIES[r.type](project) : null)
     : null;
 
@@ -1489,7 +1592,7 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
           {r.reason && <div style={{ fontSize: '0.75rem', color: statusColor, marginTop: 3, lineHeight: 1.5, fontWeight: 500 }}>{r.reason}</div>}
         </div>
         {r.status !== 'green' && <span style={{ color: statusColor, fontSize: '0.75rem', fontWeight: 600, flexShrink: 0 }}>{statusLabel}</span>}
-        <ResourceCostBadge resourceType={r.type} />
+        <ResourceCostBadge resourceType={r.type} project={project} />
         {hasSubList && (
           <span style={{ fontSize: 14, color: 'var(--ee-t3)', transition: 'transform 0.2s', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', flexShrink: 0 }}>›</span>
         )}
@@ -1508,12 +1611,25 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
             />
           )}
 
+          {/* ── GCE: show instance names/zones from tf_resources.json immediately ── */}
+          {r.type === 'google_compute_instance' && (
+            <GceInstanceList
+              project={project}
+              lifecycle={lifecycle}
+              actionState={actionState}
+            />
+          )}
+
           {/* ── All other resource types: NRQL facet sub-list ── */}
-          {r.type !== 'aws_ec2' && query && (
+          {!usesTfList && query && (
             <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={60000}>
               {({ data, loading }) => {
                 if (loading) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', fontStyle: 'italic' }}>Loading…</div>;
-                if (!data || data.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No instances found</div>;
+                if (!data || data.length === 0) return (
+                  <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>
+                    {lifecycle === 'provisioned' ? '⏳ Starting — waiting for metrics…' : 'No instances found'}
+                  </div>
+                );
                 const acC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.08)' : 'rgba(66,133,244,0.08)';
                 const boC = r.type.startsWith('aws') ? 'rgba(255,153,0,0.12)' : 'rgba(66,133,244,0.12)';
 
@@ -1607,7 +1723,11 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
                 // Generic fallback
                 const seen = new Set();
                 const items = data.map(s => { const n = extractFacetName(s); if (!n || seen.has(n)) return null; seen.add(n); return n; }).filter(Boolean);
-                if (items.length === 0) return <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>No instances found</div>;
+                if (items.length === 0) return (
+                  <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>
+                    {lifecycle === 'provisioned' ? '⏳ Starting — waiting for metrics…' : 'No instances found'}
+                  </div>
+                );
                 const iD = r.status === 'green' ? 'green' : r.status === 'red' ? 'red' : 'yellow';
                 const iL = r.status === 'green' ? '✓ Active' : r.status === 'red' ? '✗ Errors' : '⚠ Warning';
                 const iC = r.status === 'green' ? '#00d4aa' : r.status === 'red' ? '#ff4d6d' : '#f5a623';
@@ -1628,6 +1748,78 @@ const ExpandableResourceRow = ({ resource: r, project, lifecycle, actionState, l
         </>
       )}
     </div>
+  );
+};
+
+// ─── GceInstanceList ─────────────────────────────────────────────────────────
+const GceInstanceList = ({ project, lifecycle, actionState }) => {
+  const ghToken = React.useContext(GhTokenContext);
+  const [fetchKey, setFetchKey] = React.useState(0);
+  React.useEffect(() => {
+    if (actionState === INFRA_STATES.SUCCEEDED) {
+      const t = setTimeout(() => setFetchKey(k => k + 1), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [actionState]);
+
+  const { loading, allResources } = useTfResources(project.projectDirName, ghToken, `${actionState}_${fetchKey}`);
+
+  const gceRaw = allResources?.gce_instances || [];
+  const instances = gceRaw.map(entry => {
+    const parts = entry.split('/');
+    return { name: parts[parts.length - 1], zone: parts.slice(0, -1).join('/') || '', raw: entry };
+  });
+
+  const acC = 'rgba(66,133,244,0.08)';
+  const boC = 'rgba(66,133,244,0.12)';
+  const dotCls = lifecycle === 'stopped' ? 'yellow' : lifecycle === 'terminated' ? 'red' : 'green';
+
+  if (loading) return (
+    <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)', fontStyle: 'italic' }}>Loading instances…</div>
+  );
+
+  if (instances.length === 0) return (
+    <div style={{ padding: '4px 12px 6px', fontSize: 11, color: 'var(--ee-t2)' }}>
+      {lifecycle === 'provisioned' ? '⏳ Starting — waiting for metrics…' : 'No instances found'}
+    </div>
+  );
+
+  // Fetch total Compute Engine cost for this GCP project, split evenly across instances
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={project.gcpProjectId ? gcpBillingFacetQuery(project.gcpProjectId) : 'SELECT 1'} pollInterval={300000}>
+      {({ data: billingData }) => {
+        let totalCost = null;
+        if (Array.isArray(billingData) && project.gcpProjectId) {
+          for (const series of billingData) {
+            const nameLower = (extractFacetName(series) ?? '').toLowerCase();
+            if (GCP_SERVICE_KEYWORDS.google_compute_instance.some(kw => nameLower.includes(kw))) {
+              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+              if (v != null) totalCost = (totalCost ?? 0) + v;
+            }
+          }
+        }
+        const costPerInstance = totalCost != null && instances.length > 0 ? totalCost / instances.length : null;
+
+        return (
+          <div style={{ margin: '0 8px 6px', background: acC, border: `1px solid ${boC}`, borderRadius: 6, overflow: 'hidden' }}>
+            {instances.map((inst, i) => {
+              const hasCost = costPerInstance != null && costPerInstance > 0;
+              const instLabel = hasCost ? formatCostLabel(costPerInstance) : '₹—';
+              const instColor = hasCost ? costColor(costPerInstance) : '#8899bb';
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: i < instances.length - 1 ? '1px solid var(--ee-row-div)' : 'none' }}>
+                  <span className={'status-dot status-dot--' + dotCls} style={{ width: 6, height: 6, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: 'var(--ee-t1)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inst.name}</div>
+                  </div>
+                  <span title={hasCost ? `Total incurred: ₹${Math.round(costPerInstance)}` : 'No billing data'} style={{ fontSize: 10, fontWeight: 700, color: instColor, background: `${instColor}18`, border: `1px solid ${instColor}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>{instLabel}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }}
+    </NrqlQuery>
   );
 };
 
@@ -2182,6 +2374,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
     }
   }, [persistedLifecycle]); // eslint-disable-line
 
+
   // Sync lifecycle with detected manual termination or recovery
   useEffect(() => {
     const GRACE_PERIOD = 5 * 60 * 1000; // 5 minutes
@@ -2453,6 +2646,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
           )}
           {!loading && infraReady && !showGhostState && uptimeSummary !== null && !isBusy && <span className="project-row__uptime-pill">{uptimeSummary} uptime</span>}
           {!loading && infraReady && !showGhostState && billingSummary !== null && !isBusy && <span className="project-row__uptime-pill">{billingSummary} today</span>}
+          {billingSummary === null && (project.gcpProjectId || project.projectDirName) && <ProjectCostBadge project={project} />}
           {isBusy && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: 'var(--ee-rname)', background: 'rgba(122,138,170,0.12)', border: '1px solid rgba(122,138,170,0.3)', borderRadius: 100, padding: '2px 8px' }}>
               <SpinnerIcon size={10} color="#8899bb" />
@@ -2541,12 +2735,14 @@ const SingleResourceQuery = ({ resource, project, children }) => {
           let status = row === null ? noData(resource) : deriveResourceStatus(resource, row);
           let reason = deriveResourceReason(resource, row, status);
 
-          // Trust-First: Grace period after Apply (5 mins)
+          // Trust-First: Grace period after Apply/Start (5 mins)
+          // Covers both null rows and rows with samples=0 (VM starting up, metrics not yet flowing)
           const GRACE_PERIOD = 5 * 60 * 1000;
           const isWithinGracePeriod = (Date.now() - (lastActionTime || 0)) < GRACE_PERIOD;
-          if (row === null && isWithinGracePeriod) {
+          const noSamples = row === null || (row !== null && (row.samples ?? -1) === 0);
+          if (isWithinGracePeriod && noSamples && status !== 'green') {
             status = 'green';
-            reason = '✓ Provisioned (Syncing metrics...)';
+            reason = null;
           }
 
           rs = { ...resource, status, reason, row, loading: false };
@@ -2816,11 +3012,13 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
   return (
     <SingleResourceQuery resource={resource} project={project}>
       {rs => {
-        // Override EC2 status from lifecycle immediately — don't wait for NRQL or row expansion
+        // Override lifecycle-driven status immediately — don't wait for NRQL or row expansion
+        const LIFECYCLE_TYPES = ['aws_ec2', 'google_compute_instance'];
         let resolvedRs = rs;
-        if (rs.type === 'aws_ec2') {
+        if (LIFECYCLE_TYPES.includes(rs.type)) {
           if (lifecycle === 'stopped') resolvedRs = { ...rs, status: 'yellow', reason: null };
           else if (lifecycle === 'terminated') resolvedRs = { ...rs, status: 'red', reason: null };
+          else if (lifecycle === 'provisioned' && rs.status !== 'red') resolvedRs = { ...rs, status: 'green', reason: null };
         }
         return (
           <ProjectResourceLoaderStateful
