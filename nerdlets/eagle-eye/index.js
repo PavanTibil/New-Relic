@@ -2663,11 +2663,20 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
 };
 
 const ProjectServiceCostBreakdown = ({ project }) => {
+  const [usdInrRate, setUsdInrRate] = useState(92.15);
+
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d?.rates?.INR) setUsdInrRate(d.rates.INR); })
+      .catch(() => {});
+  }, []);
+
   if (!project.projectDirName || project.billingOnly) return null;
 
   const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
 
-  const renderBreakdown = (query, costKey) => (
+  const renderBreakdown = (query, costKey, rateLabel) => (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
       {({ data, loading }) => {
         if (loading) return null;
@@ -2683,8 +2692,9 @@ const ProjectServiceCostBreakdown = ({ project }) => {
         const total = services.reduce((s, r) => s + r.cost, 0);
         return (
           <div style={{ borderTop: '1px solid var(--ee-row-div)', padding: '10px 12px 12px' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
-              Cost by Service — MTD
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>Cost by Service — MTD</span>
+              {rateLabel && <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--ee-t4)', textTransform: 'none', letterSpacing: 0 }}>{rateLabel}</span>}
             </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
               <div style={{ width: 140, height: 140, flexShrink: 0 }}>
@@ -2712,16 +2722,12 @@ const ProjectServiceCostBreakdown = ({ project }) => {
   );
 
   if (project.gcpProjectId) {
-    const gcpQuery = gcpBillingFacetQuery(project.gcpProjectId);
-    return renderBreakdown(gcpQuery, 'costINR');
+    return renderBreakdown(gcpBillingFacetQuery(project.gcpProjectId), 'costINR', null);
   }
 
-  const tagValue = project.awsTagValue || project.name || project.projectDirName || '';
-  if (!tagValue) return null;
-  const awsQuery = project.awsTagValue
-    ? `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' FACET serviceName SINCE this month LIMIT 20`
-    : `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) LIKE '%${tagValue.toLowerCase()}%' FACET serviceName SINCE this month LIMIT 20`;
-  return renderBreakdown(awsQuery, 'costINR');
+  const rate = usdInrRate.toFixed(2);
+  const awsQuery = `SELECT max(aws.billing.EstimatedCharges) * ${rate} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET aws.billing.ServiceName SINCE this month LIMIT MAX`;
+  return renderBreakdown(awsQuery, 'costINR', `1 USD = ₹${rate}`);
 };
 
 const openDashboard = (project) => {
