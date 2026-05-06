@@ -944,7 +944,8 @@ const ec2StateDisplay = (state) => {
   }
 };
 
-const BILLING_BUDGET_INR = 4600;
+const BILLING_BUDGET_USD = 50;
+const BILLING_BUDGET_INR = BILLING_BUDGET_USD * 92; // approx INR for status calculations
 const billingCostToStatus = (cost) => { if (cost === null) return 'unknown'; const pct = (cost / BILLING_BUDGET_INR) * 100; return pct >= 70 ? 'red' : pct >= 50 ? 'yellow' : 'green'; };
 const estimatedCostToStatus = (est) => { if (est === null) return 'unknown'; const pct = (est / BILLING_BUDGET_INR) * 100; return pct >= 100 ? 'red' : pct >= 85 ? 'yellow' : 'green'; };
 
@@ -1041,7 +1042,7 @@ const BillingHealthBadge = ({ cost, provisioned = true }) => {
       <span className="status-badge__dot" />
       <span className="status-badge__billing-current">{'₹' + cost.toFixed(0)}</span>
       <span className="status-badge__billing-sep">/</span>
-      <span className="status-badge__billing-budget">{'₹' + BILLING_BUDGET_INR + ' budget'}</span>
+      <span className="status-badge__billing-budget">${BILLING_BUDGET_USD + ' budget'}</span>
     </span>
   );
 };
@@ -1844,26 +1845,52 @@ const ProvisionedResourceRow = ({ resource: r, project, lifecycle, actionState, 
 
 
 // ─── Billing display ───────────────────────────────────────────────────────────
-const BillingSimple = ({ cost, budget }) => {
+const BillingSimple = ({ cost }) => {
+  const [usdRate, setUsdRate] = useState(92.0);
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d?.rates?.INR) setUsdRate(d.rates.INR); })
+      .catch(() => {});
+  }, []);
+
   if (cost === null) return <div style={{ color: 'var(--ee-t2)', fontSize: 12, fontStyle: 'italic' }}>No billing data</div>;
-  const now = new Date(), day = now.getDate(), dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(), est = (cost / day) * dim;
+
+  // cost is INR from NRQL (* 92 hardcoded). Back-calculate USD using same rate.
+  const NRQL_RATE = 92;
+  const costUSD = cost / NRQL_RATE;
+  // Budget is $50 USD — convert to INR at live rate
+  const budgetINR = BILLING_BUDGET_USD * usdRate;
+
+  const now = new Date(), day = now.getDate(), dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const est = (cost / day) * dim;
+  const estUSD = costUSD / day * dim;
+
   const status = billingCostToStatus(cost), estStatus = estimatedCostToStatus(est);
-  const col = status === 'red' ? '#ff4d6d' : status === 'yellow' ? '#f5a623' : '#00d4aa', eCol = estStatus === 'red' ? '#ff4d6d' : estStatus === 'yellow' ? '#f5a623' : '#00d4aa';
-  const pct = Math.min((cost / budget) * 100, 100), fPct = ((cost / budget) * 100).toFixed(1);
+  const col = status === 'red' ? '#ff4d6d' : status === 'yellow' ? '#f5a623' : '#00d4aa';
+  const eCol = estStatus === 'red' ? '#ff4d6d' : estStatus === 'yellow' ? '#f5a623' : '#00d4aa';
+  const pct = Math.min((cost / budgetINR) * 100, 100), fPct = ((cost / budgetINR) * 100).toFixed(1);
+
   const st = { flex: 1, padding: '8px 10px', background: 'var(--ee-s1)', borderRadius: 8, border: '1px solid var(--ee-b1)' };
   const lb = { fontSize: 10, color: 'var(--ee-t2)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 };
   const vl = (c) => ({ fontSize: 18, fontWeight: 800, color: c });
+  const sub = { fontSize: 10, color: 'var(--ee-t4)', marginTop: 2 };
   return (
     <div style={{ padding: '6px 4px' }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <div style={st}><div style={lb}>Current</div><div style={vl(col)}>{'₹' + cost.toFixed(0)}</div></div>
-        <div style={st}><div style={lb}>Est. Month-end</div><div style={vl(eCol)}>{'₹' + est.toFixed(0)}</div></div>
-        <div style={st}><div style={lb}>Budget</div><div style={vl('var(--ee-t1)')}>{'₹' + budget}</div></div>
+        <div style={st}><div style={lb}>Current</div><div style={vl(col)}>{'₹' + cost.toFixed(0)}</div><div style={sub}>${costUSD.toFixed(2)}</div></div>
+        <div style={st}><div style={lb}>Est. Month-end</div><div style={vl(eCol)}>{'₹' + est.toFixed(0)}</div><div style={sub}>${estUSD.toFixed(2)}</div></div>
+        <div style={st}><div style={lb}>Budget</div><div style={vl('var(--ee-t1)')}>{'₹' + budgetINR.toFixed(0)}</div><div style={sub}>${BILLING_BUDGET_USD}</div></div>
       </div>
       <div style={{ background: 'var(--ee-s3)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: pct + '%', background: col, borderRadius: 4, transition: 'width 0.4s' }} />
       </div>
-      <div style={{ marginTop: 4, fontSize: 10, color: col, textAlign: 'right', fontWeight: 600 }}>{fPct}% of budget used · Day {day} of {dim}</div>
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--ee-t4)', background: 'rgba(108,63,197,0.12)', border: '1px solid rgba(108,63,197,0.25)', borderRadius: 100, padding: '2px 8px' }}>
+          1 USD = ₹{usdRate.toFixed(2)}
+        </span>
+        <span style={{ fontSize: 10, color: col, fontWeight: 600 }}>{fPct}% of budget used · Day {day} of {dim}</span>
+      </div>
     </div>
   );
 };
@@ -2538,12 +2565,12 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         </div>
         {expanded && (
           <div className="project-row__detail" style={{ paddingBottom: 12 }}>
-            <BillingSimple cost={totalCost} budget={BILLING_BUDGET_INR} />
+            <BillingSimple cost={totalCost} />
             {providerId === 'aws' && (
               <div>
                 <div
                   onClick={() => setShowCostChart(p => !p)}
-                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--ee-accent)', borderTop: '1px solid var(--ee-row-div)', userSelect: 'none' }}
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 11, fontWeight: 600, color: '#a78bfa', borderTop: '1px solid var(--ee-row-div)', userSelect: 'none' }}
                 >
                   <span style={{ fontSize: 13, display: 'inline-block', transform: showCostChart ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.18s' }}>›</span>
                   Cost per Service
@@ -2974,6 +3001,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
             loading={r?.loading ?? false}
             index={i}
             billingCost={project.billingOnly ? billingCost : null}
+            providerId={provider.id}
             onInfraAction={onInfraAction}
             onNotify={onNotify}
             persistedLifecycle={persistedLifecycle}
@@ -3008,6 +3036,7 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
                     loading={r?.loading ?? false}
                     index={i}
                     billingCost={null}
+                    providerId={provider.id}
                     onInfraAction={onInfraAction}
                     onNotify={onNotify}
                     persistedLifecycle={persistedLifecycle}
@@ -3140,12 +3169,27 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
 };
 
 const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
+  const stateKey = project.projectDirName || project.name;
+  const lifecycle = infraStates?.[stateKey] || null;
   const [detectedResources, setDetectedResources] = React.useState(null);
 
   if (!project.gcpProjectId) {
     return (
       <ProjectResourceLoaderStateful
         project={project} resourceIndex={0} collectedStatuses={[]}
+        projectIndex={projectIndex} provider={provider} results={results}
+        onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+
+  // Skip auto-detect for terminated/stopped projects — render immediately with static resources
+  if (lifecycle === 'terminated' || lifecycle === 'stopped') {
+    const projectWithResources = { ...project, resources: project.resources ?? [] };
+    return (
+      <ProjectResourceLoaderStateful
+        project={projectWithResources} resourceIndex={0} collectedStatuses={[]}
         projectIndex={projectIndex} provider={provider} results={results}
         onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
