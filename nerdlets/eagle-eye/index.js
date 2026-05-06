@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { NrqlQuery, NerdGraphQuery, PieChart, navigation } from 'nr1';
+import { NrqlQuery, NerdGraphQuery, navigation } from 'nr1';
 import './styles.scss';
 
 const GhTokenContext = React.createContext('');
@@ -981,7 +981,6 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction,
                 if (status === 'green' && onClearLifecycle) onClearLifecycle('provisioned');
               }} />
           </div>
-          <ProjectServiceCostBreakdown project={project} />
         </div>
       )}
     </div>
@@ -2685,14 +2684,13 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         <div className="project-row__detail">
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {(hasResources || project.projectDirName) && renderResourceDetail()}
-          <ProjectServiceCostBreakdown project={project} />
         </div>
       )}
     </div>
   );
 };
 
-// Shared: renders a pie chart + legend from any NRQL FACET query that returns a costINR column
+// Shared: renders a service cost breakdown list from any NRQL FACET query (costINR column)
 const ServiceCostPieChart = ({ query, rateLabel = null }) => {
   const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
   return (
@@ -2708,31 +2706,25 @@ const ServiceCostPieChart = ({ query, rateLabel = null }) => {
           }
         }
         if (services.length === 0) return null;
+        services.sort((a, b) => b.cost - a.cost);
         const total = services.reduce((s, r) => s + r.cost, 0);
+        const cols = services.length > 6 ? 2 : 1;
         return (
-          <div style={{ borderTop: '1px solid var(--ee-row-div)', padding: '10px 12px 12px' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>Cost by Service — MTD</span>
-              {rateLabel && <span style={{ fontWeight: 400, fontSize: 10, color: 'var(--ee-t4)', textTransform: 'none', letterSpacing: 0 }}>{rateLabel}</span>}
-            </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <div style={{ width: 140, height: 140, flexShrink: 0 }}>
-                <PieChart accountIds={[ACCOUNT_ID]} query={query} fullWidth fullHeight />
-              </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
-                {services.map((svc, i) => {
-                  const pct = total > 0 ? (svc.cost / total * 100).toFixed(1) : 0;
-                  const color = COLORS[i % COLORS.length];
-                  return (
-                    <div key={svc.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 11, color: 'var(--ee-t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{svc.name}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ee-t1)', whiteSpace: 'nowrap' }}>{formatCostLabel(svc.cost)}</span>
-                      <span style={{ fontSize: 10, color: 'var(--ee-t4)', whiteSpace: 'nowrap' }}>{pct}%</span>
-                    </div>
-                  );
-                })}
-              </div>
+          <div style={{ padding: '10px 12px 14px' }}>
+            {rateLabel && <div style={{ fontSize: 10, color: 'var(--ee-t4)', marginBottom: 8 }}>{rateLabel}</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '5px 20px' }}>
+              {services.map((svc, i) => {
+                const pct = total > 0 ? (svc.cost / total * 100).toFixed(1) : 0;
+                const color = COLORS[i % COLORS.length];
+                return (
+                  <div key={svc.name} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, color: 'var(--ee-t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{svc.name}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ee-t1)', whiteSpace: 'nowrap', marginLeft: 4 }}>{formatCostLabel(svc.cost)}</span>
+                    <span style={{ fontSize: 10, color: 'var(--ee-t4)', whiteSpace: 'nowrap', minWidth: 36, textAlign: 'right' }}>{pct}%</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
@@ -3349,13 +3341,24 @@ const MoonIcon = () => (
   </svg>
 );
 
+const readBaseProviders = () => {
+  const doc = lsRead(LS_PROVIDERS_KEY);
+  return (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0)
+    ? doc.providers : DEFAULT_CLOUD_PROVIDERS;
+};
+
 const EagleEye = () => {
-  const [providers, setProviders] = useState(null);
-  const [ghToken, setGhToken] = useState('');
+  // Lazy initializers — all localStorage reads happen synchronously before the first paint
+  const [providers, setProviders] = useState(() => mergeAutoDiscovered(readBaseProviders()));
+  const [ghToken, setGhToken] = useState(() => {
+    try { return lsRead(LS_CONFIG_KEY)?.accessToken || ''; } catch { return ''; }
+  });
+  const [infraStates, setInfraStates] = useState(() => {
+    try { return lsRead(LS_INFRA_STATES_KEY)?.infraStates || {}; } catch { return {}; }
+  });
   const [showModal, setShowModal] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   const [infraConfirm, setInfraConfirm] = useState(null);
-  const [infraStates, setInfraStates] = useState({});
   const [notifications, setNotifications] = useState([]);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('eagle-eye:theme') || 'dark'; } catch { return 'dark'; }
@@ -3367,21 +3370,10 @@ const EagleEye = () => {
   };
 
   useEffect(() => {
-    const providersDoc = lsRead(LS_PROVIDERS_KEY);
-    const baseProviders = (providersDoc?.providers && Array.isArray(providersDoc.providers) && providersDoc.providers.length > 0)
-      ? providersDoc.providers
-      : DEFAULT_CLOUD_PROVIDERS;
-
-    // Render immediately with bundled/cached data so the dashboard is visible at once.
-    // The live GitHub fetch (triggered by setting ghToken) will silently update if needed.
-    setProviders(mergeAutoDiscovered(baseProviders));
-    const configDoc = lsRead(LS_CONFIG_KEY);
-    if (configDoc?.accessToken) setGhToken(configDoc.accessToken);
-
+    // Clean up stale infra states for newly re-added projects
+    const baseProviders = readBaseProviders();
     const infraDoc = lsRead(LS_INFRA_STATES_KEY);
     if (infraDoc?.infraStates) {
-      // Detect projects in AUTO_DISCOVERED absent from persisted providers (re-added after deletion)
-      // and wipe their stale infra state so they don't show as Destroyed.
       const existingDirNames = new Set(
         baseProviders.flatMap(p => (p.projects || []).map(proj => proj.projectDirName)).filter(Boolean)
       );
@@ -3391,8 +3383,6 @@ const EagleEye = () => {
         freshlyAdded.forEach(d => { delete cleaned[d]; });
         setInfraStates(cleaned);
         persistInfraStates(cleaned).catch(() => {});
-      } else {
-        setInfraStates(infraDoc.infraStates);
       }
     }
 
@@ -3410,15 +3400,9 @@ const EagleEye = () => {
     return () => window.removeEventListener('ee:project-not-found', handleProjectNotFound);
   }, []);
 
-  // Stores the raw localStorage providers so the live fetch can merge against them
-  // even though setProviders hasn't been called yet (providers is still null).
+  // Stores the raw base providers so the live GitHub fetch can merge against them
   const baseProvidersRef = React.useRef(null);
-  useEffect(() => {
-    const doc = lsRead(LS_PROVIDERS_KEY);
-    baseProvidersRef.current = (doc?.providers && Array.isArray(doc.providers) && doc.providers.length > 0)
-      ? doc.providers
-      : DEFAULT_CLOUD_PROVIDERS;
-  }, []);
+  if (baseProvidersRef.current === null) baseProvidersRef.current = readBaseProviders();
 
   // Keep a ref so the auto-discover effect can read current providers without
   // listing it as a dep (prevents the AWS card from re-rendering on every providers change)
