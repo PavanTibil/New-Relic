@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { NrqlQuery, navigation } from 'nr1';
+import { NrqlQuery, NerdGraphQuery, navigation } from 'nr1';
 import './styles.scss';
 
 const GhTokenContext = React.createContext('');
@@ -168,6 +168,26 @@ const GCP_DISCOVERY_MAP = [
   { type: 'google_cloudfunctions2_function', label: 'Cloud Functions', nrTable: 'GcpCloudFunctionsSample', desc: 'Serverless functions', alwaysOn: false },
   { type: 'google_redis_instance', label: 'Memorystore Redis', nrTable: 'GcpRedisInstanceSample', desc: 'Managed Redis instances', alwaysOn: true },
 ];
+
+// Maps New Relic entity type strings (from NerdGraph entitySearch) to our resource definitions.
+// Entity type strings come from the `type` field on entities returned by the NerdGraph entitySearch API.
+const AWS_ENTITY_RESOURCE_MAP = {
+  'EC2_INSTANCE':                { type: 'aws_ec2',        label: 'EC2',           alwaysOn: true  },
+  'RDS_DB_INSTANCE':             { type: 'aws_rds',        label: 'RDS',           alwaysOn: true  },
+  'RDS_DB_CLUSTER':              { type: 'aws_rds',        label: 'RDS',           alwaysOn: true  },
+  'LAMBDA_FUNCTION':             { type: 'aws_lambda',     label: 'Lambda',        alwaysOn: false },
+  'S3_BUCKET':                   { type: 'aws_s3',         label: 'S3',            alwaysOn: false },
+  'ECS_CLUSTER':                 { type: 'aws_ecs',        label: 'ECS',           alwaysOn: true  },
+  'ECS_SERVICE':                 { type: 'aws_ecs',        label: 'ECS',           alwaysOn: true  },
+  'CLOUDFRONT_DISTRIBUTION':     { type: 'aws_cloudfront', label: 'CloudFront',    alwaysOn: true  },
+  'SNS_TOPIC':                   { type: 'aws_sns',        label: 'SNS',           alwaysOn: true  },
+  'SQS_QUEUE':                   { type: 'aws_sqs',        label: 'SQS',           alwaysOn: true  },
+  'ECR_REPOSITORY':              { type: 'aws_ecr',        label: 'ECR',           alwaysOn: true  },
+  'APPLICATION_LOAD_BALANCER':   { type: 'aws_alb',        label: 'Load Balancer', alwaysOn: true  },
+  'NETWORK_LOAD_BALANCER':       { type: 'aws_alb',        label: 'Load Balancer', alwaysOn: true  },
+  'APP_RUNNER_SERVICE':          { type: 'aws_apprunner',  label: 'App Runner',    alwaysOn: true  },
+  'DYNAMODB_TABLE':              { type: 'aws_dynamodb',   label: 'DynamoDB',      alwaysOn: true  },
+};
 
 const TF_TO_EE_TYPE = {
   aws_instance: 'aws_ec2',
@@ -578,6 +598,7 @@ const buildResourceQuery = (resource, project) => {
     case 'aws_ecs': return `SELECT count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/ECS' SINCE 5 minutes ago`;
     case 'aws_lambda': return `SELECT count(*) AS samples, sum(\`aws.lambda.Errors\`) AS errors FROM Metric WHERE aws.Namespace = 'AWS/Lambda' SINCE 5 minutes ago`;
     case 'aws_s3': return `SELECT count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/S3' SINCE 1 hour ago`;
+    case 'aws_dynamodb': return `SELECT count(*) AS samples, average(\`aws.dynamodb.ConsumedReadCapacityUnits\`) AS readCU FROM Metric WHERE aws.Namespace = 'AWS/DynamoDB' SINCE 5 minutes ago`;
     case 'aws_billing': return `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR, count(*) AS samples FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
     default: return `SELECT count(*) AS samples FROM Metric WHERE entity.name = '${resource.label}' SINCE 5 minutes ago`;
   }
@@ -608,24 +629,27 @@ const SERVICE_QUERIES = {
   aws_iotcore: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/IoT' FACET aws.iot.RuleName SINCE 5 minutes ago LIMIT 30",
 };
 
-// AWS service name substrings to match against billing FACET results
+// AWS service name substrings to match against billing FACET results.
+// Covers both compact form (AmazonEC2, AmazonRDS) and long form (Amazon Elastic Compute Cloud)
+// since different accounts / integration versions return different formats.
 const AWS_SERVICE_KEYWORDS = {
-  aws_ec2:        ['elastic compute cloud', 'ec2 - compute', 'ec2-compute'],
-  aws_rds:        ['relational database'],
-  aws_s3:         ['simple storage'],
-  aws_lambda:     ['lambda'],
-  aws_cloudfront: ['cloudfront'],
-  aws_ecs:        ['container service', 'ecs'],
-  aws_apprunner:  ['app runner'],
-  aws_ecr:        ['elastic container registry', 'ecr'],
-  aws_iotcore:    ['iot', 'internet of things'],
-  aws_waf:        ['waf', 'web application firewall'],
-  aws_secretsmanager: ['secrets manager'],
-  aws_nat_gateway: ['nat gateway'],
-  aws_vpc:        ['vpc', 'virtual private cloud'],
-  aws_sns:        ['simple notification', 'sns'],
-  aws_sqs:        ['simple queue', 'sqs'],
-  aws_alb:        ['elastic load balancing', 'elb', 'alb', 'nlb'],
+  aws_ec2:            ['amazonec2', 'amazon ec2', 'elastic compute cloud', 'ec2 - other', 'ec2 - compute', 'ec2-compute'],
+  aws_rds:            ['amazonrds', 'amazon rds', 'relational database'],
+  aws_s3:             ['amazons3', 'amazon s3', 'simple storage'],
+  aws_lambda:         ['lambda'],
+  aws_cloudfront:     ['cloudfront'],
+  aws_ecs:            ['amazonecs', 'amazon ecs', 'container service'],
+  aws_apprunner:      ['apprunner', 'app runner'],
+  aws_ecr:            ['amazonecr', 'amazon ecr', 'elastic container registry'],
+  aws_iotcore:        ['awsiot', 'amazon iot', 'internet of things'],
+  aws_waf:            ['awswaf', 'amazon waf', 'web application firewall'],
+  aws_secretsmanager: ['secretsmanager', 'secrets manager'],
+  aws_nat_gateway:    ['nat gateway'],
+  aws_vpc:            ['amazonvpc', 'amazon vpc', 'virtual private cloud'],
+  aws_sns:            ['amazonsns', 'amazon sns', 'simple notification'],
+  aws_sqs:            ['amazonsqs', 'amazon sqs', 'simple queue'],
+  aws_alb:            ['elasticloadbalancing', 'elastic load balancing', 'elb', 'alb', 'nlb'],
+  aws_dynamodb:       ['amazondynamodb', 'amazon dynamodb', 'dynamodb'],
 };
 
 // GCP service name substrings to match against GCP billing FACET results
@@ -642,14 +666,22 @@ const GCP_SERVICE_KEYWORDS = {
   google_spanner_instance:         ['cloud spanner'],
 };
 
-// Single FACET query — tries both attribute names used by different NR AWS integration versions
-const BILLING_FACET_QUERY = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET \`aws.billing.ServiceName\`, \`provider.serviceName\` SINCE this month LIMIT 50`;
+// Billing FACET query — aws.billing.ServiceName is the only service-level dimension present
+// (provider.serviceName does not exist in this account's billing metrics per keyset check)
+const BILLING_FACET_QUERY = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET \`aws.billing.ServiceName\` SINCE this month LIMIT 50`;
+
+// Per-project cost query — reads from AwsProjectCost custom events pushed by sync-project-costs.py
+// via AWS Cost Explorer (grouped by `name` cost allocation tag). Works correctly even when
+// two projects share the same resource type, because Cost Explorer isolates by tag.
+const awsProjectCostQuery = (projectName) =>
+  `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) = '${projectName.toLowerCase()}' SINCE this month`;
 
 const gcpBillingFacetQuery = (gcpProjectId) =>
   `SELECT sum(cost) * 92 AS costINR FROM GcpBillingServiceSample WHERE projectId = '${gcpProjectId}' FACET serviceName SINCE this month LIMIT 50`;
 
 const gcpBillingTotalQuery = (gcpProjectId) =>
   `SELECT sum(cost) * 92 AS costINR FROM GcpBillingProjectSample WHERE projectId = '${gcpProjectId}' SINCE this month`;
+
 
 const COST_BADGE_PLACEHOLDER = (
   <span style={{ fontSize: 10, color: '#8899bb', fontWeight: 600, background: 'rgba(100,120,170,0.22)', border: '1px solid rgba(100,120,170,0.45)', borderRadius: 100, padding: '1px 7px' }}>₹—</span>
@@ -746,25 +778,41 @@ const ProjectCostBadge = ({ project }) => {
     );
   }
 
-  // AWS: show ₹— immediately; if we have keyword matches, try to resolve a real cost
-  const allKeywords = (project.resources || []).flatMap(r => AWS_SERVICE_KEYWORDS[r.type] || []);
-  if (allKeywords.length === 0) return placeholder;
+  // AWS: query AwsProjectCost custom events written by the sync-project-costs GitHub Action.
+  // Cost Explorer groups costs by the `name` tag, so two projects with the same resource type
+  // (e.g. both have EC2) are correctly isolated — each only sees its own tagged resources' cost.
+  // Falls back to the keyword approach if no custom events exist yet (before first sync run).
+  const tagValue = project.name || project.projectDirName || '';
+  if (!tagValue) return placeholder;
   return (
-    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={awsProjectCostQuery(tagValue)} pollInterval={300000}>
       {({ data, loading }) => {
         if (loading) return placeholder;
-        let cost = null;
-        if (Array.isArray(data)) {
-          for (const series of data) {
-            const nameLower = (extractFacetName(series) ?? '').toLowerCase();
-            if (allKeywords.some(kw => nameLower.includes(kw))) {
-              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
-              if (v != null) cost = (cost ?? 0) + v;
-            }
-          }
-        }
-        if (!cost || cost <= 0) return placeholder;
-        return makePill(cost, `AWS total incurred this month: ₹${Math.round(cost)}`);
+        const ceCost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
+        if (ceCost > 0) return makePill(ceCost, `AWS total this month (Cost Explorer): ₹${Math.round(ceCost)}`);
+
+        // Fallback: keyword-match against billing metrics while Cost Explorer events aren't available yet
+        const allKeywords = (project.resources || []).flatMap(r => AWS_SERVICE_KEYWORDS[r.type] || []);
+        if (allKeywords.length === 0) return placeholder;
+        return (
+          <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
+            {({ data: bData, loading: bLoading }) => {
+              if (bLoading) return placeholder;
+              let cost = null;
+              if (Array.isArray(bData)) {
+                for (const series of bData) {
+                  const nameLower = (extractFacetName(series) ?? '').toLowerCase();
+                  if (allKeywords.some(kw => nameLower.includes(kw))) {
+                    const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
+                    if (v != null) cost = (cost ?? 0) + v;
+                  }
+                }
+              }
+              if (!cost || cost <= 0) return placeholder;
+              return makePill(cost, `AWS total this month: ₹${Math.round(cost)}`);
+            }}
+          </NrqlQuery>
+        );
       }}
     </NrqlQuery>
   );
@@ -2881,9 +2929,11 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
           const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
           const stateKey = getProjectStateKey(project);
           const persistedLifecycle = infraStates?.[stateKey] || null;
+          // Use tag-detected resources for billing keyword matching if available
+          const projectForRow = r?.detectedResources ? { ...project, resources: r.detectedResources } : project;
           return <ProjectRow
             key={project.projectDirName || project.name}
-            project={project}
+            project={projectForRow}
             resourceStatuses={r?.resourceStatuses ?? []}
             loading={r?.loading ?? false}
             index={i}
@@ -2912,9 +2962,10 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
                   const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
                   const stateKey = getProjectStateKey(project);
                   const persistedLifecycle = infraStates?.[stateKey] || null;
+                  const projectForRow = r?.detectedResources ? { ...project, resources: r.detectedResources } : project;
                   return <ProjectRow
                     key={project.projectDirName || project.name}
-                    project={project}
+                    project={projectForRow}
                     resourceStatuses={r?.resourceStatuses ?? []}
                     loading={r?.loading ?? false}
                     index={i}
@@ -2956,19 +3007,23 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
 
   const project = provider.projects[projectIndex];
 
+  // AWS projects with a projectDirName always go through tag-based detection.
+  // AwsTagAutoLoaderStateful discovers resources via NerdGraph entity tags, then
+  // falls back to the static resources list if nothing is found.
+  if (provider.id === 'aws' && !project.deleted && !project.empty && !project.billingOnly && project.projectDirName) {
+    return (
+      <AwsTagAutoLoaderStateful
+        project={project} projectIndex={projectIndex} provider={provider}
+        results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
+        infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      />
+    );
+  }
+
   if (project.deleted || project.empty || project.billingNotConfigured || project.billingOnly || !project.resources || project.resources.length === 0) {
     if (provider.id === 'gcp' && !project.deleted && !project.empty && !project.billingNotConfigured && !project.billingOnly && project.gcpProjectId) {
       return (
         <GcpProjectAutoLoaderStateful
-          project={project} projectIndex={projectIndex} provider={provider}
-          results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
-          infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-        />
-      );
-    }
-    if (provider.id === 'aws' && !project.deleted && !project.empty && !project.billingOnly && project.projectDirName) {
-      return (
-        <AwsTfAutoLoaderStateful
           project={project} projectIndex={projectIndex} provider={provider}
           results={results} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
           infraStates={infraStates} onLifecycleChange={onLifecycleChange}
@@ -3005,13 +3060,13 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
   );
 };
 
-const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
+const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange, detectedResources }) => {
   if (resourceIndex >= project.resources.length) {
     const anyLoading = collectedStatuses.some(r => r.loading);
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: anyLoading, resourceStatuses: collectedStatuses }]}
+        results={[...results, { projectIndex, loading: anyLoading, resourceStatuses: collectedStatuses, detectedResources }]}
         onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
@@ -3038,6 +3093,7 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
             projectIndex={projectIndex} provider={provider} results={results}
             onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
             infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+            detectedResources={detectedResources}
           />
         );
       }}
@@ -3078,6 +3134,101 @@ const GcpProjectAutoLoaderStateful = ({ project, projectIndex, provider, results
       projectIndex={projectIndex} provider={provider} results={results}
       onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+    />
+  );
+};
+
+// Discovers AWS resources for a project by searching NerdGraph entities tagged with
+// `name` = project name (case-insensitive LIKE match). Calls onComplete with the list
+// of found resource definitions, or empty array if none found.
+const AwsTagAutoDetectLoader = ({ project, onComplete }) => {
+  const doneRef = React.useRef(false);
+  const projectName = project.name || project.projectDirName || '';
+
+  React.useEffect(() => {
+    if (doneRef.current || !projectName) {
+      if (!projectName) onComplete([]);
+      return;
+    }
+    const nerdGraphQuery = `{
+      actor {
+        entitySearch(query: "tags.name LIKE '${projectName}' AND accountId = '${ACCOUNT_ID}' AND domain = 'INFRA'") {
+          results {
+            entities {
+              type
+            }
+          }
+        }
+      }
+    }`;
+    NerdGraphQuery.query({ query: nerdGraphQuery })
+      .then(({ data }) => {
+        if (doneRef.current) return;
+        doneRef.current = true;
+        const entities = data?.actor?.entitySearch?.results?.entities ?? [];
+        const seenTypes = new Set();
+        const discovered = [];
+        for (const entity of entities) {
+          const def = AWS_ENTITY_RESOURCE_MAP[entity.type];
+          if (def && !seenTypes.has(def.type)) {
+            seenTypes.add(def.type);
+            discovered.push({ ...def });
+          }
+        }
+        onComplete(discovered);
+      })
+      .catch(() => {
+        if (!doneRef.current) { doneRef.current = true; onComplete([]); }
+      });
+  }, []); // eslint-disable-line
+
+  return null;
+};
+
+// Renders immediately with static resources so the card loads without waiting for NerdGraph.
+// Entity detection runs in the background via useEffect; resources update silently if the
+// detected set differs from the static list (e.g. a new service was tagged but not in JSON).
+const AwsTagAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
+  const [resources, setResources] = React.useState(project.resources ?? []);
+  const detectedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (detectedRef.current) return;
+    const projectName = project.name || project.projectDirName || '';
+    if (!projectName) return;
+    NerdGraphQuery.query({
+      query: `{
+        actor {
+          entitySearch(query: "tags.name LIKE '${projectName}' AND accountId = '${ACCOUNT_ID}' AND domain = 'INFRA'") {
+            results { entities { type } }
+          }
+        }
+      }`
+    }).then(({ data }) => {
+      if (detectedRef.current) return;
+      detectedRef.current = true;
+      const entities = data?.actor?.entitySearch?.results?.entities ?? [];
+      const seen = new Set();
+      const found = [];
+      for (const e of entities) {
+        const def = AWS_ENTITY_RESOURCE_MAP[e.type];
+        if (def && !seen.has(def.type)) { seen.add(def.type); found.push({ ...def }); }
+      }
+      if (found.length > 0) {
+        const foundTypes = found.map(r => r.type).sort().join(',');
+        const currentTypes = resources.map(r => r.type).sort().join(',');
+        if (foundTypes !== currentTypes) setResources(found);
+      }
+    }).catch(() => { detectedRef.current = true; });
+  }, []); // eslint-disable-line
+
+  return (
+    <ProjectResourceLoaderStateful
+      project={{ ...project, resources }} resourceIndex={0} collectedStatuses={[]}
+      projectIndex={projectIndex} provider={provider} results={results}
+      onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
+      infraStates={infraStates} onLifecycleChange={onLifecycleChange}
+      detectedResources={resources}
     />
   );
 };

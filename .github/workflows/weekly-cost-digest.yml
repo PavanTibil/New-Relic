@@ -1,0 +1,45 @@
+name: Weekly AWS Cost Digest Email
+
+on:
+  schedule:
+    - cron: '30 11 * * 5'   # Friday 11:30 UTC = 5:00 PM IST
+  workflow_dispatch:          # manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate HTML digest
+        id: digest
+        env:
+          NR_API_KEY:    ${{ secrets.NR_API_KEY }}
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+          OUTPUT_FILE:   digest.html
+        run: |
+          python scripts/weekly-cost-digest.py
+          echo "date=$(date +'%d %b %Y')" >> $GITHUB_OUTPUT
+
+      - name: Send digest email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "AWS Cost Digest — Week ending ${{ steps.digest.outputs.date }}"
+          to: pavan.ks@tibilsolutions.com
+          from: Eagle Eye <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://digest.html
+          convert_markdown: false
