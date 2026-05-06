@@ -22,5 +22,67 @@
         "alwaysOn": true
       }
     ]
+  },
+  "dms": {
+    "projectDirName": "dms",
+    "name": "Dms",
+    "provider": "aws",
+    "resources": [
+      {
+        "label": "SNS",
+        "type": "aws_sns",
+        "alwaysOn": true
+      },
+      {
+        "label": "CloudFront",
+        "type": "aws_cloudfront",
+        "alwaysOn": true
+      },
+      {
+        "label": "App Runner",
+        "type": "aws_apprunner",
+        "alwaysOn": true
+      },
+      {
+        "label": "ECR",
+        "type": "aws_ecr",
+        "alwaysOn": true
+      },
+      {
+        "label": "IoT Core",
+        "type": "aws_iotcore",
+        "alwaysOn": true
+      },
+      {
+        "label": "VPC",
+        "type": "aws_vpc",
+        "alwaysOn": true
+      },
+      {
+        "label": "RDS",
+        "type": "aws_rds",
+        "alwaysOn": true
+      },
+      {
+        "label": "S3",
+        "type": "aws_s3",
+        "alwaysOn": true
+      },
+      {
+        "label": "Secrets Manager",
+        "type": "aws_secretsmanager",
+        "alwaysOn": true
+      },
+      {
+        "label": "NAT Gateway",
+        "type": "aws_nat_gateway",
+        "alwaysOn": true
+      },
+      {
+        "label": "WAF",
+        "type": "aws_waf",
+        "alwaysOn": true
+      }
+    ]
   }
 }
