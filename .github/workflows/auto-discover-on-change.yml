@@ -5,8 +5,8 @@ on:
     branches: [main]
     paths:
       - 'projects/**'
-      - 'nerdlets/test/index.js'
-      - 'nerdlets/test/styles.scss'
+      - 'nerdlets/eagle-eye/index.js'
+      - 'nerdlets/eagle-eye/styles.scss'
 
 permissions:
   contents: write
@@ -50,7 +50,7 @@ jobs:
         run: |
           git config user.name  "Eagle Eye Bot"
           git config user.email "eagle-eye-bot@github-actions"
-          git add nerdlets/test/auto-discovered-projects.json
+          git add nerdlets/eagle-eye/auto-discovered-projects.json
           git diff --staged --quiet || \
             git commit -m "chore(eagle-eye): sync project registry (add/remove) [skip ci]"
           git push
@@ -76,7 +76,7 @@ jobs:
         run: |
           CHANGED=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files: $CHANGED"
-          if echo "$CHANGED" | grep -qE 'nerdlets/test/(index\.js|styles\.scss)'; then
+          if echo "$CHANGED" | grep -qE 'nerdlets/eagle-eye/(index\.js|styles\.scss)'; then
             echo "files_changed=true" >> $GITHUB_OUTPUT
           else
             echo "files_changed=false" >> $GITHUB_OUTPUT

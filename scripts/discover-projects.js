@@ -7,7 +7,7 @@ const path = require('path');
 // ─── Repo root ───────────────────────────────────────────────────────────────
 const REPO_ROOT    = process.cwd();
 const PROJECTS_DIR = path.join(REPO_ROOT, 'projects');
-const OUTPUT_PATH  = path.join(REPO_ROOT, 'nerdlets', 'test', 'auto-discovered-projects.json');
+const OUTPUT_PATH  = path.join(REPO_ROOT, 'nerdlets', 'eagle-eye', 'auto-discovered-projects.json');
 const SIGNAL_FILE  = '/tmp/eagle-eye-has-changes';
 
 // ─── Terraform resource map ──────────────────────────────────────────────────
