@@ -27,13 +27,24 @@ const mergeAutoDiscovered = (providers, discovered = AUTO_DISCOVERED) => {
     }),
   }));
 
-  // Step 2: Add every discovered project into its correct provider
+  // Step 2: Add every discovered project into its correct provider,
+  // and update JSON-authoritative fields (gcpProjectId, resources) for existing ones.
   for (const [dirName, disc] of Object.entries(discovered)) {
     const { provider, name } = disc;
     if (!provider || !name) continue;
     const providerEntry = merged.find(p => p.id === provider);
     if (!providerEntry) continue;
-    if (providerEntry.projects.some(p => p.projectDirName === dirName)) continue;
+    const existingIdx = providerEntry.projects.findIndex(p => p.projectDirName === dirName);
+    if (existingIdx >= 0) {
+      const ex = providerEntry.projects[existingIdx];
+      providerEntry.projects[existingIdx] = {
+        ...ex,
+        gcpProjectId: disc.gcpProjectId ?? ex.gcpProjectId ?? null,
+        resources: Array.isArray(disc.resources) ? disc.resources : ex.resources,
+        knownServices: Array.isArray(disc.knownServices) ? disc.knownServices : ex.knownServices,
+      };
+      continue;
+    }
     providerEntry.projects.push({
       name,
       projectDirName: dirName,
@@ -951,6 +962,7 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction,
           <span className="status-dot status-dot--grey" />
           <span className="project-row__name">{project.name}</span>
           <span style={{ fontSize: 10, fontWeight: 700, color: '#ff4d6d', background: 'rgba(255,77,109,0.12)', border: '1px dashed rgba(255,77,109,0.35)', borderRadius: 100, padding: '2px 9px', textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>Destroyed</span>
+          <ProjectCostBadge project={project} />
         </div>
         <div className="project-row__right">
           <span className={`project-row__chevron${expanded ? ' project-row__chevron--open' : ''}`}>›</span>
@@ -969,6 +981,7 @@ const TerminatedProjectRow = ({ project, index, actionState, activeAction,
                 if (status === 'green' && onClearLifecycle) onClearLifecycle('provisioned');
               }} />
           </div>
+          <ProjectServiceCostBreakdown project={project} />
         </div>
       )}
     </div>
@@ -2347,6 +2360,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   }, [project.resources]);
 
   const [expanded, setExpanded] = useState(false);
+  const [showCostChart, setShowCostChart] = useState(false);
   const [lifecycle, setLifecycle] = useState(persistedLifecycle || null);
   const [actionState, setActionState] = useState(INFRA_STATES.IDLE);
   const [activeAction, setActiveAction] = useState(null);
@@ -2523,7 +2537,23 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
           <div className="project-row__left"><span className={'status-dot status-dot--' + dC} /><span className="project-row__name">{project.name}</span>{costLabel && <span className="project-row__uptime-pill">{costLabel} this month</span>}</div>
           <div className="project-row__right"><span className={'project-row__chevron' + (expanded ? ' project-row__chevron--open' : '')}>›</span><DashboardIcon onClick={e => { e.stopPropagation(); openDashboard(project); }} /></div>
         </div>
-        {expanded && <div className="project-row__detail" style={{ paddingBottom: 12 }}><BillingSimple cost={totalCost} budget={BILLING_BUDGET_INR} /></div>}
+        {expanded && (
+          <div className="project-row__detail" style={{ paddingBottom: 12 }}>
+            <BillingSimple cost={totalCost} budget={BILLING_BUDGET_INR} />
+            {providerId === 'aws' && (
+              <div>
+                <div
+                  onClick={() => setShowCostChart(p => !p)}
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--ee-accent)', borderTop: '1px solid var(--ee-row-div)', userSelect: 'none' }}
+                >
+                  <span style={{ fontSize: 13, display: 'inline-block', transform: showCostChart ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.18s' }}>›</span>
+                  Cost per Service
+                </div>
+                {showCostChart && <AwsBillingServiceBreakdown />}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -2662,29 +2692,18 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
   );
 };
 
-const ProjectServiceCostBreakdown = ({ project }) => {
-  const [usdInrRate, setUsdInrRate] = useState(92.15);
-
-  useEffect(() => {
-    fetch('https://open.er-api.com/v6/latest/USD')
-      .then(r => r.json())
-      .then(d => { if (d?.rates?.INR) setUsdInrRate(d.rates.INR); })
-      .catch(() => {});
-  }, []);
-
-  if (!project.projectDirName || project.billingOnly) return null;
-
+// Shared: renders a pie chart + legend from any NRQL FACET query that returns a costINR column
+const ServiceCostPieChart = ({ query, rateLabel = null }) => {
   const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
-
-  const renderBreakdown = (query, costKey, rateLabel) => (
+  return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
       {({ data, loading }) => {
         if (loading) return null;
         const services = [];
         if (Array.isArray(data)) {
           for (const series of data) {
-            const name = extractFacetName(series) || 'Other';
-            const cost = series?.data?.[0]?.[costKey] ?? series?.data?.[0]?.y ?? 0;
+            const name = extractFacetName(series) || series?.metadata?.name || 'Other';
+            const cost = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? 0;
             if (cost > 0) services.push({ name, cost });
           }
         }
@@ -2720,14 +2739,36 @@ const ProjectServiceCostBreakdown = ({ project }) => {
       }}
     </NrqlQuery>
   );
+};
 
-  if (project.gcpProjectId) {
-    return renderBreakdown(gcpBillingFacetQuery(project.gcpProjectId), 'costINR', null);
-  }
-
+// Account-wide AWS service breakdown — shown in the "AWS Billing" billing-only expanded view
+const AwsBillingServiceBreakdown = () => {
+  const [usdInrRate, setUsdInrRate] = useState(92.15);
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d?.rates?.INR) setUsdInrRate(d.rates.INR); })
+      .catch(() => {});
+  }, []);
   const rate = usdInrRate.toFixed(2);
-  const awsQuery = `SELECT max(aws.billing.EstimatedCharges) * ${rate} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET aws.billing.ServiceName SINCE this month LIMIT MAX`;
-  return renderBreakdown(awsQuery, 'costINR', `1 USD = ₹${rate}`);
+  const query = `SELECT max(aws.billing.EstimatedCharges) * ${rate} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET aws.billing.ServiceName SINCE this month LIMIT MAX`;
+  return <ServiceCostPieChart query={query} rateLabel={`1 USD = ₹${rate}`} />;
+};
+
+// Per-project service breakdown — shown in individual project expanded views
+// AWS: uses AwsProjectServiceCost events (Cost Explorer, tag-filtered by Project_Name)
+// GCP: uses GcpBillingServiceSample (filtered by gcpProjectId)
+const ProjectServiceCostBreakdown = ({ project }) => {
+  if (!project.projectDirName || project.billingOnly) return null;
+  if (project.gcpProjectId) {
+    return <ServiceCostPieChart query={gcpBillingFacetQuery(project.gcpProjectId)} />;
+  }
+  const tagValue = project.awsTagValue || project.name || project.projectDirName || '';
+  if (!tagValue) return null;
+  const query = project.awsTagValue
+    ? `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' FACET serviceName SINCE this month LIMIT 20`
+    : `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) LIKE '%${tagValue.toLowerCase()}%' FACET serviceName SINCE this month LIMIT 20`;
+  return <ServiceCostPieChart query={query} />;
 };
 
 const openDashboard = (project) => {
@@ -3331,15 +3372,11 @@ const EagleEye = () => {
       ? providersDoc.providers
       : DEFAULT_CLOUD_PROVIDERS;
 
+    // Render immediately with bundled/cached data so the dashboard is visible at once.
+    // The live GitHub fetch (triggered by setting ghToken) will silently update if needed.
+    setProviders(mergeAutoDiscovered(baseProviders));
     const configDoc = lsRead(LS_CONFIG_KEY);
-    if (configDoc?.accessToken) {
-      setGhToken(configDoc.accessToken);
-      // Keep providers null — the live fetch will set the full merged state in one shot,
-      // so the loader shows until everything is ready and no intermediate flash occurs.
-    } else {
-      // No token — can't fetch live JSON; fall back to bundled JSON immediately.
-      setProviders(mergeAutoDiscovered(baseProviders));
-    }
+    if (configDoc?.accessToken) setGhToken(configDoc.accessToken);
 
     const infraDoc = lsRead(LS_INFRA_STATES_KEY);
     if (infraDoc?.infraStates) {
