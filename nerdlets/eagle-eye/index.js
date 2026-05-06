@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { NrqlQuery, NerdGraphQuery, navigation } from 'nr1';
+import { NrqlQuery, NerdGraphQuery, PieChart, navigation } from 'nr1';
 import './styles.scss';
 
 const GhTokenContext = React.createContext('');
@@ -704,33 +704,12 @@ const renderCostBadge = (cost) => {
 };
 
 const ResourceCostBadge = ({ resourceType, project }) => {
-  const awsKeywords = AWS_SERVICE_KEYWORDS[resourceType];
   const gcpKeywords = GCP_SERVICE_KEYWORDS[resourceType];
 
-  if (!awsKeywords && !gcpKeywords) return COST_BADGE_PLACEHOLDER;
+  // AWS: show placeholder until AwsProjectServiceCost events arrive from Cost Explorer sync
+  if (!gcpKeywords) return COST_BADGE_PLACEHOLDER;
 
-  if (awsKeywords) {
-    return (
-      <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
-        {({ data, loading }) => {
-          if (loading) return COST_BADGE_PLACEHOLDER;
-          let cost = null;
-          if (Array.isArray(data)) {
-            for (const series of data) {
-              const nameLower = (extractFacetName(series) ?? '').toLowerCase();
-              if (awsKeywords.some(kw => nameLower.includes(kw))) {
-                const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
-                if (v != null) cost = (cost ?? 0) + v;
-              }
-            }
-          }
-          return renderCostBadge(cost);
-        }}
-      </NrqlQuery>
-    );
-  }
-
-  // GCP resource
+  // GCP: query is already per-project (filtered by gcpProjectId)
   if (!project?.gcpProjectId) return COST_BADGE_PLACEHOLDER;
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={gcpBillingFacetQuery(project.gcpProjectId)} pollInterval={300000}>
@@ -1486,72 +1465,50 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
     );
   }
 
-  // Provisioned: billing query (outer) + status query (inner)
+  // Provisioned: status query only — billing shown at project level via Cost Explorer
   return (
-    <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
-      {({ data: billingData }) => {
-        let ec2TotalCost = null;
-        if (Array.isArray(billingData)) {
-          const EC2_KW = ['elastic compute cloud', 'ec2 - compute', 'ec2-compute'];
-          for (const series of billingData) {
-            let name = '';
-            const g = series?.metadata?.groups;
-            if (Array.isArray(g)) { const f = g.find(x => x.type === 'facet'); if (f?.value) name = f.value; }
-            if (!name) { const pt = series?.data?.[0]; if (pt?.facet) name = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
-            if (EC2_KW.some(kw => name.toLowerCase().includes(kw))) {
-              const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
-              if (v != null) ec2TotalCost = (ec2TotalCost ?? 0) + v;
-            }
-          }
+    <NrqlQuery
+      accountIds={[ACCOUNT_ID]}
+      query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.InstanceState\`) AS instanceState FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
+      pollInterval={60000}
+    >
+      {({ data, loading: qLoading }) => {
+        const liveMap = {};
+        if (!qLoading && data) {
+          data.forEach(series => {
+            let id = null;
+            const groups = series?.metadata?.groups;
+            if (Array.isArray(groups)) { const f = groups.find(g => g.type === 'facet'); if (f?.value) id = f.value; }
+            if (!id) { const pt = series?.data?.[0]; if (pt?.facet) id = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
+            if (!id) return;
+            const pt = series?.data?.[0];
+            liveMap[id] = { statusFailed: pt?.statusFailed ?? null, instanceState: pt?.instanceState ?? null };
+          });
         }
-        const costPerInstance = ec2TotalCost != null && ec2Ids.length > 0 ? ec2TotalCost / ec2Ids.length : null;
+
+        const instanceColors = ec2Ids.map(id => {
+          const entry = liveMap[id];
+          if (!entry) return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
+          const { statusFailed: sf, instanceState: st } = entry;
+          if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
+          if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: 'Stopped', color: '#f5a623' };
+          if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
+          return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
+        });
+
+        if (onStatusUpdate) {
+          const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
+          const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
+          Promise.resolve().then(() => onStatusUpdate('aws_ec2', hasRed ? 'red' : hasYellow ? 'yellow' : 'green', null));
+        }
 
         return (
-          <NrqlQuery
-            accountIds={[ACCOUNT_ID]}
-            query={`SELECT latest(\`aws.ec2.StatusCheckFailed\`) AS statusFailed, latest(\`aws.ec2.InstanceState\`) AS instanceState FROM Metric WHERE aws.Namespace = 'AWS/EC2' AND \`aws.ec2.InstanceId\` IN ('${ec2Ids.join("','")}') FACET \`aws.ec2.InstanceId\` SINCE 10 minutes ago LIMIT 50`}
-            pollInterval={60000}
-          >
-            {({ data, loading: qLoading }) => {
-              const liveMap = {};
-              if (!qLoading && data) {
-                data.forEach(series => {
-                  let id = null;
-                  const groups = series?.metadata?.groups;
-                  if (Array.isArray(groups)) { const f = groups.find(g => g.type === 'facet'); if (f?.value) id = f.value; }
-                  if (!id) { const pt = series?.data?.[0]; if (pt?.facet) id = Array.isArray(pt.facet) ? pt.facet[0] : String(pt.facet); }
-                  if (!id) return;
-                  const pt = series?.data?.[0];
-                  liveMap[id] = { statusFailed: pt?.statusFailed ?? null, instanceState: pt?.instanceState ?? null };
-                });
-              }
-
-              const instanceColors = ec2Ids.map(id => {
-                const entry = liveMap[id];
-                if (!entry) return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
-                const { statusFailed: sf, instanceState: st } = entry;
-                if (st === 48 || st === 32) return { dot: 'status-dot--red', text: 'Terminated', color: '#ff4d6d' };
-                if (st === 80 || st === 64) return { dot: 'status-dot--yellow', text: 'Stopped', color: '#f5a623' };
-                if (sf != null && sf > 0)   return { dot: 'status-dot--red', text: 'Impaired', color: '#ff4d6d' };
-                return { dot: 'status-dot--green', text: 'Running', color: '#00d4aa' };
-              });
-
-              if (onStatusUpdate) {
-                const hasRed = instanceColors.some(c => c.dot === 'status-dot--red');
-                const hasYellow = instanceColors.some(c => c.dot === 'status-dot--yellow');
-                Promise.resolve().then(() => onStatusUpdate('aws_ec2', hasRed ? 'red' : hasYellow ? 'yellow' : 'green', null));
-              }
-
-              return (
-                <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,153,0,0.12)', borderRadius: 6, overflow: 'hidden' }}>
-                  {ec2Ids.map((id, i) => {
-                    const { dot, text, color } = instanceColors[i];
-                    return renderInstanceRow(id, i, dot, text, color, costPerInstance);
-                  })}
-                </div>
-              );
-            }}
-          </NrqlQuery>
+          <div style={{ margin: '0 8px 6px', background: acC, border: '1px solid rgba(255,153,0,0.12)', borderRadius: 6, overflow: 'hidden' }}>
+            {ec2Ids.map((id, i) => {
+              const { dot, text, color } = instanceColors[i];
+              return renderInstanceRow(id, i, dot, text, color, null);
+            })}
+          </div>
         );
       }}
     </NrqlQuery>
@@ -2698,9 +2655,67 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
         <div className="project-row__detail">
           <InfraActionButtons project={project} lifecycle={lifecycle} actionState={actionState} activeAction={activeAction} infraReady={infraReady} tfLoading={tfLoading} ghToken={ghToken} onAction={handleInfraAction} />
           {(hasResources || project.projectDirName) && renderResourceDetail()}
+          <ProjectServiceCostBreakdown project={project} />
         </div>
       )}
     </div>
+  );
+};
+
+const ProjectServiceCostBreakdown = ({ project }) => {
+  if (!project.projectDirName || project.gcpProjectId || project.billingOnly) return null;
+  const tagValue = project.awsTagValue || project.name || project.projectDirName || '';
+  if (!tagValue) return null;
+
+  const query = project.awsTagValue
+    ? `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' FACET serviceName SINCE this month LIMIT 20`
+    : `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) LIKE '%${tagValue.toLowerCase()}%' FACET serviceName SINCE this month LIMIT 20`;
+
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
+      {({ data, loading }) => {
+        if (loading) return null;
+        const services = [];
+        if (Array.isArray(data)) {
+          for (const series of data) {
+            const name = extractFacetName(series) || 'Other';
+            const cost = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? 0;
+            if (cost > 0) services.push({ name, cost });
+          }
+        }
+        if (services.length === 0) return null;
+        const total = services.reduce((s, r) => s + r.cost, 0);
+        const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
+        return (
+          <div style={{ borderTop: '1px solid var(--ee-row-div)', padding: '10px 12px 12px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+              Cost by Service — MTD
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              {/* Pie chart via nr1 PieChart */}
+              <div style={{ width: 140, height: 140, flexShrink: 0 }}>
+                <PieChart accountIds={[ACCOUNT_ID]} query={query} fullWidth fullHeight />
+              </div>
+              {/* Legend */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
+                {services.map((svc, i) => {
+                  const pct = total > 0 ? (svc.cost / total * 100).toFixed(1) : 0;
+                  const color = COLORS[i % COLORS.length];
+                  return (
+                    <div key={svc.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 11, color: 'var(--ee-t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{svc.name}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ee-t1)', whiteSpace: 'nowrap' }}>{formatCostLabel(svc.cost)}</span>
+                      <span style={{ fontSize: 10, color: 'var(--ee-t4)', whiteSpace: 'nowrap' }}>{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      }}
+    </NrqlQuery>
   );
 };
 
