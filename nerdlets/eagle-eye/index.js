@@ -2663,15 +2663,11 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
 };
 
 const ProjectServiceCostBreakdown = ({ project }) => {
-  if (!project.projectDirName || project.gcpProjectId || project.billingOnly) return null;
-  const tagValue = project.awsTagValue || project.name || project.projectDirName || '';
-  if (!tagValue) return null;
+  if (!project.projectDirName || project.billingOnly) return null;
 
-  const query = project.awsTagValue
-    ? `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' FACET serviceName SINCE this month LIMIT 20`
-    : `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) LIKE '%${tagValue.toLowerCase()}%' FACET serviceName SINCE this month LIMIT 20`;
+  const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
 
-  return (
+  const renderBreakdown = (query, costKey) => (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
       {({ data, loading }) => {
         if (loading) return null;
@@ -2679,24 +2675,21 @@ const ProjectServiceCostBreakdown = ({ project }) => {
         if (Array.isArray(data)) {
           for (const series of data) {
             const name = extractFacetName(series) || 'Other';
-            const cost = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? 0;
+            const cost = series?.data?.[0]?.[costKey] ?? series?.data?.[0]?.y ?? 0;
             if (cost > 0) services.push({ name, cost });
           }
         }
         if (services.length === 0) return null;
         const total = services.reduce((s, r) => s + r.cost, 0);
-        const COLORS = ['#6c3fc5','#00d4aa','#f5a623','#ff4d6d','#4285f4','#8b5cf6','#34d399','#fb923c','#60a5fa','#f472b6'];
         return (
           <div style={{ borderTop: '1px solid var(--ee-row-div)', padding: '10px 12px 12px' }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ee-t3)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
               Cost by Service — MTD
             </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              {/* Pie chart via nr1 PieChart */}
               <div style={{ width: 140, height: 140, flexShrink: 0 }}>
                 <PieChart accountIds={[ACCOUNT_ID]} query={query} fullWidth fullHeight />
               </div>
-              {/* Legend */}
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
                 {services.map((svc, i) => {
                   const pct = total > 0 ? (svc.cost / total * 100).toFixed(1) : 0;
@@ -2717,6 +2710,18 @@ const ProjectServiceCostBreakdown = ({ project }) => {
       }}
     </NrqlQuery>
   );
+
+  if (project.gcpProjectId) {
+    const gcpQuery = gcpBillingFacetQuery(project.gcpProjectId);
+    return renderBreakdown(gcpQuery, 'costINR');
+  }
+
+  const tagValue = project.awsTagValue || project.name || project.projectDirName || '';
+  if (!tagValue) return null;
+  const awsQuery = project.awsTagValue
+    ? `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' FACET serviceName SINCE this month LIMIT 20`
+    : `SELECT latest(costINR) FROM AwsProjectServiceCost WHERE lower(projectName) LIKE '%${tagValue.toLowerCase()}%' FACET serviceName SINCE this month LIMIT 20`;
+  return renderBreakdown(awsQuery, 'costINR');
 };
 
 const openDashboard = (project) => {

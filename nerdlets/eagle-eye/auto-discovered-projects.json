@@ -3,6 +3,7 @@
     "projectDirName": "starapp",
     "name": "Starapp",
     "provider": "gcp",
+    "gcpProjectId": "starapp-backend-uat",
     "resources": [
       {
         "label": "Compute Engine",
