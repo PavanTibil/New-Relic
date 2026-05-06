@@ -604,6 +604,8 @@ const SERVICE_QUERIES = {
   aws_ecs: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/ECS' FACET aws.ecs.ServiceName SINCE 5 minutes ago LIMIT 30",
   aws_lambda: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/Lambda' FACET aws.lambda.FunctionName SINCE 5 minutes ago LIMIT 30",
   aws_s3: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/S3' FACET aws.s3.BucketName SINCE 1 hour ago LIMIT 30",
+  aws_ecr: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/ECR' FACET aws.ecr.RepositoryName SINCE 1 hour ago LIMIT 30",
+  aws_iotcore: () => "SELECT count(*) AS val FROM Metric WHERE aws.Namespace = 'AWS/IoT' FACET aws.iot.RuleName SINCE 5 minutes ago LIMIT 30",
 };
 
 // AWS service name substrings to match against billing FACET results
@@ -615,6 +617,15 @@ const AWS_SERVICE_KEYWORDS = {
   aws_cloudfront: ['cloudfront'],
   aws_ecs:        ['container service', 'ecs'],
   aws_apprunner:  ['app runner'],
+  aws_ecr:        ['elastic container registry', 'ecr'],
+  aws_iotcore:    ['iot', 'internet of things'],
+  aws_waf:        ['waf', 'web application firewall'],
+  aws_secretsmanager: ['secrets manager'],
+  aws_nat_gateway: ['nat gateway'],
+  aws_vpc:        ['vpc', 'virtual private cloud'],
+  aws_sns:        ['simple notification', 'sns'],
+  aws_sqs:        ['simple queue', 'sqs'],
+  aws_alb:        ['elastic load balancing', 'elb', 'alb', 'nlb'],
 };
 
 // GCP service name substrings to match against GCP billing FACET results

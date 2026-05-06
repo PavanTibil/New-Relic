@@ -81,9 +81,16 @@ const TF_RESOURCE_MAP = {
   aws_glue_job:                      { label: 'Glue',             type: 'aws_glue',          alwaysOn: false },
   aws_glue_crawler:                  { label: 'Glue',             type: 'aws_glue',          alwaysOn: false },
   aws_wafv2_web_acl:                 { label: 'WAF',              type: 'aws_waf',           alwaysOn: true  },
+  aws_wafv2_rule_group:              { label: 'WAF',              type: 'aws_waf',           alwaysOn: true  },
   aws_secretsmanager_secret:         { label: 'Secrets Manager',  type: 'aws_secretsmanager',alwaysOn: true  },
   aws_kms_key:                       { label: 'KMS',              type: 'aws_kms',           alwaysOn: true  },
   aws_cloudwatch_log_group:          { label: 'CloudWatch',       type: 'aws_cloudwatch',    alwaysOn: true  },
+  aws_ecr_repository:                { label: 'ECR',              type: 'aws_ecr',           alwaysOn: true  },
+  aws_iot_policy:                    { label: 'IoT Core',         type: 'aws_iotcore',       alwaysOn: true  },
+  aws_iot_thing:                     { label: 'IoT Core',         type: 'aws_iotcore',       alwaysOn: true  },
+  aws_iot_thing_group:               { label: 'IoT Core',         type: 'aws_iotcore',       alwaysOn: true  },
+  aws_iot_topic_rule:                { label: 'IoT Core',         type: 'aws_iotcore',       alwaysOn: true  },
+  aws_iot_certificate:               { label: 'IoT Core',         type: 'aws_iotcore',       alwaysOn: true  },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

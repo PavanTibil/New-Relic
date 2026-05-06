@@ -20,6 +20,16 @@
         "alwaysOn": true
       },
       {
+        "label": "ECR",
+        "type": "aws_ecr",
+        "alwaysOn": true
+      },
+      {
+        "label": "IoT Core",
+        "type": "aws_iotcore",
+        "alwaysOn": true
+      },
+      {
         "label": "VPC",
         "type": "aws_vpc",
         "alwaysOn": true
