@@ -779,13 +779,15 @@ const ProjectCostBadge = ({ project }) => {
   }
 
   // AWS: query AwsProjectCost custom events written by the sync-project-costs GitHub Action.
-  // Cost Explorer groups costs by the `name` tag, so two projects with the same resource type
-  // (e.g. both have EC2) are correctly isolated — each only sees its own tagged resources' cost.
-  // Falls back to the keyword approach if no custom events exist yet (before first sync run).
+  // awsTagValue is the exact `name` tag value read from NerdGraph — use exact match.
+  // Falls back to LIKE on project.name if the tag hasn't been discovered yet.
   const tagValue = project.name || project.projectDirName || '';
   if (!tagValue) return placeholder;
+  const ceQuery = project.awsTagValue
+    ? `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' SINCE this month`
+    : awsProjectCostQuery(tagValue);
   return (
-    <NrqlQuery accountIds={[ACCOUNT_ID]} query={awsProjectCostQuery(tagValue)} pollInterval={300000}>
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={ceQuery} pollInterval={300000}>
       {({ data, loading }) => {
         if (loading) return placeholder;
         const ceCost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
@@ -1468,9 +1470,6 @@ const Ec2InstanceList = ({ project, lifecycle, actionState, lastActionTime, onSt
       }}>
         <span className={`status-dot ${dotCls}`} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 400, fontStyle: 'italic', color: 'var(--ee-t4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
-        <span title={hasCost ? `Total incurred: ₹${Math.round(cost)}` : 'No billing data'} style={{ fontSize: 10, fontWeight: 700, color, background: `${color}18`, border: `1px solid ${color}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>
-          {costLabel ?? '₹—'}
-        </span>
         {statusText !== 'Running' && <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, flexShrink: 0 }}>{statusText}</span>}
       </div>
     );
@@ -1871,7 +1870,6 @@ const GceInstanceList = ({ project, lifecycle, actionState }) => {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, color: 'var(--ee-t1)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inst.name}</div>
                   </div>
-                  <span title={hasCost ? `Total incurred: ₹${Math.round(costPerInstance)}` : 'No billing data'} style={{ fontSize: 10, fontWeight: 700, color: instColor, background: `${instColor}18`, border: `1px solid ${instColor}40`, borderRadius: 100, padding: '1px 7px', flexShrink: 0 }}>{instLabel}</span>
                 </div>
               );
             })}
@@ -2929,8 +2927,9 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
           const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
           const stateKey = getProjectStateKey(project);
           const persistedLifecycle = infraStates?.[stateKey] || null;
-          // Use tag-detected resources for billing keyword matching if available
-          const projectForRow = r?.detectedResources ? { ...project, resources: r.detectedResources } : project;
+          const projectForRow = r?.detectedResources
+            ? { ...project, resources: r.detectedResources, awsTagValue: r.awsTagValue ?? null }
+            : project;
           return <ProjectRow
             key={project.projectDirName || project.name}
             project={projectForRow}
@@ -2962,7 +2961,9 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
                   const i = indexOf(project), r = allResults.find(res => res.projectIndex === i) ?? allResults[i];
                   const stateKey = getProjectStateKey(project);
                   const persistedLifecycle = infraStates?.[stateKey] || null;
-                  const projectForRow = r?.detectedResources ? { ...project, resources: r.detectedResources } : project;
+                  const projectForRow = r?.detectedResources
+                    ? { ...project, resources: r.detectedResources, awsTagValue: r.awsTagValue ?? null }
+                    : project;
                   return <ProjectRow
                     key={project.projectDirName || project.name}
                     project={projectForRow}
@@ -3060,13 +3061,13 @@ const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, o
   );
 };
 
-const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange, detectedResources }) => {
+const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatuses, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange, detectedResources, awsTagValue }) => {
   if (resourceIndex >= project.resources.length) {
     const anyLoading = collectedStatuses.some(r => r.loading);
     return (
       <ProjectListInnerStateful
         provider={provider} projectIndex={projectIndex + 1}
-        results={[...results, { projectIndex, loading: anyLoading, resourceStatuses: collectedStatuses, detectedResources }]}
+        results={[...results, { projectIndex, loading: anyLoading, resourceStatuses: collectedStatuses, detectedResources, awsTagValue }]}
         onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
         infraStates={infraStates} onLifecycleChange={onLifecycleChange}
       />
@@ -3093,7 +3094,7 @@ const ProjectResourceLoaderStateful = ({ project, resourceIndex, collectedStatus
             projectIndex={projectIndex} provider={provider} results={results}
             onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
             infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-            detectedResources={detectedResources}
+            detectedResources={detectedResources} awsTagValue={awsTagValue}
           />
         );
       }}
@@ -3190,6 +3191,7 @@ const AwsTagAutoDetectLoader = ({ project, onComplete }) => {
 // detected set differs from the static list (e.g. a new service was tagged but not in JSON).
 const AwsTagAutoLoaderStateful = ({ project, projectIndex, provider, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   const [resources, setResources] = React.useState(project.resources ?? []);
+  const [awsTagValue, setAwsTagValue] = React.useState(null);
   const detectedRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -3200,7 +3202,7 @@ const AwsTagAutoLoaderStateful = ({ project, projectIndex, provider, results, on
       query: `{
         actor {
           entitySearch(query: "tags.name LIKE '${projectName}' AND accountId = '${ACCOUNT_ID}' AND domain = 'INFRA'") {
-            results { entities { type } }
+            results { entities { type tags { key values } } }
           }
         }
       }`
@@ -3208,6 +3210,11 @@ const AwsTagAutoLoaderStateful = ({ project, projectIndex, provider, results, on
       if (detectedRef.current) return;
       detectedRef.current = true;
       const entities = data?.actor?.entitySearch?.results?.entities ?? [];
+      // Extract the actual AWS `name` tag value from the first matched entity
+      for (const entity of entities) {
+        const nameTag = (entity.tags || []).find(t => t.key === 'name');
+        if (nameTag?.values?.[0]) { setAwsTagValue(nameTag.values[0]); break; }
+      }
       const seen = new Set();
       const found = [];
       for (const e of entities) {
@@ -3228,7 +3235,7 @@ const AwsTagAutoLoaderStateful = ({ project, projectIndex, provider, results, on
       projectIndex={projectIndex} provider={provider} results={results}
       onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify}
       infraStates={infraStates} onLifecycleChange={onLifecycleChange}
-      detectedResources={resources}
+      detectedResources={resources} awsTagValue={awsTagValue}
     />
   );
 };

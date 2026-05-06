@@ -40,7 +40,7 @@ jobs:
         env:
           NR_API_KEY:    ${{ secrets.NR_API_KEY }}
           NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
-          OUTPUT_FILE:   digest.html
+          OUTPUT_FILE:   ${{ github.workspace }}/digest.html
         run: |
           python scripts/weekly-cost-digest.py
           echo "date=$(date +'%d %b %Y')" >> $GITHUB_OUTPUT
@@ -55,5 +55,5 @@ jobs:
           subject: "AWS Cost Digest — Week ending ${{ steps.digest.outputs.date }}"
           to: pavan.ks@tibilsolutions.com
           from: Eagle Eye <${{ secrets.MAIL_USERNAME }}>
-          html_body: file://digest.html
+          html_body: file://${{ github.workspace }}/digest.html
           convert_markdown: false
