@@ -792,29 +792,7 @@ const ProjectCostBadge = ({ project }) => {
         if (loading) return placeholder;
         const ceCost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
         if (ceCost > 0) return makePill(ceCost, `AWS total this month (Cost Explorer): ₹${Math.round(ceCost)}`);
-
-        // Fallback: keyword-match against billing metrics while Cost Explorer events aren't available yet
-        const allKeywords = (project.resources || []).flatMap(r => AWS_SERVICE_KEYWORDS[r.type] || []);
-        if (allKeywords.length === 0) return placeholder;
-        return (
-          <NrqlQuery accountIds={[ACCOUNT_ID]} query={BILLING_FACET_QUERY} pollInterval={300000}>
-            {({ data: bData, loading: bLoading }) => {
-              if (bLoading) return placeholder;
-              let cost = null;
-              if (Array.isArray(bData)) {
-                for (const series of bData) {
-                  const nameLower = (extractFacetName(series) ?? '').toLowerCase();
-                  if (allKeywords.some(kw => nameLower.includes(kw))) {
-                    const v = series?.data?.[0]?.costINR ?? series?.data?.[0]?.y ?? null;
-                    if (v != null) cost = (cost ?? 0) + v;
-                  }
-                }
-              }
-              if (!cost || cost <= 0) return placeholder;
-              return makePill(cost, `AWS total this month: ₹${Math.round(cost)}`);
-            }}
-          </NrqlQuery>
-        );
+        return placeholder;
       }}
     </NrqlQuery>
   );
