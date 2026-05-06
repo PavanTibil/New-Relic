@@ -1,9 +1,9 @@
 {
   "ec2_instance_ids": [
-    "i-05db3057e4dc4e93a"
+    "i-0c209758ae278f721"
   ],
   "ec2_instance_names": {
-    "i-05db3057e4dc4e93a": "NR-Test"
+    "i-0c209758ae278f721": "NR-Test"
   },
   "apprunner_service_arns": [],
   "rds_instance_ids": [],
