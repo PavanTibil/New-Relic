@@ -28,12 +28,10 @@ jobs:
           MESSAGE:      ${{ github.event.client_payload.message }}
           ALERT_TIME:   ${{ github.event.client_payload.time }}
           ENTITY_NAME:  ${{ github.event.client_payload.entity_name }}
-          NR_API_KEY:   ${{ secrets.NR_API_KEY }}
-          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
           OUTPUT_FILE:  ${{ github.workspace }}/alert.html
         run: |
           python scripts/generate-alert-email.py
-          echo "subject=🚨 [${{ github.event.client_payload.severity }}] ${{ github.event.client_payload.alert_name || github.event.client_payload.alertName }}" >> $GITHUB_OUTPUT
+          echo "subject=${{ github.event.client_payload.severity }}: ${{ github.event.client_payload.alert_name || github.event.client_payload.alertName }}" >> $GITHUB_OUTPUT
 
       - name: Send alert email
         uses: dawidd6/action-send-mail@v3

@@ -6,28 +6,29 @@ Required env vars (passed from GitHub Actions workflow_dispatch payload):
   ALERT_NAME    — name of the alert policy/condition
   SEVERITY      — CRITICAL / WARNING / INFO
   MESSAGE       — alert message / description
-  ALERT_TIME    — timestamp string
+  ALERT_TIME    — timestamp string (unix ms, unix s, or human-readable)
   ENTITY_NAME   — affected entity name
   OUTPUT_FILE   — path to write HTML (default: alert.html)
-
-Optional (to include live billing snapshot):
-  NR_API_KEY    — New Relic User API key
-  NR_ACCOUNT_ID — New Relic account ID
 """
 
 import os
-import sys
-import requests
 from datetime import datetime, timezone
 
 ALERT_NAME   = os.environ.get('ALERT_NAME', 'Unknown Alert')
 SEVERITY     = os.environ.get('SEVERITY', 'CRITICAL').upper()
 MESSAGE      = os.environ.get('MESSAGE', 'No message provided.')
-ALERT_TIME   = os.environ.get('ALERT_TIME', datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))
 ENTITY_NAME  = os.environ.get('ENTITY_NAME', '—')
 OUTPUT_FILE  = os.environ.get('OUTPUT_FILE', 'alert.html')
-NR_API_KEY   = os.environ.get('NR_API_KEY', '')
-NR_ACCOUNT_ID = os.environ.get('NR_ACCOUNT_ID', '')
+
+# Parse ALERT_TIME — handle unix ms, unix s, or plain string
+_raw_time = os.environ.get('ALERT_TIME', '')
+try:
+    ts = int(_raw_time)
+    if ts > 1e12:
+        ts = ts / 1000  # ms → s
+    ALERT_TIME = datetime.utcfromtimestamp(ts).strftime('%d %b %Y, %H:%M UTC')
+except (ValueError, TypeError, OSError):
+    ALERT_TIME = _raw_time if _raw_time else datetime.now(timezone.utc).strftime('%d %b %Y, %H:%M UTC')
 
 now = datetime.now(timezone.utc)
 
@@ -40,36 +41,6 @@ SEVERITY_COLOR = {
 sev_accent, sev_bg, sev_border = SEVERITY_COLOR
 
 SEVERITY_ICON = {'CRITICAL': '🚨', 'WARNING': '⚠️', 'INFO': 'ℹ️'}.get(SEVERITY, '🚨')
-
-
-# ── Optional: fetch current billing snapshot from New Relic ──────────────────
-
-billing_html = ''
-if NR_API_KEY and NR_ACCOUNT_ID:
-    try:
-        query = 'SELECT max(`aws.billing.EstimatedCharges`) * 92 AS totalINR FROM Metric WHERE aws.Namespace = \'AWS/Billing\' SINCE this month'
-        gql = {"query": '{ actor { account(id: %s) { nrql(query: "%s") { results } } } }' % (NR_ACCOUNT_ID, query.replace('"', '\\"'))}
-        resp = requests.post(
-            'https://api.newrelic.com/graphql',
-            headers={'Api-Key': NR_API_KEY, 'Content-Type': 'application/json'},
-            json=gql, timeout=10,
-        )
-        results = resp.json().get('data', {}).get('actor', {}).get('account', {}).get('nrql', {}).get('results', [])
-        total_inr = results[0].get('totalINR') if results else None
-        if total_inr:
-            billing_html = f"""
-  <tr>
-    <td style="background:#fff;padding:0 36px 28px;">
-      <div style="background:#f9f5ff;border:1px solid #ede9fe;border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:12px;">
-        <div>
-          <div style="font-size:11px;font-weight:600;color:#7c3aed;text-transform:uppercase;letter-spacing:1px;">Current AWS Billing (MTD)</div>
-          <div style="font-size:22px;font-weight:800;color:#4c1d95;margin-top:2px;">₹{total_inr:,.0f}</div>
-        </div>
-      </div>
-    </td>
-  </tr>"""
-    except Exception:
-        pass
 
 
 # ── Build HTML ────────────────────────────────────────────────────────────────
@@ -140,8 +111,6 @@ html = f"""<!DOCTYPE html>
     </td>
   </tr>
 
-  {billing_html}
-
   <!-- Footer -->
   <tr>
     <td style="background:#1e1b4b;border-radius:0 0 12px 12px;padding:24px 36px;">
@@ -152,7 +121,7 @@ html = f"""<!DOCTYPE html>
               Automated alert from Eagle Eye &bull; Tibil Solutions
             </div>
             <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:6px;">
-              Powered by New Relic. Please investigate immediately.
+              Powered by New Relic.
             </div>
           </td>
           <td style="text-align:right;vertical-align:middle;">

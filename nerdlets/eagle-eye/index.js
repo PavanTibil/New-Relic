@@ -734,13 +734,25 @@ const ResourceCostBadge = ({ resourceType, project }) => {
   if (!gcpKeywords && awsServiceName) {
     const projectName = project?.awsTagValue || project?.name || project?.projectDirName || '';
     if (!projectName) return COST_BADGE_PLACEHOLDER;
-    const query = `SELECT max(costINR) AS costINR FROM AwsProjectServiceCost WHERE lower(projectName) = '${projectName.toLowerCase()}' AND serviceName = '${awsServiceName}' SINCE this month`;
+    const serviceQuery = `SELECT max(costINR) AS costINR FROM AwsProjectServiceCost WHERE lower(projectName) = '${projectName.toLowerCase()}' AND serviceName = '${awsServiceName}' SINCE this month`;
+    const fallbackQuery = project?.awsTagValue
+      ? `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) = '${project.awsTagValue.toLowerCase()}' SINCE this month`
+      : `SELECT latest(costINR) AS costINR FROM AwsProjectCost WHERE lower(projectName) LIKE '%${projectName.toLowerCase()}%' SINCE this month`;
     return (
-      <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
+      <NrqlQuery accountIds={[ACCOUNT_ID]} query={serviceQuery} pollInterval={300000}>
         {({ data, loading }) => {
           if (loading) return COST_BADGE_PLACEHOLDER;
           const cost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
-          return renderCostBadge(cost);
+          if (cost !== null && cost > 0) return renderCostBadge(cost);
+          return (
+            <NrqlQuery accountIds={[ACCOUNT_ID]} query={fallbackQuery} pollInterval={300000}>
+              {({ data: fd, loading: fl }) => {
+                if (fl) return COST_BADGE_PLACEHOLDER;
+                const fc = fd?.[0]?.data?.[0]?.costINR ?? fd?.[0]?.data?.[0]?.y ?? null;
+                return renderCostBadge(fc);
+              }}
+            </NrqlQuery>
+          );
         }}
       </NrqlQuery>
     );
