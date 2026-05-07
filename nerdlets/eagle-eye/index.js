@@ -714,10 +714,37 @@ const renderCostBadge = (cost) => {
   );
 };
 
+// Maps Eagle Eye resource types to Cost Explorer SERVICE dimension names
+const AWS_SERVICE_NAME_MAP = {
+  aws_ec2:        'Amazon EC2',
+  aws_rds:        'Amazon RDS',
+  aws_s3:         'Amazon Simple Storage Service',
+  aws_cloudfront: 'Amazon CloudFront',
+  aws_ecs:        'Amazon Elastic Container Service',
+  aws_lambda:     'AWS Lambda',
+  aws_dynamodb:   'Amazon DynamoDB',
+  aws_apprunner:  'AWS App Runner',
+};
+
 const ResourceCostBadge = ({ resourceType, project }) => {
   const gcpKeywords = GCP_SERVICE_KEYWORDS[resourceType];
 
-  // AWS: show placeholder until AwsProjectServiceCost events arrive from Cost Explorer sync
+  // AWS: query AwsProjectServiceCost events (populated by Cost Explorer sync once resources are tagged)
+  const awsServiceName = AWS_SERVICE_NAME_MAP[resourceType];
+  if (!gcpKeywords && awsServiceName) {
+    const projectName = project?.awsTagValue || project?.name || project?.projectDirName || '';
+    if (!projectName) return COST_BADGE_PLACEHOLDER;
+    const query = `SELECT max(costINR) AS costINR FROM AwsProjectServiceCost WHERE lower(projectName) = '${projectName.toLowerCase()}' AND serviceName = '${awsServiceName}' SINCE this month`;
+    return (
+      <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
+        {({ data, loading }) => {
+          if (loading) return COST_BADGE_PLACEHOLDER;
+          const cost = data?.[0]?.data?.[0]?.costINR ?? data?.[0]?.data?.[0]?.y ?? null;
+          return renderCostBadge(cost);
+        }}
+      </NrqlQuery>
+    );
+  }
   if (!gcpKeywords) return COST_BADGE_PLACEHOLDER;
 
   // GCP: query is already per-project (filtered by gcpProjectId)

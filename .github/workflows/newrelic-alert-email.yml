@@ -4,29 +4,46 @@ on:
   repository_dispatch:
     types: [newrelic_alert]
 
+permissions:
+  contents: read
+
 jobs:
   send-alert-email:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Alert Email
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate alert HTML email
+        id: alert
+        env:
+          ALERT_NAME:   ${{ github.event.client_payload.alert_name || github.event.client_payload.alertName }}
+          SEVERITY:     ${{ github.event.client_payload.severity }}
+          MESSAGE:      ${{ github.event.client_payload.message }}
+          ALERT_TIME:   ${{ github.event.client_payload.time }}
+          ENTITY_NAME:  ${{ github.event.client_payload.entity_name }}
+          NR_API_KEY:   ${{ secrets.NR_API_KEY }}
+          NR_ACCOUNT_ID: ${{ secrets.NR_ACCOUNT_ID }}
+          OUTPUT_FILE:  ${{ github.workspace }}/alert.html
+        run: |
+          python scripts/generate-alert-email.py
+          echo "subject=🚨 [${{ github.event.client_payload.severity }}] ${{ github.event.client_payload.alert_name || github.event.client_payload.alertName }}" >> $GITHUB_OUTPUT
+
+      - name: Send alert email
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🚨 New Relic Alert: ${{ github.event.client_payload.alertName }}"
+          subject: ${{ steps.alert.outputs.subject }}
           to: pavan.ks@tibilsolutions.com
-          from: ${{ secrets.MAIL_USERNAME }}
-          body: |
-            🚨 New Relic Alert Triggered!
-
-            Alert Name : ${{ github.event.client_payload.alert_name }}
-            Severity   : ${{ github.event.client_payload.severity }}
-            Message    : ${{ github.event.client_payload.message }}
-            Time       : ${{ github.event.client_payload.time }}
-            Entity     : ${{ github.event.client_payload.entity_name }}
-
-            Please investigate immediately.
-
-
+          from: Eagle Eye <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://${{ github.workspace }}/alert.html
+          convert_markdown: false
