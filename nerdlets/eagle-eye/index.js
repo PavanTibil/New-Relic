@@ -1029,6 +1029,13 @@ const GhostResourceRow = ({ resource, hasToken = false }) => (
 
 // ─── Billing components ───────────────────────────────────────────────────────
 const BillingHealthBadge = ({ cost, provisioned = true }) => {
+  const [usdRate, setUsdRate] = useState(92.0);
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d?.rates?.INR) setUsdRate(d.rates.INR); })
+      .catch(() => {});
+  }, []);
   if (!provisioned || cost === null) {
     return (
       <span className="status-badge status-badge--grey">
@@ -1036,13 +1043,14 @@ const BillingHealthBadge = ({ cost, provisioned = true }) => {
       </span>
     );
   }
-  const pct = (cost / BILLING_BUDGET_INR) * 100, status = billingCostToStatus(cost);
+  const budgetINR = BILLING_BUDGET_USD * usdRate;
+  const pct = (cost / budgetINR) * 100, status = billingCostToStatus(cost);
   return (
     <span className={`status-badge status-badge--${status} status-badge--billing`} title={`${pct.toFixed(1)}% of monthly budget`}>
       <span className="status-badge__dot" />
-      <span className="status-badge__billing-current">{'₹' + cost.toFixed(0)}</span>
+      <span className="status-badge__billing-current">{'₹' + Math.round(cost).toLocaleString('en-IN')}</span>
       <span className="status-badge__billing-sep">/</span>
-      <span className="status-badge__billing-budget">${BILLING_BUDGET_USD + ' budget'}</span>
+      <span className="status-badge__billing-budget">{'₹' + Math.round(budgetINR).toLocaleString('en-IN') + ' budget'}</span>
     </span>
   );
 };
@@ -1856,9 +1864,7 @@ const BillingSimple = ({ cost }) => {
 
   if (cost === null) return <div style={{ color: 'var(--ee-t2)', fontSize: 12, fontStyle: 'italic' }}>No billing data</div>;
 
-  // cost is INR from NRQL (* 92 hardcoded). Back-calculate USD using same rate.
-  const NRQL_RATE = 92;
-  const costUSD = cost / NRQL_RATE;
+  const costUSD = cost / usdRate;
   // Budget is $50 USD — convert to INR at live rate
   const budgetINR = BILLING_BUDGET_USD * usdRate;
 
@@ -2556,7 +2562,7 @@ const ProjectRow = ({ project, index, onLifecycleChange, providerId, persistedLi
     );
     const bS = billingCostToStatus(totalCost);
     const dC = bS === 'unknown' ? 'grey' : bS;
-    const costLabel = totalCost !== null ? '₹' + totalCost.toFixed(0) : null;
+    const costLabel = totalCost !== null ? '₹' + Math.round(totalCost).toLocaleString('en-IN') : null;
     return (
       <div className={'project-row project-row--billing' + (expanded ? ' project-row--expanded' : '') + (bS !== 'unknown' ? ' project-row--' + bS : '')} style={{ animationDelay: index * 80 + 'ms' }}>
         <div className="project-row__main" onClick={() => setExpanded(p => !p)} style={{ cursor: 'pointer' }}>
@@ -2723,7 +2729,7 @@ const ServiceCostPieChart = ({ query, rateLabel = null }) => {
   return (
     <NrqlQuery accountIds={[ACCOUNT_ID]} query={query} pollInterval={300000}>
       {({ data, loading }) => {
-        if (loading) return null;
+        if (loading) return <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--ee-t4)' }}>Loading…</div>;
         const services = [];
         if (Array.isArray(data)) {
           for (const series of data) {
@@ -2732,26 +2738,36 @@ const ServiceCostPieChart = ({ query, rateLabel = null }) => {
             if (cost > 0) services.push({ name, cost });
           }
         }
-        if (services.length === 0) return null;
+        if (services.length === 0) return (
+          <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--ee-t4)' }}>No service cost data available for this period.</div>
+        );
         services.sort((a, b) => b.cost - a.cost);
         const total = services.reduce((s, r) => s + r.cost, 0);
-        const cols = services.length > 6 ? 2 : 1;
         return (
-          <div style={{ padding: '10px 12px 14px' }}>
-            {rateLabel && <div style={{ fontSize: 10, color: 'var(--ee-t4)', marginBottom: 8 }}>{rateLabel}</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '5px 20px' }}>
+          <div style={{ padding: '8px 12px 14px' }}>
+            {rateLabel && <div style={{ fontSize: 10, color: 'var(--ee-t4)', marginBottom: 10 }}>{rateLabel}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {services.map((svc, i) => {
-                const pct = total > 0 ? (svc.cost / total * 100).toFixed(1) : 0;
+                const pct = svc.cost / total * 100;
                 const color = COLORS[i % COLORS.length];
                 return (
-                  <div key={svc.name} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                    <span style={{ fontSize: 11, color: 'var(--ee-t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{svc.name}</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ee-t1)', whiteSpace: 'nowrap', marginLeft: 4 }}>{formatCostLabel(svc.cost)}</span>
-                    <span style={{ fontSize: 10, color: 'var(--ee-t4)', whiteSpace: 'nowrap', minWidth: 36, textAlign: 'right' }}>{pct}%</span>
+                  <div key={svc.name}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 11, color: 'var(--ee-t2)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{svc.name}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ee-t1)', whiteSpace: 'nowrap' }}>{'₹' + Math.round(svc.cost).toLocaleString('en-IN')}</span>
+                      <span style={{ fontSize: 10, color: 'var(--ee-t4)', width: 36, textAlign: 'right' }}>{pct.toFixed(1)}%</span>
+                    </div>
+                    <div style={{ height: 3, background: 'var(--ee-s3)', borderRadius: 2, marginLeft: 14, marginBottom: 1 }}>
+                      <div style={{ height: '100%', width: pct + '%', background: color, borderRadius: 2, opacity: 0.7 }} />
+                    </div>
                   </div>
                 );
               })}
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--ee-row-div)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: 'var(--ee-t4)', letterSpacing: '0.3px' }}>{services.length} services this month</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--ee-t1)', letterSpacing: '-0.3px' }}>{'₹' + Math.round(total).toLocaleString('en-IN')}</span>
             </div>
           </div>
         );
@@ -2770,8 +2786,8 @@ const AwsBillingServiceBreakdown = () => {
       .catch(() => {});
   }, []);
   const rate = usdInrRate.toFixed(2);
-  const query = `SELECT max(aws.billing.EstimatedCharges) * ${rate} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' FACET aws.billing.ServiceName SINCE this month LIMIT MAX`;
-  return <ServiceCostPieChart query={query} rateLabel={`1 USD = ₹${rate}`} />;
+  const query = `SELECT max(aws.billing.EstimatedCharges) * ${rate} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' AND aws.billing.ServiceName IS NOT NULL FACET aws.billing.ServiceName SINCE this month LIMIT MAX`;
+  return <ServiceCostPieChart query={query} />;
 };
 
 // Per-project service breakdown — shown in individual project expanded views
@@ -3056,17 +3072,40 @@ const ArchivedAwareProjectList = ({ provider, allResults, billingCost, onInfraAc
 };
 
 // ─── Stateful loaders ─────────────────────────────────────────────────────────
+
+// Fetches live USD/INR rate + sums per-service EstimatedCharges for accurate billing total.
+// Replaces the non-faceted CloudWatch total metric (which lags and under-reports vs per-service sum).
+const AwsBillingFetcher = ({ children }) => {
+  const [usdRate, setUsdRate] = useState(92.0);
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r => r.json())
+      .then(d => { if (d?.rates?.INR) setUsdRate(d.rates.INR); })
+      .catch(() => {});
+  }, []);
+  const q = `SELECT max(\`aws.billing.EstimatedCharges\`) * ${usdRate.toFixed(2)} AS costINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' AND \`aws.billing.ServiceName\` IS NOT NULL FACET \`aws.billing.ServiceName\` SINCE this month LIMIT MAX`;
+  return (
+    <NrqlQuery accountIds={[ACCOUNT_ID]} query={q} pollInterval={300000}>
+      {({ data }) => {
+        let bc = null;
+        if (Array.isArray(data) && data.length > 0) {
+          let sum = 0;
+          for (const s of data) { sum += s?.data?.[0]?.costINR ?? s?.data?.[0]?.y ?? 0; }
+          if (sum > 0) bc = sum;
+        }
+        return children(bc);
+      }}
+    </NrqlQuery>
+  );
+};
+
 const ProjectListInnerStateful = ({ provider, projectIndex, results, onManage, onInfraAction, onNotify, infraStates, onLifecycleChange }) => {
   if (projectIndex >= provider.projects.length) {
     if (provider.id === 'aws') {
-      const bQ = `SELECT max(\`aws.billing.EstimatedCharges\`) * 92 AS totalCostINR FROM Metric WHERE aws.Namespace = 'AWS/Billing' SINCE this month`;
       return (
-        <NrqlQuery accountIds={[ACCOUNT_ID]} query={bQ} pollInterval={300000}>
-          {({ data }) => {
-            const bc = data?.[0]?.data?.[0]?.y ?? data?.[0]?.data?.[0]?.totalCostINR ?? null;
-            return <ProjectsRendered provider={provider} allResults={results} billingCost={bc} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
-          }}
-        </NrqlQuery>
+        <AwsBillingFetcher>
+          {(bc) => <ProjectsRendered provider={provider} allResults={results} billingCost={bc} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />}
+        </AwsBillingFetcher>
       );
     }
     return <ProjectsRendered provider={provider} allResults={results} billingCost={null} onManage={onManage} onInfraAction={onInfraAction} onNotify={onNotify} infraStates={infraStates} onLifecycleChange={onLifecycleChange} />;
