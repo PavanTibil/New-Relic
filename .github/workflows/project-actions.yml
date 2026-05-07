@@ -130,6 +130,22 @@ jobs:
           echo "HAS_GCP=$HAS_GCP" >> $GITHUB_ENV
           echo "✅ AWS: $HAS_AWS | GCP: $HAS_GCP"
 
+      # ── Read AWS region from the project's own .tf files ─────────────────
+      - name: Detect AWS region from Terraform
+        id: tf-region
+        if: ${{ env.HAS_AWS == 'true' }}
+        run: |
+          PROJECT="${{ github.event.inputs.project }}"
+          # providers.tf in the project root is the authoritative source
+          REGION=$(grep -E 'region\s*=\s*"' "$PROJECT/providers.tf" 2>/dev/null | grep -oP '"[^"]+"' | tr -d '"' | head -1)
+          # fall back to any .tf file at the project root level
+          if [ -z "$REGION" ]; then
+            REGION=$(grep -E 'region\s*=\s*"' "$PROJECT"/*.tf 2>/dev/null | grep -oP '"[^"]+"' | tr -d '"' | head -1)
+          fi
+          REGION="${REGION:-ap-south-1}"
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "Region from TF: $REGION"
+
       # ── AWS credentials (only if AWS resources exist) ─────────────────────
       - name: Configure AWS
         if: ${{ env.HAS_AWS == 'true' }}
@@ -137,7 +153,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ steps.tf-region.outputs.region }}
 
       # ── GCP credentials (only if GCP resources exist) ─────────────────────
       - name: Configure GCP

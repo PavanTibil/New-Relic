@@ -6,7 +6,7 @@ to New Relic so the Eagle Eye nerdlet and weekly digest can query billing:
   AwsProjectServiceCost — one row per project+service (grouped by `name` tag + SERVICE dimension)
 
 Required env vars:
-  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION
+  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
   NR_INGEST_KEY   — New Relic Insert API key (Ingest > License key)
   NR_ACCOUNT_ID   — New Relic account ID
   INR_RATE        — USD to INR conversion rate (default: 92)
