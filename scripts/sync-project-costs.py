@@ -9,7 +9,7 @@ Required env vars:
   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
   NR_INGEST_KEY   — New Relic Insert API key (Ingest > License key)
   NR_ACCOUNT_ID   — New Relic account ID
-  INR_RATE        — USD to INR conversion rate (default: 92)
+  INR_RATE        — USD to INR conversion rate (optional, fetched live if omitted)
   TAG_KEY         — Cost allocation tag key to group by (default: name)
 """
 
@@ -20,8 +20,22 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-TAG_KEY        = os.environ.get('TAG_KEY', 'name')
-INR_RATE       = float(os.environ.get('INR_RATE', '92'))
+TAG_KEY = os.environ.get('TAG_KEY', 'name')
+
+def _fetch_inr_rate():
+    try:
+        r = requests.get('https://open.er-api.com/v6/latest/USD', timeout=8)
+        rate = r.json().get('rates', {}).get('INR')
+        if rate:
+            print(f'Live USD/INR rate: {rate}')
+            return float(rate)
+    except Exception:
+        pass
+    fallback = float(os.environ.get('INR_RATE', '92'))
+    print(f'Using fallback USD/INR rate: {fallback}')
+    return fallback
+
+INR_RATE = _fetch_inr_rate()
 NR_INGEST_KEY  = os.environ['NR_INGEST_KEY']
 NR_ACCOUNT_ID  = os.environ['NR_ACCOUNT_ID']
 

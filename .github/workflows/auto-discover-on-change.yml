@@ -74,7 +74,7 @@ jobs:
       - name: Detect file changes
         id: check
         run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD)
           echo "Changed files: $CHANGED"
           if echo "$CHANGED" | grep -qE 'nerdlets/eagle-eye/(index\.js|styles\.scss)'; then
             echo "files_changed=true" >> $GITHUB_OUTPUT

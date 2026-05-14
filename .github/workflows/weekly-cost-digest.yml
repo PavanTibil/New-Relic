@@ -27,7 +27,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           NR_INGEST_KEY:         ${{ secrets.NR_INGEST_KEY }}
           NR_ACCOUNT_ID:         ${{ secrets.NR_ACCOUNT_ID }}
-          INR_RATE:              '92'
           TAG_KEY:               Project_Name
         run: python scripts/sync-project-costs.py
 
@@ -52,7 +51,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "AWS Cost Digest — Week ending ${{ steps.digest.outputs.date }}"
-          to: pavan.ks@tibilsolutions.com
-          from: Eagle Eye <${{ secrets.MAIL_USERNAME }}>
+          to: anirudh.bhandarkar@tibilsolutions.com,vijay.p@tibilsolutions.com,kavitha.sanjeevalu@tibilsolutions.com,pradeep.sreenivasan@tibilsolutions.com
+          from: Eagle Eye <itadmin@tibilsolutions.com>
           html_body: file://${{ github.workspace }}/digest.html
           convert_markdown: false

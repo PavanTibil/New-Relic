@@ -41,7 +41,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: ${{ steps.alert.outputs.subject }}
-          to: pavan.ks@tibilsolutions.com
-          from: Eagle Eye <${{ secrets.MAIL_USERNAME }}>
+          to: support@tibilsolutions.com
+          from: Eagle Eye <itadmin@tibilsolutions.com>
           html_body: file://${{ github.workspace }}/alert.html
           convert_markdown: false

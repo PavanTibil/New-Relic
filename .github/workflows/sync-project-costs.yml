@@ -27,6 +27,5 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           NR_INGEST_KEY:         ${{ secrets.NR_INGEST_KEY }}
           NR_ACCOUNT_ID:         ${{ secrets.NR_ACCOUNT_ID }}
-          INR_RATE:              '92'
           TAG_KEY:               Project_Name
         run: python scripts/sync-project-costs.py

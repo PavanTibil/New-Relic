@@ -97,8 +97,8 @@ const persistInfraStates = async (infraStates) => {
   }
 };
 
-const GH_OWNER = 'PavanTibil';
-const GH_REPO = 'New-Relic';
+const GH_OWNER = 'tibil-it';
+const GH_REPO = 'eagle_eye';
 const GH_WORKFLOW_INFRA = 'project-actions.yml';
 
 const INFRA_STATES = {
