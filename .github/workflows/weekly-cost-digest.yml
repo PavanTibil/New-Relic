@@ -1,8 +1,6 @@
 name: Weekly AWS Cost Digest Email
 
 on:
-  schedule:
-    - cron: '30 11 * * 5'   # Friday 11:30 UTC = 5:00 PM IST
   workflow_dispatch:          # manual trigger
 
 permissions:
